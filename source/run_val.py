@@ -37,7 +37,7 @@ def plan_to_path(domain, plan, plan_filepath):
     return plan, plan_filepath
 
 def validate_plan(domain, problem_file_path, plan_filepath):
-    validate_executable = f"{os.path.dirname(ROOT_DIR)}/VAL/build/macos64/Release/bin/Validate"
+    validate_executable = f"{os.path.dirname(ROOT_DIR)}/VAL/build/linux64/Release/bin/Validate"
     if domain == "blocksworld":
         domain_path = f'{ROOT_DIR}/data/textual_blocksworld/BlocksWorld-100_PDDL/domain.pddl'
     elif domain == "mystery_blocksworld":
