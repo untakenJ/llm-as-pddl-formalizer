@@ -4,6 +4,8 @@ import pandas as pd
 import re
 import argparse
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 Parser = argparse.ArgumentParser()
 Parser.add_argument("--domain", help="which domain to evaluate", choices=["blocksworld", "mystery_blocksworld", "barman", "logistics"])
 Parser.add_argument("--model", help="which model to use", choices=["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "o1-preview", "google/gemma-2-9b-it", "google/gemma-2-27b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Llama-3.1-70B-Instruct", "meta-llama/Llama-3.1-405B-Instruct", "meta-llama/Llama-3.3-70B-Instruct", "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", "deepseek-ai/DeepSeek-R1-Distill-Llama-70B", "o3-mini", "deepseek-ai/DeepSeek-R1-Distill-Llama-8B", "deepseek-reasoner"])
@@ -35,15 +37,15 @@ def plan_to_path(domain, plan, plan_filepath):
     return plan, plan_filepath
 
 def validate_plan(domain, problem_file_path, plan_filepath):
-    validate_executable = "../../VAL/build/macos64/Release/bin/Validate"
+    validate_executable = f"{os.path.dirname(ROOT_DIR)}/VAL/build/macos64/Release/bin/Validate"
     if domain == "blocksworld":
-        domain_path = '../data/textual_blocksworld/BlocksWorld-100_PDDL/domain.pddl'
+        domain_path = f'{ROOT_DIR}/data/textual_blocksworld/BlocksWorld-100_PDDL/domain.pddl'
     elif domain == "mystery_blocksworld":
-        domain_path = '../data/textual_mystery_blocksworld/Mystery_BlocksWorld-100_PDDL/domain.pddl'
+        domain_path = f'{ROOT_DIR}/data/textual_mystery_blocksworld/Mystery_BlocksWorld-100_PDDL/domain.pddl'
     elif domain == "barman":
-        domain_path = '../data/textual_barman/Barman-100_PDDL/domain.pddl'
+        domain_path = f'{ROOT_DIR}/data/textual_barman/Barman-100_PDDL/domain.pddl'
     elif domain == "logistics":
-        domain_path = '../data/textual_logistics/Logistics-100_PDDL/domain.pddl'
+        domain_path = f'{ROOT_DIR}/data/textual_logistics/Logistics-100_PDDL/domain.pddl'
     
     command = [validate_executable, "-v", domain_path, problem_file_path, plan_filepath]
     try:
@@ -74,28 +76,28 @@ def validate_plan_batch(domain, data, model, index_start, index_end, prediction_
         print(f"Running {problem_name}")
         problem_names.append(problem_name)
         if prediction_type == "llm-as-formalizer":
-            plan_file = f'../output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_plan.txt'
+            plan_file = f'{ROOT_DIR}/output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_plan.txt'
         else:
-            plan_file = f'../output/llm-as-planner/{domain}/{data}/{model_name}/{problem_name}_{model_name}_plan.txt'
+            plan_file = f'{ROOT_DIR}/output/llm-as-planner/{domain}/{data}/{model_name}/{problem_name}_{model_name}_plan.txt'
         if os.path.exists(plan_file):
             plan_found.append("yes")
             pddl_errors.append('')
             solvability += 1
             if domain == "blocksworld":
-                problem_file = f'../data/textual_blocksworld/BlocksWorld-100_PDDL/{problem_name}.pddl'
+                problem_file = f'{ROOT_DIR}/data/textual_blocksworld/BlocksWorld-100_PDDL/{problem_name}.pddl'
             elif domain == "mystery_blocksworld":
-                problem_file = f'../data/textual_mystery_blocksworld/Mystery_BlocksWorld-100_PDDL/{problem_name}.pddl'
+                problem_file = f'{ROOT_DIR}/data/textual_mystery_blocksworld/Mystery_BlocksWorld-100_PDDL/{problem_name}.pddl'
             elif domain == "barman":
-                problem_file = f'../data/textual_barman/Barman-100_PDDL/{problem_name}.pddl'
+                problem_file = f'{ROOT_DIR}/data/textual_barman/Barman-100_PDDL/{problem_name}.pddl'
             elif domain == "logistics":
-                problem_file = f'../data/textual_logistics/Logistics-100_PDDL/{problem_name}.pddl'
+                problem_file = f'{ROOT_DIR}/data/textual_logistics/Logistics-100_PDDL/{problem_name}.pddl'
 
             plan = open(plan_file).read()
 
             if prediction_type == "llm-as-formalizer":
-                new_plan_file = f'../output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_plan_VAL.txt'
+                new_plan_file = f'{ROOT_DIR}/output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_plan_VAL.txt'
             else:
-                new_plan_file = f'../output/llm-as-planner/{domain}/{data}/{model_name}/{problem_name}_{model_name}_plan_VAL.txt'
+                new_plan_file = f'{ROOT_DIR}/output/llm-as-planner/{domain}/{data}/{model_name}/{problem_name}_{model_name}_plan_VAL.txt'
 
 
             standard_plan, _ = plan_to_path(domain, plan, new_plan_file)
@@ -109,7 +111,7 @@ def validate_plan_batch(domain, data, model, index_start, index_end, prediction_
                 is_plan_correct.append("yes")
                 correctness += 1
         else:
-            error = open(f'../output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_error.txt').read()
+            error = open(f'{ROOT_DIR}/output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_error.txt').read()
             plan_found.append("no")
             pddl_errors.append(error)
             plans.append('')
@@ -119,7 +121,7 @@ def validate_plan_batch(domain, data, model, index_start, index_end, prediction_
     if csv_result:
         all_results_dict = {"problem_number": problem_names, "plan_found": plan_found, "error, if not found": pddl_errors, "plan, if found": plans, "val_result": val_results, "is_plan_correct": is_plan_correct}
         all_results = pd.DataFrame(all_results_dict)
-        result_path = f'../output/{prediction_type}/{domain}/{data}/{model_name}/{prediction_type}_{domain}_{data}_{model_name}_results.csv'
+        result_path = f'{ROOT_DIR}/output/{prediction_type}/{domain}/{data}/{model_name}/{prediction_type}_{domain}_{data}_{model_name}_results.csv'
         all_results.to_csv(result_path)
 
     print(f"Solvability: {solvability if prediction_type == 'llm-as-formalizer' else '---'}/{index_end-index_start}")

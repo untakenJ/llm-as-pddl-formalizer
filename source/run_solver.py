@@ -4,6 +4,8 @@ import pandas as pd
 import os
 import argparse
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 Parser = argparse.ArgumentParser()
 Parser.add_argument("--domain", help="which domain to evaluate", choices=["blocksworld", "mystery_blocksworld", "barman", "logistics"])
 Parser.add_argument("--model", help="which model to use", choices=["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "o1-preview", "google/gemma-2-9b-it", "google/gemma-2-27b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Llama-3.1-70B-Instruct", "meta-llama/Llama-3.1-405B-Instruct", "meta-llama/Llama-3.3-70B-Instruct", "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", "deepseek-ai/DeepSeek-R1-Distill-Llama-70B", "o3-mini", "deepseek-ai/DeepSeek-R1-Distill-Llama-8B", "deepseek-reasoner"])
@@ -18,8 +20,8 @@ def run_solver(domain, data, problem, model, solver):
     else:
         model_name = model
 
-    domain_file = open(f'../output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem}/{problem}_{model_name}_df.pddl').read()
-    problem_file = open(f'../output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem}/{problem}_{model_name}_pf.pddl').read()
+    domain_file = open(f'{ROOT_DIR}/output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem}/{problem}_{model_name}_df.pddl').read()
+    problem_file = open(f'{ROOT_DIR}/output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem}/{problem}_{model_name}_pf.pddl').read()
 
 
     plan_found = None
@@ -89,7 +91,7 @@ def run_solver_batch(domain, model, data, index_start, index_end, solver):
                     raise
             break
         if plan_found:
-            plan_path = f'../output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_plan.txt'
+            plan_path = f'{ROOT_DIR}/output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_plan.txt'
             if not os.path.exists(os.path.dirname(plan_path)):
                 os.makedirs(os.path.dirname(plan_path))
             if "Plan found with cost: 0" in result or "The empty plan solves it" in result:
@@ -99,7 +101,7 @@ def run_solver_batch(domain, model, data, index_start, index_end, solver):
             with open(plan_path, 'w') as plan_file:
                 plan_file.write(plan)
         else:
-            error_path = f'../output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_error.txt'
+            error_path = f'{ROOT_DIR}/output/llm-as-formalizer/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_error.txt'
             if not os.path.exists(os.path.dirname(error_path)):
                 os.makedirs(os.path.dirname(error_path))
             with open(error_path, 'w') as error_file:

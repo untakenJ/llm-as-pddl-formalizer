@@ -2,18 +2,11 @@ from openai import OpenAI
 import json
 import os
 import time
-
-from kani import Kani
-from kani.engines.huggingface import HuggingEngine
-from kani.prompts.impl import LLAMA3_PIPELINE
-from kani.prompts.impl import GEMMA_PIPELINE
 import asyncio
 
 import argparse
 
-from transformers import AutoModelForCausalLM, BitsAndBytesConfig
-
-quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 Parser = argparse.ArgumentParser()
 Parser.add_argument("--domain", help="which domain to evaluate", choices=["blocksworld", "mystery_blocksworld", "barman", "logistics"])
@@ -32,19 +25,30 @@ INDEX_END = eval(args.index_end)
 OPEN_SOURCED_MODELS = ["meta-llama/Meta-Llama-3.1-8B-Instruct", "google/gemma-2-9b-it", "meta-llama/Llama-3.1-70B-Instruct", "google/gemma-2-27b-it", "meta-llama/Llama-3.1-405B-Instruct", "meta-llama/Llama-3.3-70B-Instruct", "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", "deepseek-ai/DeepSeek-R1-Distill-Llama-70B", "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"]
 PROMPT = "Respond only as shown."
 if MODEL in OPEN_SOURCED_MODELS:
+    from kani import Kani
+    from kani.engines.huggingface import HuggingEngine
+    from transformers import BitsAndBytesConfig
+
+    try:
+        from kani.prompts.impl import LLAMA3_PIPELINE
+    except ImportError:
+        from kani.model_specific.llama3 import LLAMA3_PIPELINE
+
+    quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+
     if "meta-llama" in MODEL:
         ENGINE = HuggingEngine(model_id = MODEL, prompt_pipeline=LLAMA3_PIPELINE, use_auth_token=True, model_load_kwargs={"device_map": "auto", "quantization_config": quantization_config})
     elif "gemma" in MODEL:
-        ENGINE = HuggingEngine(model_id = MODEL, prompt_pipeline=GEMMA_PIPELINE, use_auth_token=True)
+        ENGINE = HuggingEngine(model_id = MODEL, prompt_pipeline=None, use_auth_token=True)
     elif "deepseek-ai" in MODEL:
         ENGINE = HuggingEngine(model_id = MODEL, prompt_pipeline=None, use_auth_token=True)
     AI = Kani(ENGINE, system_prompt=PROMPT)
 else:
     if MODEL == "deepseek-reasoner":
-        OPENAI_API_KEY = open('../../_private/key_deepseek.txt').read()
+        OPENAI_API_KEY = open(f'{ROOT_DIR}/_private/key_deepseek.txt').read()
         client = OpenAI(api_key=OPENAI_API_KEY, base_url="https://api.deepseek.com")
     else:
-        OPENAI_API_KEY = open(f'../../_private/key.txt').read()
+        OPENAI_API_KEY = open(f'{ROOT_DIR}/_private/key.txt').read()
         client = OpenAI(api_key=OPENAI_API_KEY)
 
 
@@ -52,8 +56,8 @@ def run_planner_gpt(domain, data, problem, model, force_json=False):
     output_format = "json_object" if force_json else "text"
 
 
-    domain_description = open(f'../data/textual_{domain}/{data}/{problem}_domain.txt').read()
-    problem_description = open(f'../data/textual_{domain}/{data}/{problem}_problem.txt').read()
+    domain_description = open(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_domain.txt').read()
+    problem_description = open(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_problem.txt').read()
 
     if domain == "blocksworld":
         available_actions = '(PICK-UP block): pick up a block from the table\n(PUT-DOWN block): put down a block on the table\n(STACK block1 block2): stack block1 onto block2\n(UNSTACK block1 block2): unstack block1 from block2'
@@ -97,7 +101,7 @@ def run_planner_gpt(domain, data, problem, model, force_json=False):
     plan = return_dict['plan']
 
 
-    plan_path = f'../output/llm-as-planner/{domain}/{data}/{model}/{problem}_{model}_plan.txt'
+    plan_path = f'{ROOT_DIR}/output/llm-as-planner/{domain}/{data}/{model}/{problem}_{model}_plan.txt'
     
 
     if not os.path.exists(os.path.dirname(plan_path)):
@@ -111,8 +115,8 @@ def run_planner_gpt(domain, data, problem, model, force_json=False):
 
 
 async def run_planner_open_sourced(domain, data, problem):
-    domain_description = open(f'../data/textual_{domain}/{data}/{problem}_domain.txt').read()
-    problem_description = open(f'../data/textual_{domain}/{data}/{problem}_problem.txt').read()
+    domain_description = open(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_domain.txt').read()
+    problem_description = open(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_problem.txt').read()
 
     if domain == "blocksworld":
         available_actions = '(PICK-UP block): pick up a block from the table\n(PUT-DOWN block): put down a block on the table\n(STACK block1 block2): stack block1 onto block2\n(UNSTACK block1 block2): unstack block1 from block2'
@@ -146,7 +150,7 @@ async def run_planner_open_sourced(domain, data, problem):
 
 
     _, model_name = MODEL.split('/')
-    plan_path = f'../output/llm-as-planner/{domain}/{data}/{model_name}/{problem}_{model_name}_plan.txt'
+    plan_path = f'{ROOT_DIR}/output/llm-as-planner/{domain}/{data}/{model_name}/{problem}_{model_name}_plan.txt'
     
 
     if not os.path.exists(os.path.dirname(plan_path)):
