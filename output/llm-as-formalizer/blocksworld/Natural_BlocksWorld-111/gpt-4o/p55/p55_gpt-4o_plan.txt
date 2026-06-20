@@ -1,4 +1,0 @@
-(pickupfromblock     block4     block2)
-(putdownontable     block4)
-(pickupfromblock     block3     block5)
-(putdownontable     block3)

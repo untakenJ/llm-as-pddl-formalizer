@@ -1,1 +1,0 @@
-(define (problem blocksworld-problem)

@@ -1,3 +1,0 @@
-
-domain: syntax error in line 46, ')':
-domain definition expected

@@ -1,2 +1,0 @@
-(pickup g)
-(stack g f)

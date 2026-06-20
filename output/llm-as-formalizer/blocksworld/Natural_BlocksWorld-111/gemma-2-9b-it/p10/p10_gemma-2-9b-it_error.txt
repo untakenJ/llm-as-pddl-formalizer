@@ -1,3 +1,0 @@
-
-problem: syntax error in line 4, '.':
-'define' expected

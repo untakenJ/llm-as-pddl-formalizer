@@ -1,2 +1,4 @@
 _private/
 output/
+__pycache__/
+*.pyc
