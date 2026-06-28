@@ -1,70 +1,42 @@
 """Standalone API-only variant of llm-as-formalizer.py.
 
-Uses OpenAI's Responses API (``client.responses.create``) instead of the older
-Chat Completions endpoint. This gives us:
-- structured output via ``json_schema`` (no fragile substring parsing)
-- a tool-calling loop driven by ``previous_response_id`` chaining
-- access to OpenAI-hosted tools (``web_search``, ``file_search``,
-  ``code_interpreter``, ``image_generation``, ``mcp``) in addition to
-  user-defined ``function`` tools
-- optional per-problem JSONL trace file capturing every request, response,
-  hosted-tool event (web_search/code_interpreter/reasoning) and local
-  ``function`` execution; written to the same directory as the .pddl outputs
+Supports:
+- **OpenAI** Responses API (``client.responses.create``): structured JSON, optional
+  hosted tools (``web_search``, ``code_interpreter``).
+- **Gemini** via Google GenAI SDK: structured JSON (``response_json_schema``).
 
-Note: DeepSeek's API only exposes a Chat Completions-compatible endpoint, so
-``deepseek-reasoner`` is intentionally not supported here -- use the original
-``llm-as-formalizer.py`` for that model.
+API keys in ``_private/``:
+- OpenAI: ``key.txt``
+- Gemini: ``key_gemini.txt`` (or env ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY``)
+
+Note: DeepSeek has no Responses endpoint -- use ``llm-as-formalizer.py`` instead.
 
 Example:
-    python3 source/llm-as-formalizer-api.py \
-        --domain blocksworld \
-        --model gpt-4o-mini \
-        --data Heavily_Templated_BlocksWorld-100 \
-        --index_start 1 --index_end 11
-        # --no-trace to disable trace recording (default is on)
+    python3 source/llm-as-formalizer-api.py \\
+        --domain blocksworld --model gpt-4o-mini \\
+        --data Heavily_Templated_BlocksWorld-100 --index_start 1 --index_end 11
+
+    python3 source/llm-as-formalizer-api.py \\
+        --domain blocksworld --model gemini-2.5-flash \\
+        --data Heavily_Templated_BlocksWorld-100 --indices 1,2,3
 """
 
-from openai import OpenAI
 import json
 import os
 import argparse
-import datetime
 import time
 
 from batch_utils import format_problem_name, run_parallel
+from api_providers import (
+    API_MODELS,
+    Tracer,
+    build_provider_client,
+    default_tools_for_model,
+    is_reasoning_model,
+    respond_with_tools,
+)
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-API_MODELS = [
-    "gpt-3.5-turbo",
-    "gpt-4o-mini",
-    "gpt-4o",
-    "gpt-4.1",
-    "gpt-4.1-mini",
-    "gpt-4.1-nano",
-    "o1-preview",
-    "o3",
-    "o3-mini",
-    "o4-mini",
-    "gpt-5",
-    "gpt-5-mini",
-    "gpt-5-nano",
-    "gpt-5.1",
-    "gpt-5.1-mini",
-    "gpt-5.2",
-    "gpt-5.2-mini",
-    "gpt-5.3",
-    "gpt-5.3-mini",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.5",
-    "gpt-5.5-mini",
-]
-
-# Models that support OpenAI's reasoning interface (and therefore allow us to
-# request a textual summary of their internal reasoning via reasoning.summary).
-REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5")
-
 
 Parser = argparse.ArgumentParser()
 Parser.add_argument("--domain", help="which domain to evaluate", choices=["blocksworld", "mystery_blocksworld", "barman", "logistics"])
@@ -93,153 +65,17 @@ PDDL_OUTPUT_SCHEMA = {
 }
 
 
-def build_client():
-    api_key = open(f'{ROOT_DIR}/_private/key.txt').read().strip()
-    return OpenAI(api_key=api_key)
-
-
-def _is_reasoning_model(model: str) -> bool:
-    return any(model.startswith(p) for p in REASONING_PREFIXES)
-
-
-def _serialize_response(resp):
-    """Convert the OpenAI Responses object (a pydantic model) into a JSON-friendly dict.
-
-    ``model_dump(mode="json")`` recursively coerces every field (timestamps,
-    enums, nested events, usage, etc.) into JSON-native types.
-    """
-    if hasattr(resp, "model_dump"):
-        return resp.model_dump(mode="json", exclude_none=True)
-    if hasattr(resp, "to_dict"):
-        return resp.to_dict()
-    return {"_repr": repr(resp)}
-
-
-def _now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
-
-
-class _Tracer:
-    """Append-only JSONL writer. No-ops when ``path`` is None."""
-
-    def __init__(self, path):
-        self.path = path
-        if path:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            # 'w': start fresh per run; line-buffered so events flush immediately
-            self._fp = open(path, "w", buffering=1)
-        else:
-            self._fp = None
-
-    def emit(self, event: str, **fields):
-        if self._fp is None:
-            return
-        rec = {"event": event, "ts": _now(), **fields}
-        self._fp.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
-
-    def close(self):
-        if self._fp is not None:
-            self._fp.close()
-            self._fp = None
-
-
-def _respond_with_tools(client, model, input_items, text_format, tools=None, tool_executors=None, tool_choice="auto", max_tool_rounds=8, tracer=None):
-    """Drive a Responses API call, looping until the model stops calling tools.
-
-    Only ``function`` tool calls require local execution; hosted tools
-    (``web_search``, ``file_search``, ``code_interpreter`` etc.) are resolved
-    server-side and never surface as ``function_call`` items.
-
-    When ``tracer`` is provided, every request, response, and local tool
-    execution is appended as a JSONL event so the full conversation -- including
-    OpenAI-internal reasoning summaries, web_search queries and
-    code_interpreter code/outputs -- is replayable offline.
-    """
-
-    def _create(input_payload, round_idx, previous_response_id=None):
-        kwargs = {
-            "model": model,
-            "input": input_payload,
-            "text": {"format": text_format},
-        }
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = tool_choice
-        if previous_response_id is not None:
-            kwargs["previous_response_id"] = previous_response_id
-        if _is_reasoning_model(model):
-            kwargs["reasoning"] = {"summary": "auto"}
-
-        if tracer:
-            tracer.emit("request", round=round_idx, kwargs=kwargs)
-        t0 = time.monotonic()
-        try:
-            resp = client.responses.create(**kwargs)
-        except Exception as e:
-            if tracer:
-                tracer.emit("api_error", round=round_idx,
-                            elapsed_ms=(time.monotonic() - t0) * 1000.0,
-                            error_type=type(e).__name__,
-                            error_message=str(e))
-            raise
-        elapsed_ms = (time.monotonic() - t0) * 1000.0
-        if tracer:
-            tracer.emit("response", round=round_idx,
-                        elapsed_ms=elapsed_ms,
-                        response=_serialize_response(resp))
-        return resp
-
-    response = _create(input_items, round_idx=0)
-
-    for round_idx in range(1, max_tool_rounds + 1):
-        function_calls = [item for item in response.output if getattr(item, "type", None) == "function_call"]
-
-        if not function_calls:
-            return response.output_text
-
-        followup_input = []
-        for fc in function_calls:
-            fn_name = fc.name
-            args_for_log = fc.arguments
-            duration_ms = 0.0
-            try:
-                fn_args = json.loads(fc.arguments or "{}")
-                args_for_log = fn_args
-            except json.JSONDecodeError as e:
-                tool_result = {"error": f"Invalid JSON arguments: {e}"}
-            else:
-                if tool_executors and fn_name in tool_executors:
-                    t0 = time.monotonic()
-                    try:
-                        tool_result = tool_executors[fn_name](**fn_args)
-                    except Exception as e:
-                        tool_result = {"error": f"Tool '{fn_name}' raised: {e}"}
-                    duration_ms = (time.monotonic() - t0) * 1000.0
-                else:
-                    tool_result = {"error": f"No executor registered for tool '{fn_name}'"}
-
-            if tracer:
-                tracer.emit("tool_exec", round=round_idx,
-                            name=fn_name, arguments=args_for_log,
-                            result=tool_result, duration_ms=duration_ms,
-                            call_id=fc.call_id)
-
-            followup_input.append({
-                "type": "function_call_output",
-                "call_id": fc.call_id,
-                "output": tool_result if isinstance(tool_result, str) else json.dumps(tool_result),
-            })
-
-        response = _create(followup_input, round_idx=round_idx, previous_response_id=response.id)
-
-    raise RuntimeError(f"Tool-calling loop exceeded max_tool_rounds={max_tool_rounds}")
-
-
-def run_formalizer_gpt(client, domain, data, problem, model, tools=None, tool_executors=None, record_trace=True, out_dir_root=None):
+def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=None,
+                       tool_executors=None, record_trace=True, out_dir_root=None):
     domain_description = open(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_domain.txt').read()
     problem_description = open(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_problem.txt').read()
 
-    prompt = f"You are a PDDL expert. Here is a game we are playing.\n{domain_description}\n{problem_description}\nWrite the domain and problem files in minimal PDDL."
+    prompt = (
+        f"You are a PDDL expert. Here is a game we are playing.\n"
+        f"{domain_description}\n{problem_description}\n"
+        "Write the domain and problem files in minimal PDDL.\n"
+        "Please focus on the problem itself and do it independently. DO NOT reference any existing datasets."
+    )
 
     input_items = [{"role": "user", "content": prompt}]
     text_format = {
@@ -253,22 +89,24 @@ def run_formalizer_gpt(client, domain, data, problem, model, tools=None, tool_ex
     out_dir = f'{out_root}/llm-as-formalizer-api/{domain}/{data}/{model}/{problem}'
     os.makedirs(out_dir, exist_ok=True)
     trace_path = f'{out_dir}/{problem}_{model}_trace.jsonl' if record_trace else None
-    tracer = _Tracer(trace_path)
+    tracer = Tracer(trace_path)
 
     t_start = time.monotonic()
     try:
         tracer.emit("start",
                     pipeline="llm-as-formalizer-api",
+                    provider=provider,
                     domain=domain, data=data, problem=problem, model=model,
-                    is_reasoning_model=_is_reasoning_model(model),
-                    tools=tools,
+                    is_reasoning_model=is_reasoning_model(model),
+                    tools=tools if provider == "openai" else [],
                     tool_executors=list(tool_executors.keys()) if tool_executors else [],
                     text_format=text_format,
                     prompt=prompt,
                     domain_description=domain_description,
                     problem_description=problem_description)
 
-        return_string = _respond_with_tools(
+        return_string = respond_with_tools(
+            provider=provider,
             client=client,
             model=model,
             input_items=input_items,
@@ -308,12 +146,13 @@ def run_formalizer_gpt(client, domain, data, problem, model, tools=None, tool_ex
         tracer.close()
 
 
-def run_gpt_batch(client, domain, model, data, problem_numbers, tools=None, tool_executors=None,
-                  record_trace=True, out_dir_root=None, workers=1):
+def run_gpt_batch(provider, client, domain, model, data, problem_numbers, tools=None,
+                  tool_executors=None, record_trace=True, out_dir_root=None, workers=1):
     def _run_one(problem_number):
         problem_name = format_problem_name(problem_number)
         print(f"Running {problem_name}", flush=True)
         run_formalizer_gpt(
+            provider=provider,
             client=client,
             domain=domain,
             data=data,
@@ -326,15 +165,6 @@ def run_gpt_batch(client, domain, model, data, problem_numbers, tools=None, tool
         )
 
     run_parallel(problem_numbers, _run_one, workers=workers)
-
-
-TOOLS = [
-    {"type": "web_search"},
-    {"type": "code_interpreter", "container": {"type": "auto"}},
-]
-
-
-TOOL_EXECUTORS = {}
 
 
 def _resolve_problem_numbers(args):
@@ -355,15 +185,18 @@ if __name__ == "__main__":
     OUT_DIR_ROOT = args.out_dir
     WORKERS = args.workers
 
-    client = build_client()
+    provider, client = build_provider_client(MODEL)
+    tools, tool_executors = default_tools_for_model(MODEL)
+
     run_gpt_batch(
+        provider=provider,
         client=client,
         domain=DOMAIN,
         model=MODEL,
         data=DATA,
         problem_numbers=PROBLEM_NUMBERS,
-        tools=TOOLS or None,
-        tool_executors=TOOL_EXECUTORS or None,
+        tools=tools,
+        tool_executors=tool_executors,
         record_trace=RECORD_TRACE,
         out_dir_root=OUT_DIR_ROOT,
         workers=WORKERS,
