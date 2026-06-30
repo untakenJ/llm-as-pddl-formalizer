@@ -18,7 +18,7 @@ Parser.add_argument("--indices", default=None,
                     help="comma-separated problem numbers (e.g. '1,5,17'); overrides --index_start/--index_end when provided")
 Parser.add_argument("--out_dir", default=None,
                     help="base output directory; defaults to {ROOT_DIR}/output")
-Parser.add_argument("--prediction_type", help="which pipeline produced the plan", choices=["llm-as-formalizer", "llm-as-formalizer-api", "llm-as-planner", "llm-as-planner-api"])
+Parser.add_argument("--prediction_type", help="which pipeline produced the plan", choices=["llm-as-formalizer", "llm-as-formalizer-api", "llm-as-formalizer-antigravity", "llm-as-formalizer-agent", "llm-as-planner", "llm-as-planner-api"])
 Parser.add_argument("--csv_result", help="get full output as csv file", action='store_true')
 Parser.add_argument("--workers", type=int, default=1,
                     help="parallel worker threads for independent problems (default 1 = sequential)")
@@ -78,7 +78,7 @@ def _validate_one_problem(problem_number, domain, data, model_name, prediction_t
     problem_name = format_problem_name(problem_number)
     print(f"Running {problem_name}", flush=True)
 
-    if prediction_type in ("llm-as-formalizer", "llm-as-formalizer-api"):
+    if prediction_type in ("llm-as-formalizer", "llm-as-formalizer-api", "llm-as-formalizer-antigravity", "llm-as-formalizer-agent"):
         plan_file = f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_plan.txt'
     else:
         plan_file = f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem_name}_{model_name}_plan.txt'
@@ -87,7 +87,7 @@ def _validate_one_problem(problem_number, domain, data, model_name, prediction_t
         problem_file = _problem_file_path(domain, problem_name)
         plan = open(plan_file).read()
 
-        if prediction_type in ("llm-as-formalizer", "llm-as-formalizer-api"):
+        if prediction_type in ("llm-as-formalizer", "llm-as-formalizer-api", "llm-as-formalizer-antigravity", "llm-as-formalizer-agent"):
             new_plan_file = f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_plan_VAL.txt'
         else:
             new_plan_file = f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem_name}_{model_name}_plan_VAL.txt'
@@ -106,7 +106,7 @@ def _validate_one_problem(problem_number, domain, data, model_name, prediction_t
             "correct_inc": 1 if is_correct == "yes" else 0,
         }
 
-    if prediction_type in ("llm-as-formalizer", "llm-as-formalizer-api"):
+    if prediction_type in ("llm-as-formalizer", "llm-as-formalizer-api", "llm-as-formalizer-antigravity", "llm-as-formalizer-agent"):
         error_path = f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_error.txt'
     else:
         error_path = f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem_name}_{model_name}_error.txt'
@@ -154,7 +154,7 @@ def validate_plan_batch(domain, data, model, problem_numbers, prediction_type, c
         os.makedirs(os.path.dirname(result_path), exist_ok=True)
         all_results.to_csv(result_path)
 
-    is_formalizer = prediction_type in ("llm-as-formalizer", "llm-as-formalizer-api")
+    is_formalizer = prediction_type in ("llm-as-formalizer", "llm-as-formalizer-api", "llm-as-formalizer-antigravity", "llm-as-formalizer-agent")
     print(f"Solvability: {solvability if is_formalizer else '---'}/{total}")
     print(f"Correctness: {correctness}/{total}")
 

@@ -1,12 +1,22 @@
 """LLM API backends for the *-api formalizer/planner scripts.
 
 - **OpenAI**: Responses API (``client.responses.create``) with optional hosted tools.
-- **Gemini**: Google GenAI SDK (``google.genai``) with JSON-schema structured output.
+- **Gemini**: Google GenAI SDK on **Gemini Enterprise Agent Platform** (ADC) with
+  JSON-schema structured output.
 
-API keys (under ``_private/``, gitignored):
+Gemini credentials (``_private/.env`` via ``env_loader``, or shell env):
 
-- OpenAI: ``key.txt`` (existing)
-- Gemini: ``key_gemini.txt`` (new), or env ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY``
+- ``GOOGLE_GENAI_USE_ENTERPRISE=true``
+- ``GOOGLE_CLOUD_PROJECT``
+- ``GOOGLE_CLOUD_LOCATION`` (e.g. ``global``)
+- Application Default Credentials (``gcloud auth application-default login`` or
+  ``GOOGLE_APPLICATION_CREDENTIALS``)
+
+OpenAI: ``_private/key.txt``
+
+All Gemini access (formalizer-api, planner-api, and the Antigravity
+Interactions API / remote sandbox) uses **Gemini Enterprise via ADC only** --
+no Developer API key (``key_gemini.txt`` / ``GEMINI_API_KEY`` are not used).
 """
 
 from __future__ import annotations
@@ -18,7 +28,13 @@ import time
 
 from openai import OpenAI
 
+from env_loader import load_project_dotenv
+
+load_project_dotenv()
+
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+GEMINI_PROVIDER = "gemini-enterprise"
 
 OPENAI_API_MODELS = [
     "gpt-3.5-turbo",
@@ -96,26 +112,73 @@ def _read_key_file(filename: str) -> str:
     return open(path).read().strip()
 
 
-def read_gemini_api_key() -> str:
-    gemini_path = os.path.join(ROOT_DIR, "_private", "key_gemini.txt")
-    if os.path.exists(gemini_path):
-        return open(gemini_path).read().strip()
-    for env_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
-        value = os.environ.get(env_name, "").strip()
-        if value:
-            return value
-    raise SystemExit(
-        "Gemini API key not found. Create _private/key_gemini.txt "
-        "or set GEMINI_API_KEY / GOOGLE_API_KEY."
-    )
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+
+
+def gemini_enterprise_enabled() -> bool:
+    """True when Gemini Enterprise Agent Platform env is configured."""
+    return _truthy_env("GOOGLE_GENAI_USE_ENTERPRISE")
+
+
+def require_gemini_enterprise_config() -> None:
+    """Exit with a clear message if Enterprise env is incomplete."""
+    missing = []
+    if not gemini_enterprise_enabled():
+        missing.append("GOOGLE_GENAI_USE_ENTERPRISE=true")
+    if not os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip():
+        missing.append("GOOGLE_CLOUD_PROJECT")
+    if not os.environ.get("GOOGLE_CLOUD_LOCATION", "").strip():
+        missing.append("GOOGLE_CLOUD_LOCATION")
+    if missing:
+        raise SystemExit(
+            "Gemini Enterprise configuration incomplete. Set in _private/.env or "
+            "the shell:\n  " + "\n  ".join(missing) + "\n"
+            "Then authenticate: gcloud auth application-default login"
+        )
+
+
+def sanitize_model_name(model: str) -> str:
+    """Filesystem-safe model label (for output paths and run_solver/run_val)."""
+    return model.replace("/", "__").replace(":", "_").replace(" ", "_")
+
+
+def build_gemini_client():
+    """Construct a ``google.genai.Client`` for Gemini Enterprise (ADC).
+
+    Pins ``api_version="v1"`` for ``generate_content`` (formalizer-api /
+    planner-api). For the Antigravity Interactions API use
+    :func:`build_gemini_interactions_client` instead (it must stay on the
+    Enterprise default ``v1beta1``).
+    """
+    from google import genai
+    from google.genai.types import HttpOptions
+
+    require_gemini_enterprise_config()
+    return genai.Client(http_options=HttpOptions(api_version="v1"))
+
+
+def build_gemini_interactions_client():
+    """Construct a ``google.genai.Client`` for the Antigravity Interactions API
+    on **Gemini Enterprise Agent Platform** (ADC).
+
+    Unlike :func:`build_gemini_client`, this does *not* pin ``api_version``:
+    the Interactions API and the Antigravity remote sandbox are served on the
+    Enterprise default (``v1beta1``); pinning ``v1`` returns 404 for
+    ``interactions``. Authentication uses Application Default Credentials
+    (``gcloud auth application-default login`` or
+    ``GOOGLE_APPLICATION_CREDENTIALS``), not a Developer API key.
+    """
+    from google import genai
+
+    require_gemini_enterprise_config()
+    return genai.Client()
 
 
 def build_provider_client(model: str) -> tuple[str, object]:
-    """Return ``(provider_name, client)`` where provider is ``openai`` or ``gemini``."""
+    """Return ``(provider_name, client)`` where provider is ``openai`` or ``gemini-enterprise``."""
     if is_gemini_model(model):
-        from google import genai
-
-        return "gemini", genai.Client(api_key=read_gemini_api_key())
+        return GEMINI_PROVIDER, build_gemini_client()
     return "openai", OpenAI(api_key=_read_key_file("key.txt"))
 
 
@@ -315,24 +378,33 @@ def _format_gemini_rejection_message(details: dict) -> str:
     return "; ".join(parts)
 
 
-def _respond_gemini(client, model, input_items, text_format, tracer=None) -> str:
+def generate_gemini_json(
+    client,
+    model: str,
+    prompt: str,
+    schema: dict,
+    *,
+    tracer=None,
+) -> str:
+    """Generate JSON matching ``schema`` via Gemini Enterprise."""
     from google.genai import types
 
-    prompt = _prompt_from_input_items(input_items)
-    schema = text_format["schema"]
     config = types.GenerateContentConfig(
         response_mime_type="application/json",
         response_json_schema=schema,
     )
     request_log = {
         "model": model,
-        "provider": "gemini",
+        "provider": GEMINI_PROVIDER,
+        "backend": "gemini-enterprise",
         "response_mime_type": "application/json",
         "response_json_schema": schema,
         "prompt_chars": len(prompt),
+        "project": os.environ.get("GOOGLE_CLOUD_PROJECT"),
+        "location": os.environ.get("GOOGLE_CLOUD_LOCATION"),
     }
     if tracer:
-        tracer.emit("request", round=0, provider="gemini", kwargs=request_log)
+        tracer.emit("request", round=0, provider=GEMINI_PROVIDER, kwargs=request_log)
 
     t0 = time.monotonic()
     try:
@@ -343,17 +415,25 @@ def _respond_gemini(client, model, input_items, text_format, tracer=None) -> str
         )
     except Exception as e:
         if tracer:
-            tracer.emit("api_error", round=0, provider="gemini",
-                        elapsed_ms=(time.monotonic() - t0) * 1000.0,
-                        error_type=type(e).__name__,
-                        error_message=str(e))
+            tracer.emit(
+                "api_error",
+                round=0,
+                provider=GEMINI_PROVIDER,
+                elapsed_ms=(time.monotonic() - t0) * 1000.0,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
         raise
 
     elapsed_ms = (time.monotonic() - t0) * 1000.0
     if tracer:
-        tracer.emit("response", round=0, provider="gemini",
-                    elapsed_ms=elapsed_ms,
-                    response=_serialize_response(resp))
+        tracer.emit(
+            "response",
+            round=0,
+            provider=GEMINI_PROVIDER,
+            elapsed_ms=elapsed_ms,
+            response=_serialize_response(resp),
+        )
 
     text = resp.text
     if not text:
@@ -361,15 +441,22 @@ def _respond_gemini(client, model, input_items, text_format, tracer=None) -> str
         message = _format_gemini_rejection_message(rejection)
         print(message, flush=True)
         if tracer:
-            tracer.emit("gemini_rejection", provider="gemini", **rejection)
+            tracer.emit("gemini_rejection", provider=GEMINI_PROVIDER, **rejection)
         raise RuntimeError(message)
     return text
+
+
+def _respond_gemini(client, model, input_items, text_format, tracer=None) -> str:
+    prompt = _prompt_from_input_items(input_items)
+    return generate_gemini_json(
+        client, model, prompt, text_format["schema"], tracer=tracer
+    )
 
 
 def respond_with_tools(provider: str, client, model, input_items, text_format,
                        tools=None, tool_executors=None, tool_choice="auto",
                        max_tool_rounds=8, tracer=None) -> str:
-    if provider == "gemini":
+    if provider == GEMINI_PROVIDER or provider == "gemini":
         if tools:
             # OpenAI-hosted tools are not available on the Gemini path.
             pass

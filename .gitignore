@@ -2,3 +2,5 @@ _private/
 output/
 __pycache__/
 *.pyc
+.cache/
+.vscode/

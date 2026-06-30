@@ -3,11 +3,13 @@
 Supports:
 - **OpenAI** Responses API (``client.responses.create``): structured JSON, optional
   hosted tools (``web_search``, ``code_interpreter``).
-- **Gemini** via Google GenAI SDK: structured JSON (``response_json_schema``).
+- **Gemini** via Google GenAI SDK on **Gemini Enterprise Agent Platform** (ADC).
 
-API keys in ``_private/``:
-- OpenAI: ``key.txt``
-- Gemini: ``key_gemini.txt`` (or env ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY``)
+Credentials in ``_private/.env`` (python-dotenv) or shell env:
+- OpenAI: ``_private/key.txt``
+- Gemini Enterprise: ``GOOGLE_GENAI_USE_ENTERPRISE=true``,
+  ``GOOGLE_CLOUD_PROJECT``, ``GOOGLE_CLOUD_LOCATION``; ADC via
+  ``gcloud auth application-default login``
 
 Note: DeepSeek has no Responses endpoint -- use ``llm-as-formalizer.py`` instead.
 
@@ -20,6 +22,10 @@ Example:
         --domain blocksworld --model gemini-2.5-flash \\
         --data Heavily_Templated_BlocksWorld-100 --indices 1,2,3
 """
+
+from env_loader import load_project_dotenv
+
+load_project_dotenv()
 
 import json
 import os

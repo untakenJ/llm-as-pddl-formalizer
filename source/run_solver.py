@@ -19,7 +19,7 @@ Parser.add_argument("--indices", default=None,
 Parser.add_argument("--out_dir", default=None,
                     help="base output directory; defaults to {ROOT_DIR}/output")
 Parser.add_argument("--solver", help="which solver to use", default="dual-bfws-ffparser")
-Parser.add_argument("--prediction_type", help="which formalizer pipeline produced the PDDL", choices=["llm-as-formalizer", "llm-as-formalizer-api"], default="llm-as-formalizer")
+Parser.add_argument("--prediction_type", help="which formalizer pipeline produced the PDDL", choices=["llm-as-formalizer", "llm-as-formalizer-api", "llm-as-formalizer-antigravity", "llm-as-formalizer-agent"], default="llm-as-formalizer")
 Parser.add_argument("--workers", type=int, default=1,
                     help="parallel worker threads for independent problems (default 1 = sequential)")
 

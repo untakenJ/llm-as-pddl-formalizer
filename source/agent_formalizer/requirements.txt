@@ -1,0 +1,18 @@
+# The agentic formalizer pipeline itself uses only the Python standard library;
+# it shells out to `docker` and to each claw's CLI. There are no Python package
+# dependencies for running source/agent_formalizer/run_formalizer_agent.py.
+#
+# System / external requirements instead:
+#   - Docker (the `docker` CLI must be on PATH and usable by the current user).
+#   - A base image (build with docker/Dockerfile, default pddl-agent-base:latest).
+#   - The chosen claw's runtime on the host. For OpenClaw:
+#       * the `openclaw` CLI on PATH,
+#       * Node.js (default /usr/bin/node),
+#       * the openclaw module dir (default /usr/lib/node_modules/openclaw),
+#       * the openclaw state dir (default ~/.openclaw),
+#     all overridable via the OPENCLAW_* environment variables (see config.py).
+#   - The model provider API key in the environment (e.g. OPENROUTER_API_KEY),
+#     as configured for your OpenClaw install.
+#
+# Downstream evaluation (run_solver.py / run_val.py) keeps its existing
+# requirements (requests, pandas, VAL); see the repository README.
