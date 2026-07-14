@@ -143,14 +143,14 @@ class AgentWorkspace:
         them on disk lets the agent re-read them with its own file tools.
         """
         self.run_in_container(f"mkdir -p {shlex.quote(CONTAINER_WORKSPACE)}/input")
-        self._write_file(
+        self.write_text_file(
             f"{CONTAINER_WORKSPACE}/input/domain_description.txt", domain_description
         )
-        self._write_file(
+        self.write_text_file(
             f"{CONTAINER_WORKSPACE}/input/problem_description.txt", problem_description
         )
 
-    def _write_file(self, container_path: str, content: str) -> None:
+    def write_text_file(self, container_path: str, content: str) -> bool:
         """Write ``content`` to ``container_path`` via a heredoc-free stdin pipe."""
         proc = subprocess.run(
             ["docker", "exec", "-i", self.container_name,
@@ -162,6 +162,8 @@ class AgentWorkspace:
         )
         if proc.returncode != 0:
             logger.warning("Failed to seed %s: %s", container_path, proc.stderr)
+            return False
+        return True
 
     def read_pddl_outputs(self) -> tuple[str | None, str | None]:
         """Read the agent-authored domain/problem files from the workspace.

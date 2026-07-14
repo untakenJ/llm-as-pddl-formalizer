@@ -1,16 +1,15 @@
 """Load project-local ``.env`` files (``python-dotenv``).
 
 Looks for ``_private/.env`` and ``_private/gemini.env`` under the repo root.
-Existing shell environment variables are not overwritten (``override=False``).
+Project env files override inherited shell values, matching
+``agent_formalizer.util.load_private_secrets``.
 
-Gemini in this repo uses **Gemini Enterprise Agent Platform** only (ADC)::
+Gemini in this repo uses **Gemini Enterprise Agent Platform / Vertex** via a
+Google Cloud API key::
 
-    GOOGLE_GENAI_USE_ENTERPRISE=true
+    GOOGLE_CLOUD_API_KEY=your-cloud-api-key
     GOOGLE_CLOUD_PROJECT=your-project-id
     GOOGLE_CLOUD_LOCATION=global
-
-Authenticate with ``gcloud auth application-default login`` or
-``GOOGLE_APPLICATION_CREDENTIALS``.
 """
 
 from __future__ import annotations
@@ -36,10 +35,12 @@ def load_project_dotenv() -> bool:
 
     loaded_any = False
     private = ROOT_DIR / "_private"
-    for name in (".env", "gemini.env"):
+    # Load legacy gemini.env first, then .env, so _private/.env remains the
+    # highest-priority project credential source.
+    for name in ("gemini.env", ".env"):
         path = private / name
         if path.is_file():
-            load_dotenv(path, override=False)
+            load_dotenv(path, override=True)
             loaded_any = True
 
     # If project/location are set but the enterprise flag is missing, enable it.

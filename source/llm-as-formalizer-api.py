@@ -3,13 +3,13 @@
 Supports:
 - **OpenAI** Responses API (``client.responses.create``): structured JSON, optional
   hosted tools (``web_search``, ``code_interpreter``).
-- **Gemini** via Google GenAI SDK on **Gemini Enterprise Agent Platform** (ADC).
+- **Gemini** via Google GenAI SDK on **Gemini Enterprise Agent Platform / Vertex**
+  using ``GOOGLE_CLOUD_API_KEY``.
 
 Credentials in ``_private/.env`` (python-dotenv) or shell env:
 - OpenAI: ``_private/key.txt``
-- Gemini Enterprise: ``GOOGLE_GENAI_USE_ENTERPRISE=true``,
-  ``GOOGLE_CLOUD_PROJECT``, ``GOOGLE_CLOUD_LOCATION``; ADC via
-  ``gcloud auth application-default login``
+- Gemini Vertex: ``GOOGLE_CLOUD_API_KEY``, ``GOOGLE_CLOUD_PROJECT``,
+  ``GOOGLE_CLOUD_LOCATION``. This path does not use browser/ADC auth.
 
 Note: DeepSeek has no Responses endpoint -- use ``llm-as-formalizer.py`` instead.
 

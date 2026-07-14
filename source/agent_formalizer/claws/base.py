@@ -15,6 +15,7 @@ Hook call order for one problem (see orchestrator.run_one_problem):
     iter_tool_calls(agent_id, artifact_dir) # yield normalized tool-call records
     iter_agent_steps(agent_id, artifact_dir) # yield per-step agent loop records
     backup_session(agent_id, artifact_dir)  # save raw session logs
+    workspace.cleanup()                     # unmount runtime/state paths
     delete_agent(agent_id)                  # teardown (always called)
 """
 
@@ -43,6 +44,10 @@ class BaseClawAdapter:
     # ------------------------------------------------------------------
     # Container integration
     # ------------------------------------------------------------------
+
+    def validate_runtime(self) -> None:
+        """Fail early when the harness runtime or credentials are unavailable."""
+        return None
 
     def container_run_args(self, instance_id: str) -> list[str]:
         """Extra arguments for ``docker run`` (bind mounts, env vars)."""

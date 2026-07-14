@@ -1,12 +1,17 @@
-import requests
-import time
-import pandas as pd
-import os
 import argparse
+import json
+import os
+import time
+import traceback
+
+import requests
 
 from batch_utils import format_problem_name, run_parallel
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SOLVER_BASE_URL = "https://solver.planning.domains:5001"
+REQUEST_TIMEOUT_SECONDS = 30
+POLL_INTERVAL_SECONDS = 0.5
 
 Parser = argparse.ArgumentParser()
 Parser.add_argument("--domain", help="which domain to evaluate", choices=["blocksworld", "mystery_blocksworld", "barman", "logistics"])
@@ -23,101 +28,324 @@ Parser.add_argument("--prediction_type", help="which formalizer pipeline produce
 Parser.add_argument("--workers", type=int, default=1,
                     help="parallel worker threads for independent problems (default 1 = sequential)")
 
-def run_solver(domain, data, problem, model, solver, prediction_type="llm-as-formalizer", out_dir_root=None):
+
+def _model_output_name(model):
+    if "/" not in model:
+        return model
     if "meta" in model or "google" in model or "deepseek-ai" in model:
-        _, model_name = model.split("/")
+        return model.split("/", 1)[1]
+    return model
+
+
+def _log_value(value, limit=16000):
+    """Render remote data for a bounded, human-readable error record."""
+    if isinstance(value, str):
+        rendered = value
     else:
-        model_name = model
+        try:
+            rendered = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+        except (TypeError, ValueError):
+            rendered = repr(value)
+    if len(rendered) <= limit:
+        return rendered
+    return rendered[:limit] + f"\n... truncated {len(rendered) - limit} characters"
+
+
+def _solver_failure(stage, message, *, solver, task_url=None, response=None, payload=None):
+    """Build a diagnostic that can be written directly to a per-problem file."""
+    lines = [
+        "solver request failed",
+        f"stage: {stage}",
+        f"solver: {solver}",
+        f"message: {message}",
+    ]
+    if task_url:
+        lines.append(f"task_url: {task_url}")
+    if response is not None:
+        status_code = getattr(response, "status_code", "unknown")
+        lines.append(f"http_status: {status_code}")
+    if payload is not None:
+        lines.extend(("response_json:", _log_value(payload)))
+    elif response is not None:
+        response_text = getattr(response, "text", "")
+        if response_text:
+            lines.extend(("response_body:", _log_value(response_text)))
+    return False, "\n".join(lines)
+
+
+def _decode_solver_response(response, *, stage, solver, task_url=None):
+    try:
+        payload = response.json()
+    except (TypeError, ValueError) as exc:
+        return None, _solver_failure(
+            stage,
+            f"response was not valid JSON ({type(exc).__name__}: {exc})",
+            solver=solver,
+            task_url=task_url,
+            response=response,
+        )
+
+    if not isinstance(payload, dict):
+        return None, _solver_failure(
+            stage,
+            f"expected a JSON object, got {type(payload).__name__}",
+            solver=solver,
+            task_url=task_url,
+            response=response,
+            payload=payload,
+        )
+
+    status_code = getattr(response, "status_code", 200)
+    if not 200 <= status_code < 300:
+        return None, _solver_failure(
+            stage,
+            "remote service returned a non-success HTTP status",
+            solver=solver,
+            task_url=task_url,
+            response=response,
+            payload=payload,
+        )
+    return payload, None
+
+
+def _remote_error(payload):
+    if "error" in payload:
+        return payload["error"]
+    if "Error" in payload:
+        return payload["Error"]
+    return None
+
+
+def _task_url(task_reference):
+    if task_reference.startswith(("http://", "https://")):
+        return task_reference
+    return f"{SOLVER_BASE_URL}/{task_reference.lstrip('/')}"
+
+
+def _plan_from_output(output):
+    """Return a plan string from the generic Planutils output mapping."""
+    if not isinstance(output, dict):
+        return None
+    if "plan" in output:
+        return output["plan"] if isinstance(output["plan"], str) else None
+    if len(output) == 1:
+        only_value = next(iter(output.values()))
+        return only_value if isinstance(only_value, str) else None
+    return None
+
+
+def run_solver(domain, data, problem, model, solver, prediction_type="llm-as-formalizer", out_dir_root=None):
+    model_name = _model_output_name(model)
 
     out_root = out_dir_root or f'{ROOT_DIR}/output'
-    domain_file = open(f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem}/{problem}_{model_name}_df.pddl').read()
-    problem_file = open(f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem}/{problem}_{model_name}_pf.pddl').read()
+    problem_dir = f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem}'
+    domain_path = f'{problem_dir}/{problem}_{model_name}_df.pddl'
+    problem_path = f'{problem_dir}/{problem}_{model_name}_pf.pddl'
+    missing = [path for path in (domain_path, problem_path) if not os.path.exists(path)]
+    if missing:
+        return False, "missing PDDL file(s):\n" + "\n".join(missing)
 
-
-    plan_found = None
-
+    with open(domain_path) as f:
+        domain_file = f.read()
+    with open(problem_path) as f:
+        problem_file = f.read()
 
     req_body = {"domain" : domain_file, "problem" : problem_file}
+    submit_url = f"{SOLVER_BASE_URL}/package/{solver}/solve"
 
     # Send job request to solve endpoint
-    solve_request_url=requests.post(f"https://solver.planning.domains:5001/package/{solver}/solve", json=req_body).json()
+    try:
+        submit_response = requests.post(
+            submit_url,
+            json=req_body,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+    except requests.RequestException as exc:
+        return _solver_failure(
+            "submit",
+            f"request failed ({type(exc).__name__}: {exc})",
+            solver=solver,
+        )
+
+    submit_payload, failure = _decode_solver_response(
+        submit_response,
+        stage="submit",
+        solver=solver,
+    )
+    if failure:
+        return failure
+
+    task_reference = submit_payload.get("result")
+    if not isinstance(task_reference, str) or not task_reference:
+        remote_error = _remote_error(submit_payload)
+        message = "submit response missing top-level 'result'"
+        if remote_error is not None:
+            message += f": {remote_error}"
+        return _solver_failure(
+            "submit",
+            message,
+            solver=solver,
+            response=submit_response,
+            payload=submit_payload,
+        )
+    task_url = _task_url(task_reference)
 
     # Query the result in the job
-    celery_result=requests.post('https://solver.planning.domains:5001' + solve_request_url['result'])
+    while True:
+        try:
+            terminal_response = requests.post(
+                task_url,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            return _solver_failure(
+                "poll",
+                f"request failed ({type(exc).__name__}: {exc})",
+                solver=solver,
+                task_url=task_url,
+            )
 
-    while celery_result.json().get("status","")== 'PENDING':
-        # Query the result every 0.5 seconds while the job is executing
-        celery_result=requests.post('https://solver.planning.domains:5001' + solve_request_url['result'])
-        time.sleep(0.5)
-    
+        terminal_payload, failure = _decode_solver_response(
+            terminal_response,
+            stage="poll",
+            solver=solver,
+            task_url=task_url,
+        )
+        if failure:
+            return failure
+        if terminal_payload.get("status") != "PENDING":
+            break
+        time.sleep(POLL_INTERVAL_SECONDS)
 
-    result = celery_result.json()['result']
+    if "result" not in terminal_payload:
+        remote_error = _remote_error(terminal_payload)
+        message = "terminal response missing top-level 'result'"
+        if remote_error is not None:
+            message += f": {remote_error}"
+        return _solver_failure(
+            "terminal",
+            message,
+            solver=solver,
+            task_url=task_url,
+            response=terminal_response,
+            payload=terminal_payload,
+        )
 
-    if "Error" in celery_result.json().keys():
-        return False, "timeout"
-    
+    result = terminal_payload["result"]
+    if not isinstance(result, dict):
+        return _solver_failure(
+            "terminal",
+            f"top-level 'result' must be an object, got {type(result).__name__}",
+            solver=solver,
+            task_url=task_url,
+            response=terminal_response,
+            payload=terminal_payload,
+        )
+
+    stdout = result.get("stdout", "")
+    stderr = result.get("stderr", "")
+    output = result.get("output")
+    plan = _plan_from_output(output)
+
     if solver == "lama-first":
-        if not result['output']:
-            if not result['stderr']:
-                return False, result['stdout']
-            else:
-                return False, result['stderr']
-        else:
-            return True, result['output']
+        if plan:
+            return True, {"plan": plan}
+        message = "lama-first returned no non-empty plan"
     elif solver == "dual-bfws-ffparser":
-        if result['output'] == {'plan': ''}:
-            if not result['stderr']:
-                if "NOTFOUND" in result['stdout'] or "No plan" in result['stdout'] or "unknown" in result['stdout'] or "undeclared" in result['stdout'] or "declared twice" in result['stdout'] or "check input files" in result['stdout'] or "does not match" in result['stdout'] or "timeout" in result['call']:
-                    if "Plan found with cost: 0" in result['stdout']:
-                        plan_found = True
-                    else:
-                        plan_found = False
-                else:
-                    plan_found = True
-                return plan_found, result['stdout']
-            else:
-                plan_found = False
-                return plan_found, result['stderr']
-        else:
-            plan_found = True
-            return plan_found, result['output']
-        
+        if plan:
+            return True, {"plan": plan}
+        if isinstance(stdout, str) and (
+            "Plan found with cost: 0" in stdout
+            or "The empty plan solves it" in stdout
+        ):
+            return True, {"plan": ""}
+        message = "dual-bfws-ffparser returned no plan without an empty-plan success marker"
+    else:
+        message = f"unsupported solver {solver!r}"
+
+    if stderr:
+        message += f"; stderr: {_log_value(stderr, limit=4000)}"
+    elif stdout:
+        message += f"; stdout: {_log_value(stdout, limit=4000)}"
+    return _solver_failure(
+        "solver-result",
+        message,
+        solver=solver,
+        task_url=task_url,
+        response=terminal_response,
+        payload=terminal_payload,
+    )
+
+
+def _plan_text_from_solver_result(result) -> tuple[bool, str]:
+    """Normalize dual-bfws-ffparser / lama-first payloads into plan text.
+
+    ``run_solver`` may return either a structured ``{'plan': ...}`` dict or a raw
+    stdout/stderr string. Missing or malformed plan payloads downgrade to an
+    error message instead of raising in the batch worker.
+    """
+    if isinstance(result, dict):
+        if "plan" in result:
+            return True, result["plan"] or ""
+        return False, f"solver returned dict without 'plan' key: {result!r}"
+    if isinstance(result, str):
+        if "Plan found with cost: 0" in result or "The empty plan solves it" in result:
+            return True, ""
+        return False, result
+    return False, f"unexpected solver result type {type(result).__name__}: {result!r}"
+
+
 def _run_solver_one(problem_number, domain, data, model, solver, prediction_type, out_root, model_name, attempts=3):
     problem_name = format_problem_name(problem_number)
     print(f"Running {problem_name}", flush=True)
-    for i in range(attempts):
+    problem_dir = f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem_name}'
+    os.makedirs(problem_dir, exist_ok=True)
+
+    plan_found = False
+    result = "solver did not run"
+    attempt_errors = []
+    for attempt in range(1, attempts + 1):
         try:
             plan_found, result = run_solver(domain, data, problem_name, model, solver, prediction_type, out_dir_root=out_root)
-        except Exception:
-            if i < attempts - 1:
+        except Exception as exc:
+            attempt_errors.append(
+                f"attempt {attempt}/{attempts}: {type(exc).__name__}: {exc}\n"
+                f"{traceback.format_exc().rstrip()}"
+            )
+            if attempt < attempts:
                 continue
-            raise
+            result = (
+                f"solver raised an unexpected exception on all {attempts} attempt(s)\n\n"
+                + "\n\n".join(attempt_errors)
+            )
         break
 
     if plan_found:
-        plan_path = f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_plan.txt'
-        if not os.path.exists(os.path.dirname(plan_path)):
-            os.makedirs(os.path.dirname(plan_path))
-        if "Plan found with cost: 0" in result or "The empty plan solves it" in result:
-            plan = ''
-        else:
-            plan = result['plan']
-        with open(plan_path, 'w') as plan_file:
-            plan_file.write(plan)
-    else:
-        error_path = f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_error.txt'
-        if not os.path.exists(os.path.dirname(error_path)):
-            os.makedirs(os.path.dirname(error_path))
-        with open(error_path, 'w') as error_file:
-            error_file.write(result)
+        ok, plan_or_error = _plan_text_from_solver_result(result)
+        if ok:
+            plan_path = f'{problem_dir}/{problem_name}_{model_name}_plan.txt'
+            with open(plan_path, 'w') as plan_file:
+                plan_file.write(plan_or_error)
+            return True
+        plan_found = False
+        result = plan_or_error
+
+    error_path = f'{problem_dir}/{problem_name}_{model_name}_error.txt'
+    with open(error_path, 'w') as error_file:
+        error_file.write(
+            "solver_status: failed\n"
+            f"problem: {problem_name}\n"
+            f"solver: {solver}\n"
+            f"recorded_at_utc: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n\n"
+        )
+        error_file.write(result if isinstance(result, str) else repr(result))
+        error_file.write("\n")
+    return False
 
 
 def run_solver_batch(domain, model, data, problem_numbers, solver, prediction_type="llm-as-formalizer",
                      out_dir_root=None, workers=1):
-    if '/' in model:
-        _, model_name = model.split('/')
-    else:
-        model_name = model
+    model_name = _model_output_name(model)
     out_root = out_dir_root or f'{ROOT_DIR}/output'
 
     def _worker(problem_number):
@@ -147,4 +375,3 @@ if __name__=="__main__":
 
     run_solver_batch(domain=DOMAIN, model=MODEL, data=DATA, problem_numbers=PROBLEM_NUMBERS, solver=SOLVER,
                      prediction_type=PREDICTION_TYPE, out_dir_root=OUT_DIR_ROOT, workers=WORKERS)
-

@@ -26,6 +26,7 @@ ROOT_DIR = SOURCE_DIR.parent
 DATA_DIR = ROOT_DIR / "data"
 OUTPUT_DIR = ROOT_DIR / "output"
 PROMPTS_DIR = PACKAGE_DIR / "prompts"
+CACHE_DIR = ROOT_DIR / ".cache"
 
 # Pipeline identifier; used as the top-level output folder so run_solver.py /
 # run_val.py can find the generated PDDL (prediction_type).
@@ -97,6 +98,31 @@ CLAW_DEFAULTS: dict[str, dict] = {
         # e.g. {"openai/gpt-5.4-mini": "OPENAI_API_KEY_BENCH"}.
         "model_api_keys": {},
     },
+    "hermes": {
+        "model": "openai/gpt-5.4-mini",
+        "timeout": 1800,
+        "max_turns": 200,
+        "model_api_keys": {},
+    },
+    "nanobot": {
+        "model": "openai/gpt-5.4-mini",
+        "timeout": 1800,
+        "max_turns": 200,
+        "model_api_keys": {},
+    },
+    "zeroclaw": {
+        "model": "openai/gpt-5.4-mini",
+        "timeout": 1800,
+        "max_turns": 200,
+        "model_api_keys": {},
+    },
+    "generic": {
+        "model": "openai/gpt-5.4-mini",
+        "timeout": 1800,
+        # GenericAgent 0.1.0 currently hardcodes this limit in agentmain.py.
+        "max_turns": 180,
+        "model_api_keys": {},
+    },
 }
 
 DEFAULT_AGENT_TIMEOUT = 1800  # seconds
@@ -125,6 +151,32 @@ PROVIDER_API_KEY_ENV: dict[str, str] = {
     "qwen": "DASHSCOPE_API_KEY",
 }
 
+PROVIDER_API_BASE: dict[str, str] = {
+    "openai": "https://api.openai.com/v1",
+    "anthropic": "https://api.anthropic.com",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/",
+    # The project/location-qualified OpenAI-compatible URL is constructed in
+    # claws.common from repository-loaded environment variables.
+    "google-vertex": "https://aiplatform.googleapis.com",
+    "deepseek": "https://api.deepseek.com/v1",
+    "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+}
+
+PROVIDER_API_BASE_ENV: dict[str, str] = {
+    "openai": "OPENAI_BASE_URL",
+    "anthropic": "ANTHROPIC_BASE_URL",
+    "openrouter": "OPENROUTER_BASE_URL",
+    "google": "GEMINI_BASE_URL",
+    "gemini": "GEMINI_BASE_URL",
+    "google-vertex": "GOOGLE_VERTEX_BASE_URL",
+    "deepseek": "DEEPSEEK_BASE_URL",
+    "dashscope": "DASHSCOPE_BASE_URL",
+    "qwen": "DASHSCOPE_BASE_URL",
+}
+
 
 def provider_for_model(model: str) -> str:
     """Provider id = first path segment of the model id."""
@@ -142,6 +194,7 @@ def api_key_env_for_model(
     if model_api_keys and model in model_api_keys:
         return model_api_keys[model]
     return PROVIDER_API_KEY_ENV.get(provider_for_model(model))
+
 
 # ---------------------------------------------------------------------------
 # OpenClaw runtime locations on the HOST (bind-mounted into containers).
@@ -164,6 +217,47 @@ OPENCLAW_BENCHMARK_STATE_DIR = Path(
     )
 )
 
+# Repository-local third-party harness runtimes. The installer populates this
+# ignored directory; adapters never read the harnesses' personal user config.
+HARNESS_RUNTIME_ROOT = Path(
+    os.environ.get(
+        "PDDL_HARNESS_RUNTIME_ROOT",
+        str(CACHE_DIR / "harness-runtimes"),
+    )
+).resolve()
+
+HERMES_ENV_PATH = Path(
+    os.environ.get("HERMES_BENCHMARK_ENV", str(HARNESS_RUNTIME_ROOT / "hermes"))
+).resolve()
+NANOBOT_ENV_PATH = Path(
+    os.environ.get("NANOBOT_BENCHMARK_ENV", str(HARNESS_RUNTIME_ROOT / "nanobot"))
+).resolve()
+ZEROCLAW_BIN = Path(
+    os.environ.get(
+        "ZEROCLAW_BENCHMARK_BIN",
+        str(HARNESS_RUNTIME_ROOT / "zeroclaw" / ".cargo" / "bin" / "zeroclaw"),
+    )
+).resolve()
+GENERIC_REPO_PATH = Path(
+    os.environ.get(
+        "GENERIC_AGENT_REPO",
+        str(HARNESS_RUNTIME_ROOT / "genericagent" / "repo"),
+    )
+).resolve()
+GENERIC_ENV_PATH = Path(
+    os.environ.get(
+        "GENERIC_AGENT_ENV",
+        str(HARNESS_RUNTIME_ROOT / "genericagent" / "venv"),
+    )
+).resolve()
+
+GENERIC_BENCHMARK_STATE_DIR = Path(
+    os.environ.get(
+        "GENERIC_AGENT_BENCHMARK_STATE_DIR",
+        str(CACHE_DIR / "generic-benchmark-state"),
+    )
+).resolve()
+
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
@@ -177,6 +271,11 @@ def sanitize_model_name(model: str) -> str:
     *sanitized* name to run_solver.py / run_val.py via ``--model``.
     """
     return model.replace("/", "__").replace(":", "_").replace(" ", "_")
+
+
+def agent_model_label(claw: str, model: str) -> str:
+    """Default output label, unique across both harness and model."""
+    return f"{sanitize_model_name(claw)}__{sanitize_model_name(model)}"
 
 
 def domain_dir(domain: str, data: str) -> Path:

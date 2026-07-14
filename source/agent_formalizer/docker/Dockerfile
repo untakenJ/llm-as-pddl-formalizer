@@ -2,13 +2,11 @@
 #
 # Kept deliberately minimal: it only needs a Linux userland with a shell, a
 # workspace directory, and enough common tooling for the agent to author and
-# sanity-check PDDL files. The OpenClaw runtime itself (Node.js binary, the
-# openclaw module dir, and an isolated benchmark ~/.openclaw state dir) is bind-mounted
-# (see OpenClawAdapter.container_run_args), so it is NOT installed here.
+# sanity-check PDDL files. Harness runtimes and benchmark-owned state/config are
+# bind-mounted or provisioned by their adapters, so they are NOT installed here.
 #
-# glibc note: OpenClaw bind-mounts the *host* Node.js binary into the
-# container, so the base image must be glibc-compatible with the host. A
-# Debian/Ubuntu-derived image (as below) matches typical host setups.
+# glibc note: adapters bind-mount host Node.js/Python/Rust binaries into the
+# container, so the base image must be glibc-compatible with those runtimes.
 #
 # Build:
 #   docker build -t pddl-agent-base:latest source/agent_formalizer/docker

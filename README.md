@@ -1,24 +1,79 @@
 # llm-as-pddl-formalizer
 **llm-as-pddl-formalizer** is a set of data and pipeline that uses LLMs to generate PDDL.
 
-## Requirements
-To run the pipeline, the following are needed:
-- OpenAI: your OpenAI API key should replace the following line (line 37 in `source/llm-as-formalizer.py` and `source/llm-as-planner.py`):
+## Environment
+
+Python dependencies are managed by [uv](https://docs.astral.sh/uv/). The
+project uses Python 3.12 and records the complete resolved environment in
+`uv.lock`.
+
+Install uv once, then create the project environment. On a CPU-only machine,
+use the CPU PyTorch extra:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync --locked --extra cpu
 ```
-OPENAI_API_KEY = open(f'../../_private/key.txt').read()
+
+On an NVIDIA GPU machine using CUDA 13.0, select the CUDA build instead:
+
+```bash
+uv sync --locked --extra cuda
 ```
-- Kani: install Kani using the following:
+
+The `cpu` and `cuda` extras are mutually exclusive. For API-only, agent, solver,
+or evaluation workflows that do not load a local Hugging Face model, a plain
+`uv sync --locked` omits the PyTorch stack entirely.
+
+`uv sync` creates `.venv` automatically. Run project commands through `uv run`,
+so no manual environment activation is required. For example:
+
+```bash
+uv run python source/llm-as-formalizer.py --help
 ```
-pip install "kani[all]" torch 'accelerate>=0.26.0'
+
+An active Conda environment does not replace the project environment for a
+normal `uv run`; uv resolves and runs against this repository's `.venv`.
+Deactivate Conda when convenient to keep the shell less ambiguous, but the old
+environment does not need to be deleted. Avoid `uv run --active`, which
+explicitly opts into the currently active environment.
+
+The local Hugging Face pipelines use bitsandbytes quantization and require a
+compatible NVIDIA GPU/driver for practical model execution; the CPU extra is
+useful for CPU-side development and dependency checks. The agent pipeline also
+requires Docker. Its Hermes, NanoBot, ZeroClaw, and GenericAgent runtimes can be
+installed into the ignored repository cache with
+`bash source/agent_formalizer/install_harnesses.sh all`; OpenClaw keeps its
+existing host installation. VAL is an external binary;
+install it separately and configure its executable through `source/run_val.py`.
+
+OpenAI scripts read their API key from `_private/key.txt`. The API-based Gemini
+scripts load credentials from `_private/.env`; see their module documentation
+for the required variables.
+
+## Agent Harness Formalizer
+
+The Docker-based agent pipeline supports `openclaw`, `hermes`, `nanobot`,
+`zeroclaw`, and `generic` (GenericAgent). Non-OpenClaw harness configuration,
+tool policy, memory, and session state are created by this repository for each
+benchmark run; personal harness config directories are not read.
+
+```bash
+bash source/agent_formalizer/install_harnesses.sh all
+
+uv run python source/agent_formalizer/run_formalizer_agent.py \
+    --claw hermes \
+    --domain blocksworld \
+    --data Heavily_Templated_BlocksWorld-100 \
+    --model openai/gpt-5.4-mini \
+    --indices 1,2,3
 ```
-- bitsandbytes: install bitsandbytes for quantization using the following:
-```
-pip install transformers accelerate "bitsandbytes>=0.37.0"
-```
-- VAL: follow VAL GitHub repository for instructions to install VAL, then change the following line (line 35 in `source/run_val.py`) to the VAL executable:
-```
-validate_executable = "../../VAL/build/macos64/Release/bin/Validate"
-```
+
+Agent credentials are loaded from `_private/.env`; the default model for the
+four new adapters uses `OPENAI_API_KEY`. See
+[`source/agent_formalizer/README.md`](source/agent_formalizer/README.md) for
+runtime pins, supported provider prefixes, isolation details, and evaluation
+commands.
 
 ## Datasets
 All datasets can be found in the `/data` folders.
@@ -48,7 +103,7 @@ All folders containing textual descriptions contain domain descriptions (`p*_dom
 ## LLM-as-Formalizer
 To generate PDDL files from textual descriptions, run the following:
 ```
-python3 source/llm-as-formalizer.py --domain DOMAIN --model MODEL --data DATA --index_start INDEX_START --index_end INDEX_END
+uv run python source/llm-as-formalizer.py --domain DOMAIN --model MODEL --data DATA --index_start INDEX_START --index_end INDEX_END
 ```
 where
 - `DOMAIN` is which domain to evaluate (`blocksworld`, `mystery_blocksworld`, `barman` or `logistics`)
@@ -59,7 +114,7 @@ where
 
 After generating the PDDL, we can run the solver with the following:
 ```
-python3 source/run_solver.py --domain DOMAIN --model MODEL --data DATA --index_start INDEX_START --index_end INDEX_END --solver SOLVER   
+uv run python source/run_solver.py --domain DOMAIN --model MODEL --data DATA --index_start INDEX_START --index_end INDEX_END --solver SOLVER
 ```
 where 
 - `DOMAIN`, `MODEL`, `DATA`, `INDEX_START` and `INDEX_END` are the same as above
@@ -70,8 +125,7 @@ output will be written in `/outputs/llm-as-formalizer/DOMAIN/DATA/MODEL/`
 ## LLM-as-Planner
 To run the LLM-as-Planner baseline, run the following:
 ```
-cd source
-python3 source/llm-as-planner.py --domain DOMAIN --model MODEL --data DATA --index_start INDEX_START --index_end INDEX_END
+uv run python source/llm-as-planner.py --domain DOMAIN --model MODEL --data DATA --index_start INDEX_START --index_end INDEX_END
 ```
 where `DOMAIN`, `MODEL`, `DATA`, `INDEX_START` and `INDEX_END`are the same as above.
 
@@ -80,11 +134,10 @@ output will be written in `/output/llm-as-planner/DOMAIN/DATA/MODEL/`
 ## Evaluation
 To evaluate the result of LLM-as-Formalizer or LLM-as-Planner using VAL, run the following:
 ```
-python3 source/run_val.py --domain DOMAIN --model MODEL --data DATA --index_start INDEX_START --index_end INDEX_END --prediction_type PREDICTION_TYPE --csv_result
+uv run python source/run_val.py --domain DOMAIN --model MODEL --data DATA --index_start INDEX_START --index_end INDEX_END --prediction_type PREDICTION_TYPE --csv_result
 ```
 
 where
 - `DOMAIN`, `MODEL`, `DATA`, `INDEX_START` and `INDEX_END`are the same as above.
 - `PREDICTION_TYPE` is which pipeline to use (`["llm-as-formalizer", "llm-as-planner"]`)
 - `--csv_result` is an optional flag that outputs all results (plans and errors) in a csv file. The csv file will be saved to `/output/PREDICTION_TYPE/DOMAIN/DATA/MODEL/`
-

@@ -12,25 +12,25 @@ Examples::
     # Build the base image once (see docker/Dockerfile):
     docker build -t pddl-agent-base:latest source/agent_formalizer/docker
 
-    python3 source/agent_formalizer/run_formalizer_agent.py \\
+    uv run python source/agent_formalizer/run_formalizer_agent.py \\
         --claw openclaw --domain blocksworld \\
         --data Heavily_Templated_BlocksWorld-100 \\
         --index_start 1 --index_end 11
 
-    python3 source/agent_formalizer/run_formalizer_agent.py \\
+    uv run python source/agent_formalizer/run_formalizer_agent.py \\
         --claw openclaw --domain blocksworld \\
         --data Heavily_Templated_BlocksWorld-100 \\
         --model openrouter/anthropic/claude-opus-4.6 --indices 1,2,3
 
 Then evaluate (note the sanitized model label, slashes -> ``__``)::
 
-    python3 source/run_solver.py --domain blocksworld \\
+    uv run python source/run_solver.py --domain blocksworld \\
         --data Heavily_Templated_BlocksWorld-100 \\
-        --model openrouter__anthropic__claude-opus-4.6 \\
+        --model openclaw__openrouter__anthropic__claude-opus-4.6 \\
         --prediction_type llm-as-formalizer-agent --indices 1,2,3
-    python3 source/run_val.py --domain blocksworld \\
+    uv run python source/run_val.py --domain blocksworld \\
         --data Heavily_Templated_BlocksWorld-100 \\
-        --model openrouter__anthropic__claude-opus-4.6 \\
+        --model openclaw__openrouter__anthropic__claude-opus-4.6 \\
         --prediction_type llm-as-formalizer-agent --indices 1,2,3 --csv_result
 """
 
@@ -52,7 +52,7 @@ from agent_formalizer.config import (
     CLAW_DEFAULTS,
     DATASETS,
     DOMAINS,
-    sanitize_model_name,
+    agent_model_label,
 )
 from agent_formalizer.orchestrator import run_batch
 from agent_formalizer.util import load_private_secrets
@@ -85,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "API key be combined freely.")
     p.add_argument("--model_label", default=None,
                    help="filesystem/solver-safe label for output dirs "
-                        "(default: sanitized --model; pass this same value to "
+                        "(default: <claw>__<sanitized-model>; pass this same value to "
                         "run_solver.py / run_val.py via --model)")
     p.add_argument("--index_start", help="index to start from (inclusive)")
     p.add_argument("--index_end", help="index to end at (exclusive)")
@@ -129,9 +129,20 @@ def main() -> None:
     args = build_parser().parse_args()
     load_private_secrets()
 
+    openclaw_tool_flags = (
+        args.tools_profile is not None
+        or args.tools_allow is not None
+        or args.tools_deny is not None
+    )
+    if args.claw != "openclaw" and openclaw_tool_flags:
+        raise SystemExit(
+            "--tools-profile/--tools-allow/--tools-deny apply only to "
+            "--claw openclaw; other adapters use repository-pinned tool policies."
+        )
+
     defaults = CLAW_DEFAULTS[args.claw]
     model = args.model or defaults["model"]
-    model_label = args.model_label or sanitize_model_name(model)
+    model_label = args.model_label or agent_model_label(args.claw, model)
 
     adapter_kwargs: dict = {}
     if args.tools_profile is not None:

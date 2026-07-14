@@ -9,12 +9,18 @@ from __future__ import annotations
 
 from agent_formalizer.config import CLAW_DEFAULTS
 from agent_formalizer.claws.base import BaseClawAdapter
+from agent_formalizer.claws.generic import GenericAgentAdapter
+from agent_formalizer.claws.hermes import HermesAdapter
+from agent_formalizer.claws.nanobot import NanoBotAdapter
 from agent_formalizer.claws.openclaw import OpenClawAdapter
+from agent_formalizer.claws.zeroclaw import ZeroClawAdapter
 
-# Only OpenClaw is implemented for now; the interface is ready for more
-# harnesses (e.g. hermes, nanobot, zeroclaw, generic) — register them here.
 CLAWS: dict[str, type[BaseClawAdapter]] = {
+    "generic": GenericAgentAdapter,
+    "hermes": HermesAdapter,
+    "nanobot": NanoBotAdapter,
     "openclaw": OpenClawAdapter,
+    "zeroclaw": ZeroClawAdapter,
 }
 
 

@@ -29,10 +29,10 @@ from pathlib import Path
 
 from agent_formalizer.config import (
     OUTPUT_DIR,
+    agent_model_label,
     container_name as make_container_name,
     domain_dir,
     problem_output_dir,
-    sanitize_model_name,
 )
 from agent_formalizer.prompt import build_prompt, extract_pddl_from_text
 from agent_formalizer.result_types import AgentResult, FormalizerResult
@@ -180,7 +180,7 @@ def run_one_problem(
     image: str | None = None,
 ) -> FormalizerResult:
     """Formalize one problem with the agent harness; return a FormalizerResult."""
-    model_label = model_label or sanitize_model_name(adapter.model)
+    model_label = model_label or agent_model_label(adapter.name, adapter.model)
     out_root = Path(out_dir_root) if out_dir_root else OUTPUT_DIR
     out_dir = problem_output_dir(out_root, domain, data, model_label, problem)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -205,6 +205,7 @@ def run_one_problem(
     model_auth: dict = {}
 
     try:
+        adapter.validate_runtime()
         tool_policy = adapter.tool_policy()
         model_auth = adapter.model_auth()
         tracer.emit(
@@ -261,6 +262,7 @@ def run_one_problem(
         # 4. Collect claw-specific usage while the container is alive.
         extra_usage = adapter.collect_usage(workspace, out_dir) or {}
         if extra_usage:
+            agent_result.usage = {**agent_result.usage, **extra_usage}
             tracer.emit("usage", provider=adapter.name, usage=extra_usage)
 
         # 5. Read the authored PDDL files out of the container.
@@ -360,12 +362,14 @@ def run_one_problem(
                        tool_policy=tool_policy, model_auth=model_auth)
         raise
     finally:
-        # Always teardown: delete agent first, then container.
+        # Unmount runtime/state paths before deleting host-side agent state.
         try:
-            adapter.delete_agent(agent_id)
-        finally:
             workspace.cleanup()
-        tracer.close()
+        finally:
+            try:
+                adapter.delete_agent(agent_id)
+            finally:
+                tracer.close()
 
 
 def run_batch(

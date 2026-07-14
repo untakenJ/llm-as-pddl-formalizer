@@ -1,19 +1,16 @@
 """Formalizer pipeline via Google Antigravity (Interactions API).
 
 Uses the managed Antigravity agent (``client.interactions.create``) on the
-**Gemini Enterprise Agent Platform** (``aiplatform.googleapis.com``), including
-the ``environment=remote`` sandbox.
+**Gemini Developer API** (``generativelanguage.googleapis.com``), including the
+``environment=remote`` sandbox.
 
-Authentication uses **Application Default Credentials (ADC)** -- the same
-Enterprise setup as ``llm-as-formalizer-api.py`` -- not a Developer API key::
+Authentication uses a Gemini Developer API key (no ADC / project scoping)::
 
-    GOOGLE_GENAI_USE_ENTERPRISE=true
-    GOOGLE_CLOUD_PROJECT=your-project-id
-    GOOGLE_CLOUD_LOCATION=global
+    GOOGLE_CLOUD_API_KEY=your-gemini-api-key   # or GEMINI_API_KEY / GOOGLE_API_KEY
 
-Authenticate with ``gcloud auth application-default login`` or
-``GOOGLE_APPLICATION_CREDENTIALS`` (see ``_private/.env`` / ``env_loader.py``).
-The Interactions API stays on the Enterprise default API version (``v1beta1``).
+The key must be valid for the Generative Language API. The SDK serves the
+Interactions API at ``v1beta/interactions`` and sends the key in the
+``x-goog-api-key`` header.
 
 Antigravity does not support JSON-schema structured output; this script asks for
 JSON in the prompt and parses ``interaction.output_text``.
@@ -45,7 +42,7 @@ import re
 import time
 
 from batch_utils import format_problem_name, run_parallel
-from api_providers import Tracer, build_gemini_interactions_client
+from api_providers import GEMINI_INTERACTIONS_BACKEND, Tracer, build_gemini_interactions_client
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -96,31 +93,35 @@ def _format_antigravity_api_error(exc: BaseException) -> str | None:
     upper = text.upper()
     if "403" in text and "PERMISSION_DENIED" in upper:
         return (
-            "Interactions API permission denied (403). Ensure the ADC principal "
-            "has the aiplatform.user role and the Gemini Enterprise Agent "
-            "Platform API (aiplatform.googleapis.com) is enabled on "
-            f"{os.environ.get('GOOGLE_CLOUD_PROJECT', '<project>')!r}."
+            "Interactions API permission denied (403). Ensure the Gemini API key "
+            "is valid for the Generative Language API "
+            "(generativelanguage.googleapis.com) and that this API is enabled "
+            "for the key's project."
         )
     if "401" in text and "UNAUTHENTICATED" in upper:
         return (
-            "Interactions API authentication failed (401). Run "
-            "'gcloud auth application-default login' or set "
-            "GOOGLE_APPLICATION_CREDENTIALS."
+            "Interactions API authentication failed (401). Set a valid Gemini "
+            "Developer API key via GOOGLE_CLOUD_API_KEY (or GEMINI_API_KEY / "
+            "GOOGLE_API_KEY)."
+        )
+    if "400" in text and "API_KEY_INVALID" in upper:
+        return (
+            "Interactions API rejected the API key (400 API_KEY_INVALID). "
+            "Provide a Gemini Developer API key valid for "
+            "generativelanguage.googleapis.com."
         )
     if "404" in text:
         return (
-            "Interactions API not found (404). The Antigravity Interactions API "
-            "is served on api_version 'v1beta1' (the Enterprise default); do not "
-            "pin api_version='v1' for this client."
+            "Interactions API not found (404). The Developer API path serves the "
+            "Antigravity agent at generativelanguage.googleapis.com/v1beta/"
+            "interactions; do not pin api_version='v1' for this client."
         )
     if _is_rate_limit_error(exc):
         return (
             "Interactions API quota exhausted (429) on "
-            "aiplatform.googleapis.com/stateful_interaction_creations for "
-            f"project {os.environ.get('GOOGLE_CLOUD_PROJECT', '<project>')!r}. "
-            "Retries within --timeout were not enough; raise --timeout, lower "
-            "--workers, or request a quota increase for stateful interaction "
-            "creations."
+            "generativelanguage.googleapis.com. Retries within --timeout were "
+            "not enough; raise --timeout, lower --workers, or request a quota "
+            "increase for the Gemini API key's project."
         )
     return None
 
@@ -324,7 +325,7 @@ def run_formalizer_antigravity(
             "start",
             pipeline="llm-as-formalizer-antigravity",
             provider="antigravity",
-            backend="gemini-enterprise",
+            backend=GEMINI_INTERACTIONS_BACKEND,
             agent=agent,
             domain=domain,
             data=data,

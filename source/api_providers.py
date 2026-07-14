@@ -1,22 +1,22 @@
 """LLM API backends for the *-api formalizer/planner scripts.
 
 - **OpenAI**: Responses API (``client.responses.create``) with optional hosted tools.
-- **Gemini**: Google GenAI SDK on **Gemini Enterprise Agent Platform** (ADC) with
-  JSON-schema structured output.
+- **Gemini**: Google GenAI SDK on **Gemini Enterprise Agent Platform / Vertex**
+  with a Google Cloud API key and JSON-schema structured output.
 
 Gemini credentials (``_private/.env`` via ``env_loader``, or shell env):
 
-- ``GOOGLE_GENAI_USE_ENTERPRISE=true``
+- ``GOOGLE_CLOUD_API_KEY``
 - ``GOOGLE_CLOUD_PROJECT``
 - ``GOOGLE_CLOUD_LOCATION`` (e.g. ``global``)
-- Application Default Credentials (``gcloud auth application-default login`` or
-  ``GOOGLE_APPLICATION_CREDENTIALS``)
 
 OpenAI: ``_private/key.txt``
 
-All Gemini access (formalizer-api, planner-api, and the Antigravity
-Interactions API / remote sandbox) uses **Gemini Enterprise via ADC only** --
-no Developer API key (``key_gemini.txt`` / ``GEMINI_API_KEY`` are not used).
+The Gemini formalizer/planner API path uses **Gemini Enterprise / Vertex via
+``GOOGLE_CLOUD_API_KEY``** -- no Developer API key (``key_gemini.txt`` /
+``GEMINI_API_KEY``). The Antigravity Interactions API is project-scoped and
+uses Vertex ADC (``GOOGLE_APPLICATION_CREDENTIALS`` or existing ADC) plus
+``GOOGLE_CLOUD_PROJECT`` / ``GOOGLE_CLOUD_LOCATION``.
 """
 
 from __future__ import annotations
@@ -34,7 +34,10 @@ load_project_dotenv()
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-GEMINI_PROVIDER = "gemini-enterprise"
+GEMINI_PROVIDER = "google-vertex"
+GEMINI_BACKEND = "google-vertex-api-key"
+GEMINI_INTERACTIONS_BACKEND = "google-developer-api-key"
+GEMINI_API_KEY_ENV = "GOOGLE_CLOUD_API_KEY"
 
 OPENAI_API_MODELS = [
     "gpt-3.5-turbo",
@@ -112,30 +115,56 @@ def _read_key_file(filename: str) -> str:
     return open(path).read().strip()
 
 
-def _truthy_env(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+def require_gemini_vertex_api_key_config() -> dict[str, str]:
+    """Return Vertex API-key config, or exit with a clear message if incomplete."""
+    api_key = os.environ.get(GEMINI_API_KEY_ENV, "").strip()
+    project = (
+        os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
+        or os.environ.get("GCLOUD_PROJECT", "").strip()
+    )
+    location = os.environ.get("GOOGLE_CLOUD_LOCATION", "").strip()
 
-
-def gemini_enterprise_enabled() -> bool:
-    """True when Gemini Enterprise Agent Platform env is configured."""
-    return _truthy_env("GOOGLE_GENAI_USE_ENTERPRISE")
-
-
-def require_gemini_enterprise_config() -> None:
-    """Exit with a clear message if Enterprise env is incomplete."""
     missing = []
-    if not gemini_enterprise_enabled():
-        missing.append("GOOGLE_GENAI_USE_ENTERPRISE=true")
-    if not os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip():
+    if not api_key:
+        missing.append(GEMINI_API_KEY_ENV)
+    if not project:
         missing.append("GOOGLE_CLOUD_PROJECT")
-    if not os.environ.get("GOOGLE_CLOUD_LOCATION", "").strip():
+    if not location:
         missing.append("GOOGLE_CLOUD_LOCATION")
     if missing:
         raise SystemExit(
-            "Gemini Enterprise configuration incomplete. Set in _private/.env or "
-            "the shell:\n  " + "\n  ".join(missing) + "\n"
-            "Then authenticate: gcloud auth application-default login"
+            "Gemini Vertex API-key configuration incomplete. Set in _private/.env "
+            "or the shell:\n  " + "\n  ".join(missing) + "\n"
+            "This path uses a Google Cloud API key; no browser login or "
+            "credential JSON is required."
         )
+    return {"api_key": api_key, "project": project, "location": location}
+
+
+def require_gemini_vertex_project_config() -> dict[str, str]:
+    """Return Vertex project/location config for ADC-backed clients."""
+    project = (
+        os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
+        or os.environ.get("GCLOUD_PROJECT", "").strip()
+    )
+    location = os.environ.get("GOOGLE_CLOUD_LOCATION", "").strip()
+
+    missing = []
+    if not project:
+        missing.append("GOOGLE_CLOUD_PROJECT")
+    if not location:
+        missing.append("GOOGLE_CLOUD_LOCATION")
+    if missing:
+        raise SystemExit(
+            "Gemini Vertex project configuration incomplete. Set in "
+            "_private/.env or the shell:\n  "
+            + "\n  ".join(missing)
+            + "\n"
+            "The Antigravity Interactions API is project-scoped and uses "
+            "Vertex ADC; configure GOOGLE_APPLICATION_CREDENTIALS or existing "
+            "application-default credentials."
+        )
+    return {"project": project, "location": location}
 
 
 def sanitize_model_name(model: str) -> str:
@@ -144,7 +173,7 @@ def sanitize_model_name(model: str) -> str:
 
 
 def build_gemini_client():
-    """Construct a ``google.genai.Client`` for Gemini Enterprise (ADC).
+    """Construct a Vertex ``google.genai.Client`` using ``GOOGLE_CLOUD_API_KEY``.
 
     Pins ``api_version="v1"`` for ``generate_content`` (formalizer-api /
     planner-api). For the Antigravity Interactions API use
@@ -154,29 +183,58 @@ def build_gemini_client():
     from google import genai
     from google.genai.types import HttpOptions
 
-    require_gemini_enterprise_config()
-    return genai.Client(http_options=HttpOptions(api_version="v1"))
+    cfg = require_gemini_vertex_api_key_config()
+    return genai.Client(
+        api_key=cfg["api_key"],
+        vertexai=True,
+        http_options=HttpOptions(api_version="v1"),
+    )
+
+
+def require_gemini_developer_api_key_config() -> dict[str, str]:
+    """Return a Gemini Developer API key for the Antigravity Interactions API.
+
+    Reads ``GOOGLE_CLOUD_API_KEY`` first (this repo's convention), then the
+    SDK-standard ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY``. The key must be valid
+    for the Generative Language API (``generativelanguage.googleapis.com``).
+    """
+    api_key = (
+        os.environ.get(GEMINI_API_KEY_ENV, "").strip()
+        or os.environ.get("GEMINI_API_KEY", "").strip()
+        or os.environ.get("GOOGLE_API_KEY", "").strip()
+    )
+    if not api_key:
+        raise SystemExit(
+            "Gemini Developer API key not found. Set one of the following in "
+            "_private/.env or the shell:\n  "
+            f"{GEMINI_API_KEY_ENV}\n  GEMINI_API_KEY\n  GOOGLE_API_KEY\n"
+            "The Antigravity Interactions API (Developer API path) authenticates "
+            "with an API key valid for generativelanguage.googleapis.com."
+        )
+    return {"api_key": api_key}
 
 
 def build_gemini_interactions_client():
     """Construct a ``google.genai.Client`` for the Antigravity Interactions API
-    on **Gemini Enterprise Agent Platform** (ADC).
+    on the **Gemini Developer API** (``generativelanguage.googleapis.com``)
+    using a Gemini API key.
 
-    Unlike :func:`build_gemini_client`, this does *not* pin ``api_version``:
-    the Interactions API and the Antigravity remote sandbox are served on the
-    Enterprise default (``v1beta1``); pinning ``v1`` returns 404 for
-    ``interactions``. Authentication uses Application Default Credentials
-    (``gcloud auth application-default login`` or
-    ``GOOGLE_APPLICATION_CREDENTIALS``), not a Developer API key.
+    Passing ``vertexai=False`` explicitly forces the Developer API backend
+    regardless of ``GOOGLE_GENAI_USE_ENTERPRISE`` / ``GOOGLE_GENAI_USE_VERTEXAI``
+    in the environment (the SDK only consults those env vars when ``vertexai``
+    is left unset). The SDK then serves the managed Antigravity agent at
+    ``v1beta/interactions`` and authenticates with the ``x-goog-api-key``
+    header. Project/location must not be passed here -- they are mutually
+    exclusive with an API key in the client initializer.
     """
     from google import genai
 
-    require_gemini_enterprise_config()
-    return genai.Client()
+    cfg = require_gemini_developer_api_key_config()
+    return genai.Client(api_key=cfg["api_key"], vertexai=False)
 
 
 def build_provider_client(model: str) -> tuple[str, object]:
-    """Return ``(provider_name, client)`` where provider is ``openai`` or ``gemini-enterprise``."""
+    """Return ``(provider_name, client)`` where provider is ``openai`` or ``google-vertex``."""
     if is_gemini_model(model):
         return GEMINI_PROVIDER, build_gemini_client()
     return "openai", OpenAI(api_key=_read_key_file("key.txt"))
@@ -396,7 +454,8 @@ def generate_gemini_json(
     request_log = {
         "model": model,
         "provider": GEMINI_PROVIDER,
-        "backend": "gemini-enterprise",
+        "backend": GEMINI_BACKEND,
+        "api_key_env": GEMINI_API_KEY_ENV,
         "response_mime_type": "application/json",
         "response_json_schema": schema,
         "prompt_chars": len(prompt),

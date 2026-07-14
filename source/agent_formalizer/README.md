@@ -4,17 +4,18 @@ This package is the **agentic** counterpart to `source/llm-as-formalizer-api.py`
 Instead of issuing a single structured LLM API call, it:
 
 1. Builds/starts a **Docker container** for each problem.
-2. Runs a full **agent harness** ("claw", e.g. [OpenClaw]) *inside* the
+2. Runs a full **agent harness** (OpenClaw, Hermes, NanoBot, ZeroClaw, or
+   GenericAgent) *inside* the
    container. The agent uses its own tools (shell, file edit, ...) to author
    the PDDL `domain.pddl` and `problem.pddl`.
-3. Reads those files back out, **records the full execution trace** (including
-   tool calls) as JSONL, and writes the result in the **same output layout**
+3. Reads those files back out, records the execution trace and any tool/session
+   data exposed by that harness, and writes the result in the **same output layout**
    the other formalizer pipelines use — so `source/run_solver.py` and
    `source/run_val.py` consume it unchanged.
 
-The design closely follows [`opensquilla/claw-swe-bench`][claw]: the
-`BaseClawAdapter` interface, the `OpenClawAdapter`, and the container workspace
-abstraction are ported and adapted from there.
+The design closely follows [`opensquilla/claw-swe-bench`][claw]. The adapters
+were updated against the current upstream CLIs and config schemas rather than
+copying the reference repository's older host config files.
 
 [OpenClaw]: https://github.com/opensquilla/claw-swe-bench
 [claw]: https://github.com/opensquilla/claw-swe-bench/tree/main/claw_swebench/claws
@@ -34,8 +35,14 @@ agent_formalizer/
   util.py                   # Tracer (JSONL) + batch helpers (self-contained)
   claws/
     base.py                 # BaseClawAdapter — implement this for a new harness
+    common.py               # provider auth, Python runtime mounts, JSONL traces
     openclaw.py             # OpenClawAdapter
+    hermes.py               # HermesAdapter
+    nanobot.py              # NanoBotAdapter
+    zeroclaw.py             # ZeroClawAdapter (config schema V3)
+    generic.py              # GenericAgentAdapter
     __init__.py             # CLAWS registry + get_adapter()
+  install_harnesses.sh      # pinned, repository-local runtime installer
   prompts/default.txt       # prompt template
   docker/Dockerfile         # base image the agent runs inside
 ```
@@ -48,6 +55,15 @@ agent_formalizer/
   docker build -t pddl-agent-base:latest source/agent_formalizer/docker
   ```
   Override via `--image` or `$PDDL_AGENT_IMAGE`.
+- Install the non-OpenClaw runtimes into the ignored repository cache:
+  ```bash
+  bash source/agent_formalizer/install_harnesses.sh all
+  ```
+  Install one runtime with `hermes`, `nanobot`, `zeroclaw`, or `generic`
+  instead of `all`. The installer currently pins Hermes 0.18.2, NanoBot 0.2.2,
+  ZeroClaw 0.8.2, and GenericAgent commit `e6bbc916`. It writes only under
+  `.cache/harness-runtimes`; no activation, `PATH` edit, or personal harness
+  setup is needed. Override the root with `PDDL_HARNESS_RUNTIME_ROOT`.
 - The **OpenClaw runtime on the host** (only for `--claw openclaw`): the
   `openclaw` CLI, Node.js, the openclaw module dir. Benchmark runs use an
   **isolated state dir** (`OPENCLAW_BENCHMARK_STATE_DIR`, default
@@ -61,7 +77,11 @@ agent_formalizer/
   no longer used. Put one key per provider in `_private/.env`, e.g.:
   ```dotenv
   OPENAI_API_KEY=sk-...
+  ANTHROPIC_API_KEY=sk-ant-...
   OPENROUTER_API_KEY=sk-or-...
+  GEMINI_API_KEY=...
+  DEEPSEEK_API_KEY=...
+  DASHSCOPE_API_KEY=...
   ```
 - **Model / key decoupling.** Each model resolves its key from one env var:
   by default the provider prefix of the model id (`openai/...` → `OPENAI_API_KEY`,
@@ -71,35 +91,70 @@ agent_formalizer/
   provider's canonical env var name, so the `.env` variable name, the model id,
   and the harness are fully independent and freely combinable. Example:
   ```bash
-  # model openai/gpt-5.4-mini, key taken from a custom-named env var
-  python3 source/agent_formalizer/run_formalizer_agent.py \
-      --claw openclaw --model openai/gpt-5.4-mini \
+  # Model openai/gpt-5.4-mini, key taken from a custom-named env var.
+  uv run python source/agent_formalizer/run_formalizer_agent.py \
+      --claw hermes --model openai/gpt-5.4-mini \
       --api-key-env OPENAI_API_KEY_BENCH ...
   ```
-- Tool policy defaults: `tools.profile: coding` plus the claw-swe-bench deny list
-  (`OPENCLAW_DENY_TOOLS` in `config.py` — blocks web, memory, cross-session,
-  cron, image, etc.). Override per run with `--tools-profile`, `--tools-allow`,
-  `--tools-deny`.
 
-The pipeline itself has **no Python package dependencies** (standard library
-only); see `requirements.txt`.
+Supported model prefixes for the four new adapters are `openai`, `anthropic`,
+`openrouter`, `gemini`/`google`, `deepseek`, and `dashscope`/`qwen`. Always use
+`provider/model` form; nested gateway ids such as
+`openrouter/anthropic/claude-sonnet-4.6` are preserved. Provider endpoint
+overrides can be set in `_private/.env` with `OPENAI_BASE_URL`,
+`ANTHROPIC_BASE_URL`, `OPENROUTER_BASE_URL`, `GEMINI_BASE_URL`,
+`DEEPSEEK_BASE_URL`, or `DASHSCOPE_BASE_URL`.
+
+## Isolation and tool policy
+
+Harness runtime code is mounted read-only. Credentials are injected from the
+selected environment variable and are never written to a host config file.
+
+| Harness | Benchmark-owned behavior |
+| --- | --- |
+| OpenClaw | Uses `.cache/openclaw-benchmark-state`; host `~/.openclaw` is not read. Web, memory, cross-session, cron, image, and subagent tools are denied by default. |
+| Hermes | Creates a problem-specific `HERMES_HOME` inside each throwaway container, enables only `terminal,file`, ignores repository rules/memory, and disables plugins. After each run, a WAL-aware SQLite backup is saved in that problem's `sessions/state.db`; aggregate usage is saved in `sessions/usage.json` and `metadata.json`. |
+| NanoBot | Generates config inside the container, restricts paths to `/workspace`, disables web/MCP/skills/bootstrap memory, and removes non-file/shell tools (including `spawn`) from the live registry. |
+| ZeroClaw | Generates a V3 config inside the container with one agent, memory disabled, workspace-only access, and an explicit six-tool allowlist. The API key is supplied through a schema-mirror env override. |
+| GenericAgent | Generates `mykey.py` without a key value, overlays filtered tool schemas, disables plugins, and gives every problem a fresh writable copy of bundled memory plus a separate temp directory. |
+
+`--tools-profile`, `--tools-allow`, and `--tools-deny` apply only to OpenClaw.
+The other policies are intentionally pinned in this repository. GenericAgent
+0.1.0 hardcodes 180 agent turns; the adapter records 180 as the effective
+limit even if another `--max_turns` value is requested.
 
 ## Usage
 
 ```bash
-# Generate PDDL with the OpenClaw agent
-python3 source/agent_formalizer/run_formalizer_agent.py \
-    --claw openclaw \
+# Generate PDDL with any registered harness.
+uv run python source/agent_formalizer/run_formalizer_agent.py \
+    --claw hermes \
     --domain blocksworld \
     --data Heavily_Templated_BlocksWorld-100 \
     --index_start 1 --index_end 11
 
-# Or pick a specific model + explicit problem indices
-python3 source/agent_formalizer/run_formalizer_agent.py \
-    --claw openclaw --domain blocksworld \
+# Harness and model are independent.
+uv run python source/agent_formalizer/run_formalizer_agent.py \
+    --claw nanobot --domain blocksworld \
     --data Heavily_Templated_BlocksWorld-100 \
-    --model openrouter/anthropic/claude-opus-4.6 --indices 1,2,3
+    --model openai/gpt-5.4-mini --indices 1,2,3
+
+# Other harness names: openclaw, zeroclaw, generic
 ```
+
+Run a comparable multi-harness generation/solver/VAL sweep with the repository
+sweep driver:
+
+```bash
+uv run python source/sweep_agent_pipeline.py \
+    --claw openclaw,hermes,nanobot,zeroclaw,generic \
+    --model openai/gpt-5.4-mini \
+    --domain blocksworld \
+    --data Heavily_Templated_BlocksWorld-100 \
+    --index_start 1 --index_end 11
+```
+
+Each claw/model job receives its own harness-prefixed output label.
 
 Output for each problem lands in (identical shape to `llm-as-formalizer-api`):
 
@@ -110,12 +165,16 @@ output/llm-as-formalizer-agent/<domain>/<data>/<model_label>/<problem>/
     <problem>_<model_label>_trace.jsonl  # unified trace (start/agent/tool_exec/final)
     prompt.txt                           # exact prompt sent to the agent
     agent_stdout.log / agent_stderr.log  # raw harness output
-    sessions/*.jsonl                     # raw harness session transcript(s)
+    sessions/*                           # raw transcript/state when exposed
+                                         # Hermes: state.db + usage.json per problem
     metadata.json                        # summary (status, finish_reason, usage, ...)
 ```
 
-`<model_label>` is the model id with `/` collapsed to `__` (so the multi-slash
-OpenRouter ids don't break `run_solver.py` / `run_val.py`, which split on `/`).
+By default, `<model_label>` is `<harness>__<model>`, with model `/` characters
+collapsed to `__`. This prevents different harnesses using the same model from
+overwriting one another. Override it with `--model_label`; pass the resulting
+label unchanged to `run_solver.py` and `run_val.py`. To continue an older
+OpenClaw output tree, pass its previous model-only label explicitly.
 
 ## Evaluation (solver + VAL)
 
@@ -123,14 +182,14 @@ Use the existing scripts with `--prediction_type llm-as-formalizer-agent` and
 the **sanitized** model label:
 
 ```bash
-python3 source/run_solver.py \
+uv run python source/run_solver.py \
     --domain blocksworld --data Heavily_Templated_BlocksWorld-100 \
-    --model openrouter__anthropic__claude-opus-4.6 \
+    --model hermes__openai__gpt-5.4-mini \
     --prediction_type llm-as-formalizer-agent --indices 1,2,3
 
-python3 source/run_val.py \
+uv run python source/run_val.py \
     --domain blocksworld --data Heavily_Templated_BlocksWorld-100 \
-    --model openrouter__anthropic__claude-opus-4.6 \
+    --model hermes__openai__gpt-5.4-mini \
     --prediction_type llm-as-formalizer-agent --indices 1,2,3 --csv_result
 ```
 
@@ -143,6 +202,21 @@ python3 source/run_val.py \
    entry in `config.py`.
 
 No orchestrator or workspace changes are required — they are claw-agnostic.
+
+## Verification
+
+```bash
+# Unit tests plus installed-runtime config validation.
+PYTHONPATH=source uv run python -m unittest discover -s tests -v
+
+# Docker mount/config smoke tests (no model request).
+RUN_HARNESS_CONTAINER_TESTS=1 PYTHONPATH=source \
+    uv run python -m unittest tests/test_container_harnesses.py -v
+
+# Full adapter/orchestrator path through a local fake API (no API cost).
+RUN_HARNESS_E2E_TESTS=1 PYTHONPATH=source \
+    uv run python -m unittest tests/test_harness_end_to_end.py -v
+```
 
 ## Trace format
 

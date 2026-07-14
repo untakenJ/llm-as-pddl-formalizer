@@ -2,13 +2,13 @@
 
 Supports:
 - **OpenAI** Responses API with structured JSON and optional hosted tools.
-- **Gemini** via Google GenAI SDK on **Gemini Enterprise Agent Platform** (ADC).
+- **Gemini** via Google GenAI SDK on **Gemini Enterprise Agent Platform / Vertex**
+  using ``GOOGLE_CLOUD_API_KEY``.
 
 Credentials in ``_private/.env`` (python-dotenv) or shell env:
 - OpenAI: ``_private/key.txt``
-- Gemini Enterprise: ``GOOGLE_GENAI_USE_ENTERPRISE=true``,
-  ``GOOGLE_CLOUD_PROJECT``, ``GOOGLE_CLOUD_LOCATION``; ADC via
-  ``gcloud auth application-default login``
+- Gemini Vertex: ``GOOGLE_CLOUD_API_KEY``, ``GOOGLE_CLOUD_PROJECT``,
+  ``GOOGLE_CLOUD_LOCATION``. This path does not use browser/ADC auth.
 
 Example:
     python3 source/llm-as-planner-api.py \\

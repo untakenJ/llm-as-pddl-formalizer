@@ -1,5 +1,6 @@
 _private/
 output/
+.venv/
 __pycache__/
 *.pyc
 .cache/

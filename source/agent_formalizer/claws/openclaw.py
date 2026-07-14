@@ -22,6 +22,7 @@ unreachable from Docker).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -49,6 +50,8 @@ logger = logging.getLogger(__name__)
 # Extra buffer beyond the agent timeout for the subprocess (let OpenClaw handle
 # its own timeout first; only kill the subprocess as a last resort).
 SUBPROCESS_TIMEOUT_BUFFER = 60
+AGENT_ADMIN_TIMEOUT = 120
+AGENT_ADD_ATTEMPTS = 3
 
 # Base path for temporary agent workspaces on the host (bind-mounted into
 # containers at the same path so OpenClaw sees the workspace created by
@@ -304,23 +307,40 @@ class OpenClawAdapter(BaseClawAdapter):
 
         with self._config_lock:
             self._sync_benchmark_openclaw_json()
-            result = subprocess.run(
-                [
-                    "openclaw", "agents", "add", agent_id,
-                    "--non-interactive",
-                    "--workspace", str(workspace),
-                    "--model", self.model,
-                    "--json",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                env=self._openclaw_env(),
-            )
-            if result.returncode != 0 and "already exists" not in result.stderr:
-                raise RuntimeError(
-                    f"Failed to create agent {agent_id}: {result.stderr}"
-                )
+            command = [
+                "openclaw", "agents", "add", agent_id,
+                "--non-interactive",
+                "--workspace", str(workspace),
+                "--model", self.model,
+                "--json",
+            ]
+            last_error = ""
+            for attempt in range(1, AGENT_ADD_ATTEMPTS + 1):
+                try:
+                    result = subprocess.run(
+                        command,
+                        capture_output=True,
+                        text=True,
+                        timeout=AGENT_ADMIN_TIMEOUT,
+                        env=self._openclaw_env(),
+                    )
+                except subprocess.TimeoutExpired:
+                    last_error = (
+                        f"timed out after {AGENT_ADMIN_TIMEOUT}s "
+                        f"(attempt {attempt}/{AGENT_ADD_ATTEMPTS})"
+                    )
+                else:
+                    combined = f"{result.stdout}\n{result.stderr}".lower()
+                    if result.returncode == 0 or "already exists" in combined:
+                        break
+                    last_error = (
+                        f"returncode={result.returncode}: "
+                        f"{result.stderr.strip() or result.stdout.strip()}"
+                    )
+                if attempt < AGENT_ADD_ATTEMPTS:
+                    time.sleep(attempt)
+            else:
+                raise RuntimeError(f"Failed to create agent {agent_id}: {last_error}")
 
             self._set_agent_tools_policy(agent_id)
 
@@ -334,16 +354,32 @@ class OpenClawAdapter(BaseClawAdapter):
     def _force_delete_agent(self, agent_id: str) -> None:
         """Force delete an agent, its workspace, and state directories."""
         with self._config_lock:
-            subprocess.run(
-                ["openclaw", "agents", "delete", agent_id, "--force"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                env=self._openclaw_env(),
-            )
+            try:
+                subprocess.run(
+                    ["openclaw", "agents", "delete", agent_id, "--force"],
+                    capture_output=True,
+                    text=True,
+                    timeout=AGENT_ADMIN_TIMEOUT,
+                    env=self._openclaw_env(),
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning("Timed out deleting OpenClaw agent %s", agent_id)
         workspace = TEMP_WORKSPACE_ROOT / agent_id
         if workspace.exists():
             shutil.rmtree(workspace, ignore_errors=True)
+        # OpenClaw intentionally refuses to reseed a recently attested
+        # workspace after it disappears. Benchmark workspaces are disposable
+        # and deliberately reused on retries, so remove only this workspace's
+        # attestation (the filename is sha256 of the absolute path).
+        attestation = (
+            self._state_dir
+            / "workspace-attestations"
+            / f"{hashlib.sha256(str(workspace).encode()).hexdigest()}.attested"
+        )
+        try:
+            attestation.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Could not remove workspace attestation %s: %s", attestation, exc)
         agent_state = self._resolve_agent_state_dir(agent_id) or (
             self._state_dir / "agents" / agent_id
         )

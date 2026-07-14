@@ -23,6 +23,13 @@ Parser.add_argument("--csv_result", help="get full output as csv file", action='
 Parser.add_argument("--workers", type=int, default=1,
                     help="parallel worker threads for independent problems (default 1 = sequential)")
 
+def _model_output_name(model):
+    if "/" not in model:
+        return model
+    if "meta" in model or "google" in model or "deepseek-ai" in model:
+        return model.split("/", 1)[1]
+    return model
+
 def standardize_blocks(plan):
     new_plan = re.sub(
             r'\b(?:b|block)?\s*(\d+)\b',  
@@ -125,10 +132,7 @@ def _validate_one_problem(problem_number, domain, data, model_name, prediction_t
 
 def validate_plan_batch(domain, data, model, problem_numbers, prediction_type, csv_result, out_dir_root=None,
                         workers=1):
-    if '/' in model:
-        _, model_name = model.split('/')
-    else:
-        model_name = model
+    model_name = _model_output_name(model)
 
     out_root = out_dir_root or f'{ROOT_DIR}/output'
     total = len(problem_numbers)
