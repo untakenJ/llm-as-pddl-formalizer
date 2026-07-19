@@ -39,3 +39,11 @@ class FormalizerResult:
     extraction_source: str | None = None  # "file" / "parsed" / None
     agent_result: AgentResult | None = None
     error: str | None = None
+    attempt_index: int = 1
+    execution_try: int = 1
+    attempt_valid: bool = True
+    generation_success: bool = False
+    model_label: str | None = None
+    completion_path: Path | None = None
+    domain_bytes: bytes | None = None
+    problem_bytes: bytes | None = None

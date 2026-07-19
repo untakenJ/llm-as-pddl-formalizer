@@ -10,11 +10,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from agent_formalizer.claws.generic import FILTERED_GENERIC_TOOLS, GenericAgentAdapter
+from agent_formalizer.claws import get_adapter
+from agent_formalizer.claws.generic import GenericAgentAdapter
 from agent_formalizer.claws.hermes import HermesAdapter
-from agent_formalizer.claws.nanobot import NANOBOT_ALLOWED_TOOLS, NanoBotAdapter
-from agent_formalizer.claws.zeroclaw import ZEROCLAW_ALLOWED_TOOLS, ZeroClawAdapter
+from agent_formalizer.claws.nanobot import NanoBotAdapter
+from agent_formalizer.claws.zeroclaw import ZeroClawAdapter
 from agent_formalizer.orchestrator import run_one_problem
+from agent_formalizer.config import PROVIDER_API_BASE
 
 DOMAIN = """(define (domain mock)
   (:requirements :strips)
@@ -146,12 +148,33 @@ class HarnessEndToEndTests(unittest.TestCase):
             "OPENAI_BASE_URL": endpoint,
         }
         try:
-            with patch.dict(os.environ, env, clear=False), TemporaryDirectory() as out_dir:
+            with (
+                patch.dict(os.environ, env, clear=False),
+                patch.dict(
+                    PROVIDER_API_BASE,
+                    {"openai": endpoint, "openrouter": endpoint},
+                ),
+                TemporaryDirectory() as out_dir,
+            ):
                 adapters = [
-                    HermesAdapter("openai/gpt-4o-mini", 90, 3),
-                    NanoBotAdapter("openai/gpt-4o-mini", 90, 3),
-                    ZeroClawAdapter("openai/gpt-4o-mini", 90, 3),
-                    GenericAgentAdapter("openai/gpt-4o-mini", 90),
+                    get_adapter(
+                        name,
+                        model=(
+                            "openrouter/gpt-4o-mini"
+                            if name == "openclaw"
+                            else "openai/gpt-4o-mini"
+                        ),
+                        timeout=90,
+                        max_turns=3,
+                        max_model_calls=3,
+                        allow_final_message_recovery=True,
+                        api_key="local-test-key",
+                    )
+                    for name in (
+                        [os.environ["E2E_ADAPTER"]]
+                        if os.environ.get("E2E_ADAPTER")
+                        else ("openclaw", "hermes", "nanobot", "zeroclaw", "generic")
+                    )
                 ]
                 for adapter in adapters:
                     with self.subTest(adapter=adapter.name):
@@ -164,51 +187,78 @@ class HarnessEndToEndTests(unittest.TestCase):
                             out_dir_root=out_dir,
                             model_label=f"mock-{adapter.name}",
                         )
-                        self.assertEqual(result.status, "ok", result.error)
-                        self.assertEqual(result.extraction_source, "parsed")
+                        diagnostic = ""
+                        if result.agent_result:
+                            for path in (
+                                result.agent_result.stdout_path,
+                                result.agent_result.stderr_path,
+                            ):
+                                if path and path.is_file():
+                                    diagnostic += path.read_text(errors="replace")
+                        self.assertEqual(
+                            result.status,
+                            "ok",
+                            f"{result.error}; agent={result.agent_result}; {diagnostic}",
+                        )
+                        self.assertIn(result.extraction_source, {"file", "parsed"})
                         self.assertIn("(domain mock)", result.domain_file or "")
+                        qualified_label = result.model_label
                         problem_dir = (
                             Path(out_dir)
                             / "llm-as-formalizer-agent"
                             / "blocksworld"
                             / "Heavily_Templated_BlocksWorld-100"
-                            / f"mock-{adapter.name}"
+                            / qualified_label
                             / "p01"
                         )
                         self.assertTrue(
-                            (problem_dir / f"p01_mock-{adapter.name}_df.pddl").is_file()
+                            (problem_dir / f"p01_{qualified_label}_df.pddl").is_file()
                         )
                         self.assertTrue(
-                            (problem_dir / f"p01_mock-{adapter.name}_pf.pddl").is_file()
+                            (problem_dir / f"p01_{qualified_label}_pf.pddl").is_file()
                         )
                         self.assertTrue((problem_dir / "metadata.json").is_file())
-                        if isinstance(adapter, HermesAdapter):
-                            state_dir = problem_dir / "sessions"
-                            self.assertTrue((state_dir / "state.db").is_file())
-                            usage_report = json.loads(
-                                (state_dir / "usage.json").read_text()
-                            )
-                            self.assertEqual(usage_report["status"], "ok")
-                            self.assertGreater(usage_report["usage"]["total"], 0)
+                        metadata = json.loads((problem_dir / "metadata.json").read_text())
+                        gateway = metadata["evidence"]["model_gateway_summary"]
+                        self.assertGreater(gateway["model_calls"], 0)
+                        self.assertLessEqual(
+                            gateway["model_calls"], gateway["max_model_calls"],
+                        )
+                        self.assertEqual(
+                            len(metadata["evidence"]["provenance"]["effective_config_sha256"]), 64
+                        )
+                        self.assertEqual(
+                            len(metadata["evidence"]["provenance"]["prompt_sha256"]), 64
+                        )
+                        self.assertEqual(
+                            len(metadata["evidence"]["provenance"]
+                                ["transport_payload_sha256"]), 64
+                        )
+                        self.assertEqual(
+                            metadata["evidence"]["provenance"]
+                            ["effective_config_sha256"],
+                            metadata["evidence"]["provenance"]
+                            ["materialized_config_sha256"],
+                        )
+                        ledger_path = (
+                            problem_dir / "executions" / "execution-001" /
+                            "model_call_ledger.jsonl"
+                        )
+                        ledger = [
+                            json.loads(line)
+                            for line in ledger_path.read_text().splitlines()
+                            if line
+                        ]
+                        self.assertTrue(any(
+                            row.get("counted") and row.get("request_body_sha256")
+                            for row in ledger
+                        ))
+                        self.assertIn(
+                            "harness_runtime", metadata["evidence"]["provenance"]
+                        )
                         tool_sets = FakeOpenAIHandler.seen_tool_sets[request_start:]
                         exposed = set().union(*tool_sets) if tool_sets else set()
                         self.assertTrue(exposed, f"{adapter.name} sent no tool schema")
-                        forbidden = {
-                            "spawn",
-                            "web_search",
-                            "web_fetch",
-                            "web_scan",
-                            "web_execute_js",
-                            "ask_user",
-                            "start_long_term_update",
-                        }
-                        self.assertFalse(exposed & forbidden, exposed & forbidden)
-                        if isinstance(adapter, NanoBotAdapter):
-                            self.assertTrue(exposed <= NANOBOT_ALLOWED_TOOLS, exposed)
-                        elif isinstance(adapter, ZeroClawAdapter):
-                            self.assertTrue(exposed <= set(ZEROCLAW_ALLOWED_TOOLS), exposed)
-                        elif isinstance(adapter, GenericAgentAdapter):
-                            self.assertTrue(exposed <= FILTERED_GENERIC_TOOLS, exposed)
         finally:
             server.shutdown()
             server.server_close()

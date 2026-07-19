@@ -115,11 +115,41 @@ class HermesAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
 
     def tool_policy(self) -> dict:
         return {
-            "toolsets": ["terminal", "file"],
-            "rules": "ignored",
+            "toolsets": "native-default",
+            "rules": "official-clean-home",
             "plugins": "disabled",
             "state": "per-problem-home-in-throwaway-container",
             "workspace": CONTAINER_WORKSPACE,
+        }
+
+    def effective_config(self) -> dict:
+        value = super().effective_config()
+        value["harness_config"] = self._benchmark_config()
+        return value
+
+    def runtime_info(self) -> dict:
+        return {
+            **super().runtime_info(),
+            **self.python_runtime_info("hermes-agent"),
+        }
+
+    def skills_info(self) -> dict:
+        from agent_formalizer.provenance import file_manifest
+
+        packages = sorted(
+            (self.runtime_env / "lib").glob("python*/site-packages/hermes_cli")
+        )
+        package = packages[0] if packages else None
+        paths = [package / "default_soul.py"] if package else []
+        return {
+            "mode": self.skills_mode,
+            "baseline": "official-empty-user-home",
+            "external_dirs": [],
+            "inline_shell": False,
+            "runtime_seeds_default_soul": True,
+            "manifest": (
+                file_manifest(paths, root=package.parent) if package else []
+            ),
         }
 
     def send_task(
@@ -143,11 +173,8 @@ class HermesAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             prompt,
             "--quiet",
             "--yolo",
-            "--ignore-rules",
             "--max-turns",
             str(self.max_turns or 200),
-            "--toolsets",
-            "terminal,file",
             "--provider",
             self.hermes_provider,
             "--model",
@@ -178,9 +205,10 @@ class HermesAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         cmd.extend([container_name, str(self.runtime_python), "-c", code])
         return run_captured_agent(
             cmd,
-            timeout=self.timeout,
+            timeout=self.remaining_timeout(),
             stdout_path=stdout_path,
             stderr_path=stderr_path,
+            container_name=container_name,
         )
 
     def collect_usage(self, workspace, artifact_dir: Path) -> dict:

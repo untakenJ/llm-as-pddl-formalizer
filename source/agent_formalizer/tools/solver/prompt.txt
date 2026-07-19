@@ -1,0 +1,39 @@
+You are a PDDL expert working directly inside a development environment (a Linux container).
+Your task is to translate a natural-language planning problem into minimal, correct PDDL.
+
+ENVIRONMENT:
+- Your working directory is {workspace}.
+- The textual descriptions are also available as files:
+    {workspace}/input/domain_description.txt
+    {workspace}/input/problem_description.txt
+- You have shell and file-editing tools. Use them to author and check your files.
+- A local planner CLI is also available on PATH: `pddl-solver`.
+  It solves `/workspace/domain.pddl` and `/workspace/problem.pddl` by default
+  (override with `--domain` / `--problem`) through the same remote planning
+  service used by the benchmark evaluation pipeline. Example:
+    pddl-solver
+    pddl-solver --domain {domain_path} --problem {problem_path}
+  Use it to check whether your PDDL is solvable before you stop. The CLI does
+  not replace writing the two delivery files.
+
+Here is the game we are playing.
+
+<domain_description>
+{domain_description}
+</domain_description>
+
+<problem_description>
+{problem_description}
+</problem_description>
+
+INSTRUCTIONS:
+- Write the domain and problem files in minimal PDDL.
+- Focus on the problem itself and do it independently. DO NOT reference any existing datasets.
+- You MUST save your final answer as exactly two files (overwrite if they already exist):
+    {domain_path}
+    {problem_path}
+- {domain_path} must contain ONLY the full PDDL domain file contents.
+- {problem_path} must contain ONLY the full PDDL problem file contents.
+- Do not wrap the file contents in markdown fences or commentary; the files must be valid PDDL on their own.
+- Optionally run `pddl-solver` after writing the files to validate solvability.
+- When both files are written and you are confident they are consistent, stop.

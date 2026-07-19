@@ -12,20 +12,17 @@ from typing import Iterable, Iterator
 
 from agent_formalizer.claws.base import BaseClawAdapter, decode_output
 from agent_formalizer.config import (
+    MODEL_GATEWAY_HOST,
+    MODEL_GATEWAY_PORT,
     PROVIDER_API_BASE,
-    PROVIDER_API_BASE_ENV,
     PROVIDER_API_KEY_ENV,
     api_key_env_for_model,
     provider_for_model,
 )
 from agent_formalizer.result_types import AgentResult
 
-SUBPROCESS_TIMEOUT_BUFFER = 60
 INTERNAL_API_KEY_ENV = "PDDL_BENCHMARK_API_KEY"
 GOOGLE_VERTEX_PROVIDER = "google-vertex"
-VERTEX_PROXY_PORT = 8765
-VERTEX_PROXY_CONTAINER_PATH = "/opt/pddl-benchmark/vertex_openai_proxy.py"
-VERTEX_PROXY_SCRIPT = Path(__file__).resolve().parent.parent / "vertex_openai_proxy.py"
 
 
 @dataclass(frozen=True)
@@ -35,7 +32,7 @@ class ProviderSpec:
     name: str
     key_env: str
     api_base: str
-    api_base_env: str | None = None
+    gateway_auth_mode: str = "bearer"
 
 
 _PROVIDER_ALIASES = {
@@ -64,43 +61,44 @@ def provider_spec(model: str) -> ProviderSpec:
     provider = normalized_provider(raw_provider)
     key_env = PROVIDER_API_KEY_ENV.get(raw_provider) or PROVIDER_API_KEY_ENV.get(provider)
     api_base = PROVIDER_API_BASE.get(raw_provider) or PROVIDER_API_BASE.get(provider)
-    base_env = PROVIDER_API_BASE_ENV.get(raw_provider) or PROVIDER_API_BASE_ENV.get(provider)
     if not key_env or not api_base:
         supported = ", ".join(sorted(PROVIDER_API_BASE))
         raise ValueError(
             f"Provider '{raw_provider}' is not configured for isolated harness runs. "
             f"Supported provider prefixes: {supported}."
         )
-    return ProviderSpec(provider, key_env, api_base, base_env)
+    if raw_provider in {"google", "gemini", "google-vertex"}:
+        auth_mode = "x_goog_api_key"
+    elif raw_provider == "anthropic":
+        auth_mode = "x_api_key"
+    else:
+        auth_mode = "bearer"
+    return ProviderSpec(provider, key_env, api_base, auth_mode)
 
 
-def google_vertex_settings() -> tuple[str, str, str]:
+def google_vertex_settings(provider_options: dict | None = None) -> tuple[str, str, str]:
     """Return the Vertex project, location, and regional API origin."""
-    project = (
-        os.environ.get("GOOGLE_CLOUD_PROJECT")
-        or os.environ.get("GCLOUD_PROJECT")
-        or os.environ.get("GOOGLE_CLOUD_PROJECT_ID")
-    )
+    options = dict((provider_options or {}).get("google_vertex", {}))
+    project = options.get("project")
     if not project:
         raise RuntimeError(
-            "google-vertex requires GOOGLE_CLOUD_PROJECT in _private/.env."
+            "google-vertex requires providers.google_vertex.project in the "
+            "benchmark profile or an explicit --vertex-project override."
         )
-    location = os.environ.get("GOOGLE_CLOUD_LOCATION") or "global"
-    configured_origin = os.environ.get("GOOGLE_VERTEX_BASE_URL")
-    if configured_origin:
-        origin = configured_origin.rstrip("/")
-    elif location == "global":
-        origin = "https://aiplatform.googleapis.com"
-    else:
-        origin = f"https://{location}-aiplatform.googleapis.com"
+    location = options.get("location") or "global"
+    origin = options.get("origin")
+    if not origin:
+        origin = (
+            "https://aiplatform.googleapis.com"
+            if location == "global"
+            else f"https://{location}-aiplatform.googleapis.com"
+        )
     return project, location, origin
 
 
-def google_vertex_openai_base(*, proxy: bool = False) -> str:
+def google_vertex_openai_base(provider_options: dict | None = None) -> str:
     """Build the project-qualified Vertex Chat Completions base URL."""
-    project, location, origin = google_vertex_settings()
-    if proxy:
-        origin = f"http://127.0.0.1:{VERTEX_PROXY_PORT}"
+    project, location, origin = google_vertex_settings(provider_options)
     return (
         f"{origin}/v1/projects/{project}/locations/{location}"
         "/endpoints/openapi"
@@ -123,9 +121,31 @@ class EnvConfiguredAdapter(BaseClawAdapter):
         max_turns: int | None = None,
         *,
         model_api_keys: dict[str, str] | None = None,
+        api_key: str | None = None,
+        api_key_name: str | None = None,
+        provider_options: dict | None = None,
+        max_model_calls: int = 50,
+        allow_network: bool = False,
+        network_mode: str | None = None,
+        skills_mode: str = "official",
+        benchmark_profile=None,
+        resolved_config=None,
     ):
-        super().__init__(model, timeout, max_turns)
+        super().__init__(
+            model,
+            timeout,
+            max_turns,
+            max_model_calls=max_model_calls,
+            allow_network=allow_network,
+            network_mode=network_mode,
+            skills_mode=skills_mode,
+            benchmark_profile=benchmark_profile,
+            resolved_config=resolved_config,
+        )
         self.model_api_keys = dict(model_api_keys or {})
+        self._api_key = api_key
+        self._api_key_name = api_key_name
+        self.provider_options = dict(provider_options or {})
 
     @property
     def raw_provider(self) -> str:
@@ -151,18 +171,51 @@ class EnvConfiguredAdapter(BaseClawAdapter):
         return self.runtime_model
 
     @property
-    def api_base(self) -> str:
+    def direct_api_base(self) -> str:
         if self.is_google_vertex:
-            return google_vertex_openai_base()
+            return google_vertex_openai_base(self.provider_options)
+        return provider_spec(self.model).api_base
+
+    @property
+    def api_base(self) -> str:
+        """Provider base routed through the per-task model gateway."""
+        from urllib.parse import urlsplit
+
+        direct = urlsplit(self.direct_api_base)
+        suffix = direct.path.rstrip("/")
+        return f"http://{MODEL_GATEWAY_HOST}:{MODEL_GATEWAY_PORT}{suffix}"
+
+    def upstream_api_base(self) -> str:
+        return self.direct_api_base
+
+    def model_gateway(self) -> dict:
+        value = super().model_gateway()
         spec = provider_spec(self.model)
-        if spec.api_base_env and os.environ.get(spec.api_base_env):
-            return os.environ[spec.api_base_env]
-        return spec.api_base
+        value["auth_mode"] = spec.gateway_auth_mode
+        value["allowed_models"] = sorted(
+            {
+                self.model,
+                self.runtime_model,
+                self.openai_compatible_model,
+            }
+        )
+        from urllib.parse import urlsplit
+
+        path = urlsplit(self.direct_api_base).path.rstrip("/")
+        if not path:
+            path = "/v1/projects" if self.is_google_vertex else "/v1"
+        value["allowed_path_prefixes"] = [path]
+        return value
+
+    def model_gateway_secret(self) -> str | None:
+        return self.resolved_api_key()
 
     def api_key_env(self) -> str | None:
-        return api_key_env_for_model(self.model, self.model_api_keys)
+        return self._api_key_name or api_key_env_for_model(self.model, self.model_api_keys)
 
     def resolved_api_key(self) -> str | None:
+        if self._api_key:
+            return self._api_key
         name = self.api_key_env()
         return os.environ.get(name) if name else None
 
@@ -173,6 +226,7 @@ class EnvConfiguredAdapter(BaseClawAdapter):
             "normalized_provider": self.provider,
             "runtime_model": self.runtime_model,
             "api_base": self.api_base,
+            "upstream_api_base": self.direct_api_base,
             "api_key_env": self.api_key_env(),
             "api_key_present": bool(self.resolved_api_key()),
         }
@@ -182,21 +236,19 @@ class EnvConfiguredAdapter(BaseClawAdapter):
         # before Docker is started.
         provider_spec(self.model)
         if self.is_google_vertex:
-            google_vertex_settings()
+            google_vertex_settings(self.provider_options)
         if not self.resolved_api_key():
             env_name = self.api_key_env()
             hint = (
-                f"Set {env_name} in _private/.env"
+                f"pass the key explicitly or set only {env_name} for the runner"
                 if env_name
-                else "pass --api-key-env NAME and define NAME in _private/.env"
+                else "pass --api-key-env NAME and define only that runner variable"
             )
             raise RuntimeError(f"No API key for {self.model}. {hint}.")
 
     def auth_env(self) -> dict[str, str]:
-        """Container env aliases for the selected key, without host config files."""
-        value = self.resolved_api_key()
-        if not value:
-            return {}
+        """Placeholder auth aliases; real credentials remain gateway-only."""
+        value = "benchmark-gateway-placeholder"
         spec = provider_spec(self.model)
         result = {
             INTERNAL_API_KEY_ENV: value,
@@ -209,53 +261,13 @@ class EnvConfiguredAdapter(BaseClawAdapter):
 
     def docker_exec_env_args(self, extra: dict[str, str] | None = None) -> list[str]:
         env = self.auth_env()
+        if self.resolved_config is not None:
+            env.update(self.resolved_config.raw["resolved"]["environment"]["fixed"])
         env.update(extra or {})
         args: list[str] = []
         for name, value in env.items():
             args.extend(["-e", f"{name}={value}"])
         return args
-
-    def vertex_proxy_container_args(self) -> list[str]:
-        """Mount and configure the loopback Vertex auth proxy when required."""
-        if not self.is_google_vertex:
-            return []
-        if not VERTEX_PROXY_SCRIPT.is_file():
-            raise RuntimeError(f"Vertex proxy script missing: {VERTEX_PROXY_SCRIPT}")
-        project, location, origin = google_vertex_settings()
-        args = [
-            "-v",
-            f"{VERTEX_PROXY_SCRIPT}:{VERTEX_PROXY_CONTAINER_PATH}:ro",
-        ]
-        args.extend(
-            self.docker_exec_env_args(
-                {
-                    "GOOGLE_CLOUD_PROJECT": project,
-                    "GOOGLE_CLOUD_LOCATION": location,
-                    "GOOGLE_VERTEX_BASE_URL": origin,
-                }
-            )
-        )
-        return args
-
-    def start_vertex_proxy(self, workspace) -> None:
-        """Start a per-container proxy that replaces Bearer auth with API-key auth."""
-        if not self.is_google_vertex:
-            return
-        start = workspace.run_in_container(
-            f"python3 {VERTEX_PROXY_CONTAINER_PATH} "
-            ">/tmp/pddl-vertex-proxy.log 2>&1 </dev/null &"
-        )
-        if start.exit_code != 0:
-            raise RuntimeError(f"Failed to start Vertex proxy: {start.stderr}")
-        health = workspace.run_in_container(
-            f"for i in $(seq 1 50); do "
-            f"curl -fsS http://127.0.0.1:{VERTEX_PROXY_PORT}/health >/dev/null "
-            "&& exit 0; sleep 0.1; done; "
-            "cat /tmp/pddl-vertex-proxy.log >&2; exit 1"
-        )
-        if health.exit_code != 0:
-            raise RuntimeError(f"Vertex proxy did not become ready: {health.stderr}")
-
 
 class PythonRuntimeMixin:
     """Bind-mount an isolated venv and its uv-managed base interpreter."""
@@ -296,14 +308,34 @@ class PythonRuntimeMixin:
             mounts.extend(["-v", f"{source_home}:{target_home}:ro"])
         return mounts
 
+    def python_runtime_info(self, distribution: str | None = None) -> dict:
+        from agent_formalizer.provenance import run_text
+
+        info = {
+            "python_executable": str(self.runtime_python),
+            "python_version": run_text([str(self.runtime_python), "--version"]),
+            "runtime_env": str(self.runtime_env),
+        }
+        if distribution:
+            code = (
+                "import importlib.metadata as m; "
+                f"print(m.version({distribution!r}))"
+            )
+            info["distribution"] = distribution
+            info["distribution_version"] = run_text(
+                [str(self.runtime_python), "-c", code]
+            )
+        return info
+
 
 def run_captured_agent(
     cmd: list[str],
     *,
-    timeout: int,
+    timeout: float,
     stdout_path: Path | None,
     stderr_path: Path | None,
     final_text: str | None = None,
+    container_name: str | None = None,
 ) -> AgentResult:
     """Run a non-interactive harness command and normalize its result."""
     started = time.monotonic()
@@ -313,7 +345,7 @@ def run_captured_agent(
             cmd,
             capture_output=True,
             text=True,
-            timeout=timeout + SUBPROCESS_TIMEOUT_BUFFER,
+            timeout=timeout,
         )
         exit_code = result.returncode
         stdout = result.stdout
@@ -323,6 +355,10 @@ def run_captured_agent(
         exit_code = -1
         stdout = decode_output(exc.stdout)
         stderr = decode_output(exc.stderr)
+        if container_name:
+            subprocess.run(
+                ["docker", "kill", container_name], capture_output=True, timeout=30
+            )
 
     if stdout_path:
         stdout_path.write_text(stdout or "", errors="replace")

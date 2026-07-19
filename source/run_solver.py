@@ -1,17 +1,22 @@
 import argparse
-import json
 import os
+import sys
 import time
 import traceback
-
-import requests
 
 from batch_utils import format_problem_name, run_parallel
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOLVER_BASE_URL = "https://solver.planning.domains:5001"
-REQUEST_TIMEOUT_SECONDS = 30
-POLL_INTERVAL_SECONDS = 0.5
+SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
+if SOURCE_DIR not in sys.path:
+    sys.path.insert(0, SOURCE_DIR)
+
+from agent_formalizer.tools.solver import (  # noqa: E402
+    DEFAULT_SOLVER,
+    SOLVER_BASE_URL,
+    plan_text_from_solver_result,
+    solve_pddl,
+)
 
 Parser = argparse.ArgumentParser()
 Parser.add_argument("--domain", help="which domain to evaluate", choices=["blocksworld", "mystery_blocksworld", "barman", "logistics"])
@@ -23,7 +28,7 @@ Parser.add_argument("--indices", default=None,
                     help="comma-separated problem numbers (e.g. '1,5,17'); overrides --index_start/--index_end when provided")
 Parser.add_argument("--out_dir", default=None,
                     help="base output directory; defaults to {ROOT_DIR}/output")
-Parser.add_argument("--solver", help="which solver to use", default="dual-bfws-ffparser")
+Parser.add_argument("--solver", help="which solver to use", default=DEFAULT_SOLVER)
 Parser.add_argument("--prediction_type", help="which formalizer pipeline produced the PDDL", choices=["llm-as-formalizer", "llm-as-formalizer-api", "llm-as-formalizer-antigravity", "llm-as-formalizer-agent"], default="llm-as-formalizer")
 Parser.add_argument("--workers", type=int, default=1,
                     help="parallel worker threads for independent problems (default 1 = sequential)")
@@ -37,104 +42,8 @@ def _model_output_name(model):
     return model
 
 
-def _log_value(value, limit=16000):
-    """Render remote data for a bounded, human-readable error record."""
-    if isinstance(value, str):
-        rendered = value
-    else:
-        try:
-            rendered = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
-        except (TypeError, ValueError):
-            rendered = repr(value)
-    if len(rendered) <= limit:
-        return rendered
-    return rendered[:limit] + f"\n... truncated {len(rendered) - limit} characters"
-
-
-def _solver_failure(stage, message, *, solver, task_url=None, response=None, payload=None):
-    """Build a diagnostic that can be written directly to a per-problem file."""
-    lines = [
-        "solver request failed",
-        f"stage: {stage}",
-        f"solver: {solver}",
-        f"message: {message}",
-    ]
-    if task_url:
-        lines.append(f"task_url: {task_url}")
-    if response is not None:
-        status_code = getattr(response, "status_code", "unknown")
-        lines.append(f"http_status: {status_code}")
-    if payload is not None:
-        lines.extend(("response_json:", _log_value(payload)))
-    elif response is not None:
-        response_text = getattr(response, "text", "")
-        if response_text:
-            lines.extend(("response_body:", _log_value(response_text)))
-    return False, "\n".join(lines)
-
-
-def _decode_solver_response(response, *, stage, solver, task_url=None):
-    try:
-        payload = response.json()
-    except (TypeError, ValueError) as exc:
-        return None, _solver_failure(
-            stage,
-            f"response was not valid JSON ({type(exc).__name__}: {exc})",
-            solver=solver,
-            task_url=task_url,
-            response=response,
-        )
-
-    if not isinstance(payload, dict):
-        return None, _solver_failure(
-            stage,
-            f"expected a JSON object, got {type(payload).__name__}",
-            solver=solver,
-            task_url=task_url,
-            response=response,
-            payload=payload,
-        )
-
-    status_code = getattr(response, "status_code", 200)
-    if not 200 <= status_code < 300:
-        return None, _solver_failure(
-            stage,
-            "remote service returned a non-success HTTP status",
-            solver=solver,
-            task_url=task_url,
-            response=response,
-            payload=payload,
-        )
-    return payload, None
-
-
-def _remote_error(payload):
-    if "error" in payload:
-        return payload["error"]
-    if "Error" in payload:
-        return payload["Error"]
-    return None
-
-
-def _task_url(task_reference):
-    if task_reference.startswith(("http://", "https://")):
-        return task_reference
-    return f"{SOLVER_BASE_URL}/{task_reference.lstrip('/')}"
-
-
-def _plan_from_output(output):
-    """Return a plan string from the generic Planutils output mapping."""
-    if not isinstance(output, dict):
-        return None
-    if "plan" in output:
-        return output["plan"] if isinstance(output["plan"], str) else None
-    if len(output) == 1:
-        only_value = next(iter(output.values()))
-        return only_value if isinstance(only_value, str) else None
-    return None
-
-
 def run_solver(domain, data, problem, model, solver, prediction_type="llm-as-formalizer", out_dir_root=None):
+    """Load generated PDDL files and solve them on the shared remote backend."""
     model_name = _model_output_name(model)
 
     out_root = out_dir_root or f'{ROOT_DIR}/output'
@@ -150,149 +59,17 @@ def run_solver(domain, data, problem, model, solver, prediction_type="llm-as-for
     with open(problem_path) as f:
         problem_file = f.read()
 
-    req_body = {"domain" : domain_file, "problem" : problem_file}
-    submit_url = f"{SOLVER_BASE_URL}/package/{solver}/solve"
-
-    # Send job request to solve endpoint
-    try:
-        submit_response = requests.post(
-            submit_url,
-            json=req_body,
-            timeout=REQUEST_TIMEOUT_SECONDS,
-        )
-    except requests.RequestException as exc:
-        return _solver_failure(
-            "submit",
-            f"request failed ({type(exc).__name__}: {exc})",
-            solver=solver,
-        )
-
-    submit_payload, failure = _decode_solver_response(
-        submit_response,
-        stage="submit",
+    return solve_pddl(
+        domain_file,
+        problem_file,
         solver=solver,
-    )
-    if failure:
-        return failure
-
-    task_reference = submit_payload.get("result")
-    if not isinstance(task_reference, str) or not task_reference:
-        remote_error = _remote_error(submit_payload)
-        message = "submit response missing top-level 'result'"
-        if remote_error is not None:
-            message += f": {remote_error}"
-        return _solver_failure(
-            "submit",
-            message,
-            solver=solver,
-            response=submit_response,
-            payload=submit_payload,
-        )
-    task_url = _task_url(task_reference)
-
-    # Query the result in the job
-    while True:
-        try:
-            terminal_response = requests.post(
-                task_url,
-                timeout=REQUEST_TIMEOUT_SECONDS,
-            )
-        except requests.RequestException as exc:
-            return _solver_failure(
-                "poll",
-                f"request failed ({type(exc).__name__}: {exc})",
-                solver=solver,
-                task_url=task_url,
-            )
-
-        terminal_payload, failure = _decode_solver_response(
-            terminal_response,
-            stage="poll",
-            solver=solver,
-            task_url=task_url,
-        )
-        if failure:
-            return failure
-        if terminal_payload.get("status") != "PENDING":
-            break
-        time.sleep(POLL_INTERVAL_SECONDS)
-
-    if "result" not in terminal_payload:
-        remote_error = _remote_error(terminal_payload)
-        message = "terminal response missing top-level 'result'"
-        if remote_error is not None:
-            message += f": {remote_error}"
-        return _solver_failure(
-            "terminal",
-            message,
-            solver=solver,
-            task_url=task_url,
-            response=terminal_response,
-            payload=terminal_payload,
-        )
-
-    result = terminal_payload["result"]
-    if not isinstance(result, dict):
-        return _solver_failure(
-            "terminal",
-            f"top-level 'result' must be an object, got {type(result).__name__}",
-            solver=solver,
-            task_url=task_url,
-            response=terminal_response,
-            payload=terminal_payload,
-        )
-
-    stdout = result.get("stdout", "")
-    stderr = result.get("stderr", "")
-    output = result.get("output")
-    plan = _plan_from_output(output)
-
-    if solver == "lama-first":
-        if plan:
-            return True, {"plan": plan}
-        message = "lama-first returned no non-empty plan"
-    elif solver == "dual-bfws-ffparser":
-        if plan:
-            return True, {"plan": plan}
-        if isinstance(stdout, str) and (
-            "Plan found with cost: 0" in stdout
-            or "The empty plan solves it" in stdout
-        ):
-            return True, {"plan": ""}
-        message = "dual-bfws-ffparser returned no plan without an empty-plan success marker"
-    else:
-        message = f"unsupported solver {solver!r}"
-
-    if stderr:
-        message += f"; stderr: {_log_value(stderr, limit=4000)}"
-    elif stdout:
-        message += f"; stdout: {_log_value(stdout, limit=4000)}"
-    return _solver_failure(
-        "solver-result",
-        message,
-        solver=solver,
-        task_url=task_url,
-        response=terminal_response,
-        payload=terminal_payload,
+        base_url=SOLVER_BASE_URL,
     )
 
 
 def _plan_text_from_solver_result(result) -> tuple[bool, str]:
-    """Normalize dual-bfws-ffparser / lama-first payloads into plan text.
-
-    ``run_solver`` may return either a structured ``{'plan': ...}`` dict or a raw
-    stdout/stderr string. Missing or malformed plan payloads downgrade to an
-    error message instead of raising in the batch worker.
-    """
-    if isinstance(result, dict):
-        if "plan" in result:
-            return True, result["plan"] or ""
-        return False, f"solver returned dict without 'plan' key: {result!r}"
-    if isinstance(result, str):
-        if "Plan found with cost: 0" in result or "The empty plan solves it" in result:
-            return True, ""
-        return False, result
-    return False, f"unexpected solver result type {type(result).__name__}: {result!r}"
+    """Normalize dual-bfws-ffparser / lama-first payloads into plan text."""
+    return plan_text_from_solver_result(result)
 
 
 def _run_solver_one(problem_number, domain, data, model, solver, prediction_type, out_root, model_name, attempts=3):

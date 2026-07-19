@@ -21,19 +21,6 @@ from agent_formalizer.result_types import AgentResult
 
 NANOBOT_CONFIG_DIR = "/tmp/nanobot-pddl-benchmark"
 
-NANOBOT_ALLOWED_TOOLS = {
-    "apply_patch",
-    "edit_file",
-    "exec",
-    "find_files",
-    "grep",
-    "list_dir",
-    "list_exec_sessions",
-    "read_file",
-    "write_file",
-    "write_stdin",
-}
-
 NANOBOT_DISABLED_SKILLS = [
     "clawhub",
     "cron",
@@ -93,11 +80,31 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         config = json.dumps(self._benchmark_config(), indent=2) + "\n"
         if not workspace.write_text_file(f"{NANOBOT_CONFIG_DIR}/config.json", config):
             raise RuntimeError("Failed to provision isolated NanoBot config")
-        # Pre-create empty bootstrap files so NanoBot does not inject its
-        # packaged persona or a previous workspace's memory into this run.
+        # Reproduce a clean official onboarding baseline from the pinned
+        # package, never from a host user's NanoBot workspace.
+        bootstrap = self._official_bootstrap_files() if self.skills_mode == "official" else {}
+        bootstrap["memory/MEMORY.md"] = ""
         for relative in ("AGENTS.md", "SOUL.md", "USER.md", "memory/MEMORY.md"):
-            if not workspace.write_text_file(f"{CONTAINER_WORKSPACE}/{relative}", ""):
+            content = bootstrap.get(relative, "")
+            if not workspace.write_text_file(f"{CONTAINER_WORKSPACE}/{relative}", content):
                 raise RuntimeError(f"Failed to isolate NanoBot bootstrap file {relative}")
+
+    def _nanobot_package_dir(self) -> Path | None:
+        candidates = sorted(
+            (self.runtime_env / "lib").glob("python*/site-packages/nanobot")
+        )
+        return candidates[0] if candidates else None
+
+    def _official_bootstrap_files(self) -> dict[str, str]:
+        package = self._nanobot_package_dir()
+        if not package:
+            return {}
+        result: dict[str, str] = {}
+        for name in ("AGENTS.md", "SOUL.md", "USER.md"):
+            path = package / "templates" / name
+            if path.is_file():
+                result[name] = path.read_text()
+        return result
 
     def _benchmark_config(self) -> dict:
         provider_config = {
@@ -124,9 +131,12 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
                     "workspace": CONTAINER_WORKSPACE,
                     "model": self.openai_compatible_model,
                     "provider": self.nanobot_provider,
+                    "fallbackModels": [],
                     "maxToolIterations": self.max_turns or 200,
                     "maxConcurrentSubagents": 1,
-                    "disabledSkills": NANOBOT_DISABLED_SKILLS,
+                    "disabledSkills": (
+                        [] if self.skills_mode == "official" else NANOBOT_DISABLED_SKILLS
+                    ),
                     "timezone": "UTC",
                 }
             },
@@ -134,13 +144,21 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
                 self.nanobot_provider: provider_config
             },
             "tools": {
-                "web": {"enable": False},
-                "exec": {"enable": True, "timeout": min(self.timeout, 600)},
+                # Keep the pinned clean-install registry.  model_only is an
+                # egress boundary, not a web-tool ablation: native web tools
+                # remain visible and fail at the network boundary.
+                "web": {"enable": True},
+                "exec": {"enable": True, "timeout": 60},
                 "file": {"enable": True},
-                "cliApps": {"enable": False},
-                "my": {"enable": False, "allowSet": False},
+                "cliApps": {
+                    "enable": True,
+                    "installTimeout": 300,
+                    "runTimeout": 60,
+                    "catalogTtlSeconds": 3600,
+                },
+                "my": {"enable": True, "allowSet": False},
                 "imageGeneration": {"enabled": False},
-                "restrictToWorkspace": True,
+                "restrictToWorkspace": False,
                 "mcpServers": {},
             },
             "channels": {},
@@ -148,13 +166,42 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
 
     def tool_policy(self) -> dict:
         return {
-            "web": False,
-            "mcp": False,
-            "restrict_to_workspace": True,
-            "allowed": sorted(NANOBOT_ALLOWED_TOOLS),
-            "skills": "disabled",
-            "bootstrap_files": "empty",
+            "registry": "pinned-clean-install-defaults",
+            "native_web_tools_visible": True,
+            "network_effect_boundary": self.network_mode,
+            "mcp_servers": "official-clean-empty",
+            "restrict_to_workspace": False,
+            "cli_apps": True,
+            "self_inspection": True,
+            "skills": self.skills_mode,
+            "bootstrap_files": "official-clean" if self.skills_mode == "official" else "empty",
             "state": "throwaway-container",
+        }
+
+    def effective_config(self) -> dict:
+        value = super().effective_config()
+        value["harness_config"] = self._benchmark_config()
+        return value
+
+    def runtime_info(self) -> dict:
+        return {
+            **super().runtime_info(),
+            **self.python_runtime_info("nanobot-ai"),
+        }
+
+    def skills_info(self) -> dict:
+        from agent_formalizer.provenance import file_manifest
+
+        package = self._nanobot_package_dir()
+        paths = [] if not package else [
+            path for path in (package / "skills").glob("**/*")
+            if "__pycache__" not in path.parts and path.suffix != ".pyc"
+        ]
+        paths += [] if not package else list((package / "templates").glob("*.md"))
+        return {
+            "mode": self.skills_mode,
+            "baseline": "pinned-package-bundled-skills-and-bootstrap",
+            "manifest": file_manifest(paths, root=package) if package else [],
         }
 
     @staticmethod
@@ -194,21 +241,8 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             "--no-markdown",
             "--no-logs",
         ]
-        loader_patch = """
-from nanobot.agent.tools.loader import ToolLoader
-_benchmark_original_load = ToolLoader.load
-_benchmark_allowed_tools = ALLOWED
-def _benchmark_load(self, ctx, registry, *, scope="core"):
-    loaded = _benchmark_original_load(self, ctx, registry, scope=scope)
-    for tool_name in list(registry.tool_names):
-        if tool_name not in _benchmark_allowed_tools:
-            registry.unregister(tool_name)
-    return [name for name in loaded if name in _benchmark_allowed_tools]
-ToolLoader.load = _benchmark_load
-""".replace("ALLOWED", repr(sorted(NANOBOT_ALLOWED_TOOLS)))
         code = (
             "import sys; "
-            f"exec({loader_patch!r}); "
             f"sys.argv = {argv!r}; "
             "from nanobot.cli.commands import app; "
             "app()"
@@ -225,9 +259,10 @@ ToolLoader.load = _benchmark_load
         cmd.extend([container_name, str(self.runtime_python), "-c", code])
         result = run_captured_agent(
             cmd,
-            timeout=self.timeout,
+            timeout=self.remaining_timeout(),
             stdout_path=stdout_path,
             stderr_path=stderr_path,
+            container_name=container_name,
         )
         result.session_id = self._session_id(agent_id)
         result.session_file = self._session_path(agent_id)

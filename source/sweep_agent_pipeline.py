@@ -27,12 +27,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent_formalizer.claws import CLAWS
+from agent_formalizer.benchmark_profile import (
+    load_benchmark_profile,
+    with_google_vertex_project,
+)
 from agent_formalizer.config import (
     CLAW_DEFAULTS,
+    DEFAULT_SECRETS_ENV_FILE,
     PREDICTION_TYPE,
     agent_model_label,
     sanitize_model_name,
 )
+from agent_formalizer.util import read_named_setting
 from batch_utils import format_problem_name
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -71,14 +77,6 @@ class AgentBatchResult:
 
 _SOLV_RE = re.compile(r"Solvability:\s*(\S+)\s*/\s*(\d+)")
 _CORR_RE = re.compile(r"Correctness:\s*(\S+)\s*/\s*(\d+)")
-
-_RETRYABLE_PROVIDER_MARKERS = (
-    "API error (429)",
-    "[code=RESOURCE_EXHAUSTED]",
-    "status code: 429",
-    "status_code=429",
-)
-
 
 def _parse_val_stdout(stdout: str) -> tuple[str, str, int]:
     s = _SOLV_RE.search(stdout)
@@ -163,21 +161,6 @@ def _count_pddl_outputs(out_dir: Path, domain: str, dataset: str, model_label: s
     return count
 
 
-def _has_retryable_provider_failure(problem_dir: Path) -> bool:
-    """Recognize explicit transient provider failures without reclassifying agent output."""
-    for name in ("agent_stderr.log", "metadata.json"):
-        path = problem_dir / name
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(errors="replace")
-        except OSError:
-            continue
-        if any(marker in text for marker in _RETRYABLE_PROVIDER_MARKERS):
-            return True
-    return False
-
-
 def _formalize_indices_for_resume(
     out_dir: Path,
     domain: str,
@@ -185,27 +168,19 @@ def _formalize_indices_for_resume(
     model_label: str,
     indices: list[int],
 ) -> list[int]:
-    """Return unfinished indices plus attempts with an explicit retryable 429."""
+    """Compatibility helper: only atomic valid completion records are resumable."""
     pending: list[int] = []
     for index in indices:
         problem = format_problem_name(index)
         problem_dir = _agent_output_dir(out_dir, domain, dataset, model_label, problem)
-        metadata_path = problem_dir / "metadata.json"
+        metadata_path = problem_dir / "completion.json"
         try:
             metadata = json.loads(metadata_path.read_text())
         except (OSError, ValueError, TypeError):
             pending.append(index)
             continue
 
-        if metadata.get("status") == "ok":
-            df = problem_dir / f"{problem}_{model_label}_df.pddl"
-            pf = problem_dir / f"{problem}_{model_label}_pf.pddl"
-            if not (df.is_file() and pf.is_file()):
-                pending.append(index)
-        elif metadata.get("status") == "failed":
-            if _has_retryable_provider_failure(problem_dir):
-                pending.append(index)
-        else:
+        if not (metadata.get("complete") is True and metadata.get("attempt_valid") is True):
             pending.append(index)
     return pending
 
@@ -218,6 +193,11 @@ def _resolve_model_label(
             raise ValueError("--model-label can only be used with one claw/model job")
         return explicit_label
     return agent_model_label(claw, model)
+
+
+def _qualify_model_label(model_label: str, config_label: str) -> str:
+    suffix = f"__{config_label}"
+    return model_label if model_label.endswith(suffix) else model_label + suffix
 
 
 def run_agent_pipeline(
@@ -236,7 +216,15 @@ def run_agent_pipeline(
     val_workers: int,
     timeout: int | None,
     max_turns: int | None,
+    max_model_calls: int | None,
+    network_mode: str | None,
+    attempts_per_case: int | None,
+    max_execution_tries: int | None,
+    allow_final_message_recovery: bool | None,
+    benchmark_config: str | None,
     api_key_env: str | None,
+    secrets_env_file: str,
+    vertex_project_env: str,
     image: str | None,
     trace: bool,
     tools_profile: str | None,
@@ -244,6 +232,37 @@ def run_agent_pipeline(
     tools_deny: str | None,
     resume: bool,
 ) -> AgentBatchResult:
+    harness_overrides = None
+    if claw == "openclaw" and any((tools_profile, tools_allow, tools_deny)):
+        harness_overrides = {}
+        if tools_profile:
+            harness_overrides["tools_profile"] = tools_profile
+        if tools_allow:
+            harness_overrides["tools_allow"] = _split_csv(tools_allow)
+        if tools_deny:
+            harness_overrides["tools_deny"] = _split_csv(tools_deny)
+    resolved = load_benchmark_profile(benchmark_config).resolve(
+        claw,
+        model=model,
+        timeout=timeout,
+        max_turns=max_turns,
+        max_model_calls=max_model_calls,
+        network_mode=network_mode,
+        attempts_per_case=attempts_per_case,
+        max_execution_tries=max_execution_tries,
+        allow_final_message_recovery=allow_final_message_recovery,
+        harness_overrides=harness_overrides,
+    )
+    model_label = _qualify_model_label(model_label, resolved.label)
+    attempt_count = resolved.attempts_per_case
+    evaluation_labels = (
+        [model_label]
+        if attempt_count == 1
+        else [
+            f"{model_label}__attempt_{index:03d}"
+            for index in range(1, attempt_count + 1)
+        ]
+    )
     res = AgentBatchResult(
         claw=claw,
         model=model,
@@ -255,13 +274,10 @@ def run_agent_pipeline(
 
     batch_log_dir = log_dir / _safe_name(f"{claw}_{model_label}_{domain}_{dataset}")
 
+    # Always submit the fixed study set. The runner itself reuses only atomic
+    # completion records whose config/task hashes match; outcomes never decide
+    # whether another attempt is created.
     formalize_indices = indices
-    resumed_count = 0
-    if "formalize" in stages and resume:
-        formalize_indices = _formalize_indices_for_resume(
-            out_dir, domain, dataset, model_label, indices
-        )
-        resumed_count = len(indices) - len(formalize_indices)
 
     if "formalize" in stages and formalize_indices:
         cmd = [
@@ -280,8 +296,26 @@ def run_agent_pipeline(
             cmd.extend(["--timeout", str(timeout)])
         if max_turns is not None:
             cmd.extend(["--max_turns", str(max_turns)])
+        if max_model_calls is not None:
+            cmd.extend(["--max-model-calls", str(max_model_calls)])
+        if network_mode is not None:
+            cmd.extend(["--network-mode", network_mode])
+        if attempts_per_case is not None:
+            cmd.extend(["--attempts-per-case", str(attempts_per_case)])
+        if max_execution_tries is not None:
+            cmd.extend(["--max-execution-tries", str(max_execution_tries)])
+        if allow_final_message_recovery is not None:
+            cmd.append(
+                "--allow-final-message-recovery"
+                if allow_final_message_recovery
+                else "--no-allow-final-message-recovery"
+            )
+        if benchmark_config:
+            cmd.extend(["--benchmark-config", benchmark_config])
         if api_key_env:
             cmd.extend(["--api-key-env", api_key_env])
+        cmd.extend(["--secrets-env-file", secrets_env_file])
+        cmd.extend(["--vertex-project-env", vertex_project_env])
         if image:
             cmd.extend(["--image", image])
         if not trace:
@@ -301,43 +335,71 @@ def run_agent_pipeline(
         res.stages["formalize"] = "ok"
         res.durations["formalize"] = 0.0
 
-    res.pddl_completed = _count_pddl_outputs(out_dir, domain, dataset, model_label, indices)
-    if "formalize" in stages and res.pddl_completed != len(indices):
-        missing = len(indices) - res.pddl_completed
-        res.stages["formalize"] = "FAIL"
-        res.notes = f"{missing} formalization output(s) missing"
-    if resumed_count:
-        resumed_note = f"resumed {resumed_count} completed problem(s)"
-        res.notes = "; ".join(filter(None, (res.notes, resumed_note)))
+    res.pddl_completed = sum(
+        _count_pddl_outputs(out_dir, domain, dataset, label, indices)
+        for label in evaluation_labels
+    )
+    expected_attempts = len(indices) * attempt_count
+    if "formalize" in stages and res.pddl_completed != expected_attempts:
+        missing = expected_attempts - res.pddl_completed
+        res.notes = f"{missing} valid attempt(s) did not generate delivery files"
 
     if "solve" in stages:
-        common = _common_eval_flags(model_label, domain, dataset, indices, out_dir, solver_workers)
-        cmd = [
-            PYTHON,
-            str(SOURCE_DIR / "run_solver.py"),
-            "--prediction_type", PREDICTION_TYPE,
-            *common,
-        ]
-        rc, _, _, elapsed, logs = _run(cmd, "solve", batch_log_dir)
-        res.stages["solve"] = "ok" if rc == 0 else "FAIL"
-        res.durations["solve"] = elapsed
-        res.logs["solve"] = logs["stderr"]
+        solve_rc = 0
+        solve_elapsed = 0.0
+        for label in evaluation_labels:
+            common = _common_eval_flags(
+                label, domain, dataset, indices, out_dir, solver_workers
+            )
+            cmd = [
+                PYTHON,
+                str(SOURCE_DIR / "run_solver.py"),
+                "--prediction_type", PREDICTION_TYPE,
+                *common,
+            ]
+            rc, _, _, elapsed, logs = _run(
+                cmd, f"solve-{label}", batch_log_dir
+            )
+            solve_rc = solve_rc or rc
+            solve_elapsed += elapsed
+            res.logs[f"solve:{label}"] = logs["stderr"]
+        res.stages["solve"] = "ok" if solve_rc == 0 else "FAIL"
+        res.durations["solve"] = solve_elapsed
 
     if "val" in stages:
-        common = _common_eval_flags(model_label, domain, dataset, indices, out_dir, val_workers)
-        cmd = [
-            PYTHON,
-            str(SOURCE_DIR / "run_val.py"),
-            "--prediction_type", PREDICTION_TYPE,
-            "--csv_result",
-            *common,
-        ]
-        rc, stdout, _, elapsed, logs = _run(cmd, "val", batch_log_dir)
-        res.stages["val"] = "ok" if rc == 0 else "FAIL"
-        res.durations["val"] = elapsed
-        res.logs["val"] = logs["stderr"]
-        if rc == 0:
-            res.solvability, res.correctness, res.total = _parse_val_stdout(stdout)
+        val_rc = 0
+        val_elapsed = 0.0
+        solvability = 0
+        correctness = 0
+        total = 0
+        for label in evaluation_labels:
+            common = _common_eval_flags(
+                label, domain, dataset, indices, out_dir, val_workers
+            )
+            cmd = [
+                PYTHON,
+                str(SOURCE_DIR / "run_val.py"),
+                "--prediction_type", PREDICTION_TYPE,
+                "--csv_result",
+                *common,
+            ]
+            rc, stdout, _, elapsed, logs = _run(
+                cmd, f"val-{label}", batch_log_dir
+            )
+            val_rc = val_rc or rc
+            val_elapsed += elapsed
+            res.logs[f"val:{label}"] = logs["stderr"]
+            if rc == 0:
+                solv, corr, row_total = _parse_val_stdout(stdout)
+                solvability += int(solv) if solv.isdigit() else 0
+                correctness += int(corr) if corr.isdigit() else 0
+                total += row_total
+        res.stages["val"] = "ok" if val_rc == 0 else "FAIL"
+        res.durations["val"] = val_elapsed
+        if val_rc == 0:
+            res.solvability = str(solvability)
+            res.correctness = str(correctness)
+            res.total = total
         else:
             res.solvability = res.correctness = "ERR"
             res.notes = "; ".join(filter(None, (res.notes, "run_val failed")))
@@ -418,6 +480,26 @@ def _default_out_dir(tag: str = "") -> Path:
     return ROOT_DIR / "output" / name
 
 
+def _freeze_study_profile(profile, out_dir: Path):
+    """Persist one immutable profile snapshot before the first study case."""
+    path = out_dir / "study_benchmark_profile.json"
+    payload = json.dumps(profile.raw, indent=2, ensure_ascii=False) + "\n"
+    try:
+        with path.open("x") as stream:
+            stream.write(payload)
+    except FileExistsError:
+        try:
+            existing = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"existing frozen study profile is unreadable: {path}") from exc
+        if existing != profile.raw:
+            raise ValueError(
+                "output directory already contains a different frozen benchmark "
+                f"profile: {path}"
+            )
+    return load_benchmark_profile(path)
+
+
 def _sample_indices(index_start: int, index_end: int, samples: int | None, sample_seed: int) -> list[int]:
     full = list(range(index_start, index_end))
     if samples is None:
@@ -458,7 +540,7 @@ def _claw_model_jobs_for_args(args, claws: list[str]) -> list[tuple[str, str]]:
     for claw in claws:
         if claw not in CLAW_DEFAULTS:
             raise ValueError(f"No defaults registered for claw '{claw}'")
-        jobs.append((claw, CLAW_DEFAULTS[claw]["model"]))
+        jobs.append((claw, args._benchmark_profile.default_model))
     return jobs
 
 
@@ -469,10 +551,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--claw", default="openclaw",
                    help=f"agent harness name(s), comma-separated; available: {', '.join(sorted(CLAWS))}")
     p.add_argument("--model", default=None,
-                   help="model id(s), comma-separated; default is each claw's configured default")
+                   help="model id(s), comma-separated; default is the benchmark profile model")
+    p.add_argument("--benchmark-config", default=None,
+                   help="JSON benchmark profile passed to every formalizer job")
     p.add_argument("--model-label", default=None,
-                   help="filesystem label for one claw/model job; "
-                        "defaults to <claw>__<sanitized-model>")
+                   help="base filesystem label for one claw/model job; the "
+                        "resolved config name/hash is always appended")
     p.add_argument("--domain", default=None,
                    help="shortcut for a single pair; must be used with --data")
     p.add_argument("--data", default=None,
@@ -499,13 +583,25 @@ def build_parser() -> argparse.ArgumentParser:
                    help="agent timeout in seconds; omitted means claw default")
     p.add_argument("--max_turns", type=int, default=None,
                    help="agent max turns; omitted means claw default")
+    p.add_argument("--max-model-calls", type=int, default=None,
+                   help="maximum model API calls per problem; omitted means profile default")
+    p.add_argument("--network-mode", choices=("model_only", "controlled_web"),
+                   default=None)
+    p.add_argument("--attempts-per-case", type=int, default=None)
+    p.add_argument("--max-execution-tries", type=int, default=None)
+    p.add_argument("--allow-final-message-recovery",
+                   action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--api-key-env", default=None,
-                   help="env var in _private/.env holding the model key")
+                   help="the one runner environment variable holding the model key")
+    p.add_argument("--secrets-env-file", default=str(DEFAULT_SECRETS_ENV_FILE),
+                   help="runner-only dotenv source for explicitly named provider inputs")
+    p.add_argument("--vertex-project-env", default="GOOGLE_CLOUD_PROJECT",
+                   help="dotenv/process variable used if a Vertex project is absent")
     p.add_argument("--image", default=None,
                    help="Docker image for the agent container")
     p.add_argument("--trace", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--resume", action="store_true",
-                   help="reuse completed problem attempts and retry explicit provider 429 failures")
+                   help="reuse hash-matching atomic completion records")
     p.add_argument("--tools-profile", default=None,
                    help="claw-specific tool profile passed through to run_formalizer_agent.py")
     p.add_argument("--tools-allow", default=None,
@@ -518,6 +614,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    args._benchmark_profile = load_benchmark_profile(args.benchmark_config)
 
     claws = _split_csv(args.claw)
     if not claws:
@@ -530,6 +627,19 @@ def main() -> None:
     if not jobs:
         parser.error("--model must name at least one model when no claw default is available")
     models = sorted({model for _, model in jobs})
+    if (
+        any(model.startswith("google-vertex/") for model in models)
+        and args._benchmark_profile.raw["providers"]["google_vertex"]["project"] is None
+    ):
+        try:
+            vertex_project = read_named_setting(
+                args.vertex_project_env, args.secrets_env_file
+            )
+        except RuntimeError as exc:
+            parser.error(str(exc))
+        args._benchmark_profile = with_google_vertex_project(
+            args._benchmark_profile, vertex_project
+        )
 
     if args.domain or args.data:
         if not (args.domain and args.data):
@@ -557,6 +667,13 @@ def main() -> None:
         print("Note: --tag is ignored because --out_dir was given explicitly.")
     out_dir = Path(args.out_dir) if args.out_dir else _default_out_dir(args.tag)
     out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        args._benchmark_profile = _freeze_study_profile(
+            args._benchmark_profile, out_dir
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    frozen_benchmark_config = str(args._benchmark_profile.path)
     log_dir = out_dir / "sweep_logs"
 
     indices = _sample_indices(args.index_start, args.index_end, args.samples, args.sample_seed)
@@ -572,6 +689,13 @@ def main() -> None:
         "solver_workers": solver_workers,
         "val_workers": val_workers,
         "resume": args.resume,
+        "benchmark_profile": args._benchmark_profile.metadata(),
+        "budget_overrides": {
+            "timeout_seconds": args.timeout,
+            "max_turns": args.max_turns,
+            "max_model_calls": args.max_model_calls,
+        },
+        "network_mode_override": args.network_mode,
     }
 
     print(f"Out dir: {out_dir}")
@@ -620,7 +744,15 @@ def main() -> None:
                     val_workers=val_workers,
                     timeout=args.timeout,
                     max_turns=args.max_turns,
+                    max_model_calls=args.max_model_calls,
+                    network_mode=args.network_mode,
+                    attempts_per_case=args.attempts_per_case,
+                    max_execution_tries=args.max_execution_tries,
+                    allow_final_message_recovery=args.allow_final_message_recovery,
+                    benchmark_config=frozen_benchmark_config,
                     api_key_env=args.api_key_env,
+                    secrets_env_file=args.secrets_env_file,
+                    vertex_project_env=args.vertex_project_env,
                     image=args.image,
                     trace=args.trace,
                     tools_profile=args.tools_profile,

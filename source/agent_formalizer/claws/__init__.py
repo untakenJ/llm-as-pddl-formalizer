@@ -7,7 +7,7 @@ constructor arguments from ``CLAW_DEFAULTS``.
 
 from __future__ import annotations
 
-from agent_formalizer.config import CLAW_DEFAULTS
+from agent_formalizer.benchmark_profile import DEFAULT_BENCHMARK_PROFILE
 from agent_formalizer.claws.base import BaseClawAdapter
 from agent_formalizer.claws.generic import GenericAgentAdapter
 from agent_formalizer.claws.hermes import HermesAdapter
@@ -29,20 +29,72 @@ def get_adapter(
     model: str | None = None,
     timeout: int | None = None,
     max_turns: int | None = None,
+    max_model_calls: int | None = None,
+    allow_network: bool | None = None,
+    network_mode: str | None = None,
+    skills_mode: str | None = None,
+    benchmark_profile=None,
+    resolved_config=None,
+    attempts_per_case: int | None = None,
+    max_execution_tries: int | None = None,
+    allow_final_message_recovery: bool | None = None,
+    provider_options: dict | None = None,
+    api_key: str | None = None,
+    api_key_name: str | None = None,
     **extra,
 ) -> BaseClawAdapter:
     """Construct a claw adapter, filling unset arguments from CLAW_DEFAULTS."""
     if name not in CLAWS:
         raise ValueError(f"Unknown claw '{name}'. Available: {sorted(CLAWS)}")
 
-    defaults = CLAW_DEFAULTS[name]
+    profile = benchmark_profile or DEFAULT_BENCHMARK_PROFILE
+    harness_profile = profile.harness(name)
+    if network_mode is None and allow_network is not None:
+        if allow_network:
+            raise ValueError(
+                "--allow-network no longer means unrestricted egress; use "
+                "network_mode=controlled_web with an explicit allowlist"
+            )
+        network_mode = "model_only"
+    if resolved_config is None:
+        resolved_config = profile.resolve(
+            name,
+            model=model,
+            timeout=timeout,
+            max_turns=max_turns,
+            max_model_calls=max_model_calls,
+            network_mode=network_mode,
+            attempts_per_case=attempts_per_case,
+            max_execution_tries=max_execution_tries,
+            allow_final_message_recovery=allow_final_message_recovery,
+            skills_mode=skills_mode,
+            provider_options=provider_options,
+            harness_overrides={
+                key: extra[key]
+                for key in ("tools_profile", "tools_allow", "tools_deny")
+                if key in extra
+            },
+        )
     kwargs = {
-        "model": model or defaults["model"],
-        "timeout": timeout or defaults["timeout"],
-        "max_turns": max_turns if max_turns is not None else defaults["max_turns"],
+        "model": resolved_config.model,
+        "timeout": resolved_config.timeout,
+        "max_turns": resolved_config.max_turns,
+        "max_model_calls": resolved_config.max_model_calls,
+        "network_mode": resolved_config.network_mode,
+        "allow_network": False,
+        "skills_mode": resolved_config.skills_mode,
+        "benchmark_profile": profile,
+        "resolved_config": resolved_config,
+        "provider_options": resolved_config.provider_options,
+        "api_key": api_key,
+        "api_key_name": api_key_name,
     }
-    for key in ("tools_profile", "tools_allow", "tools_deny", "model_api_keys"):
-        if key in defaults and key not in extra:
-            kwargs[key] = defaults[key]
     kwargs.update(extra)
+    if name == "openclaw":
+        configured = resolved_config.harness_overrides
+        kwargs["tools_profile"] = configured.get(
+            "tools_profile", harness_profile.get("tools_profile", "coding")
+        )
+        kwargs["tools_allow"] = configured.get("tools_allow")
+        kwargs["tools_deny"] = configured.get("tools_deny")
     return CLAWS[name](**kwargs)

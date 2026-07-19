@@ -69,8 +69,16 @@ uv run python source/agent_formalizer/run_formalizer_agent.py \
     --indices 1,2,3
 ```
 
-Agent credentials are loaded from `_private/.env`; the default model for the
-four new adapters uses `OPENAI_API_KEY`. See
+The agent runner reads only explicitly named provider inputs from the
+git-ignored `_private/.env` (or an explicit alternative); it never loads or
+mounts the whole file into an agent container. The real API key stays in the
+model gateway, outside the agent container. The versioned default for all five
+harnesses is `google-vertex/gemini-3.1-flash-lite`; a Vertex project is
+materialized into the frozen profile from `GOOGLE_CLOUD_PROJECT` when needed.
+The agent always remains on an
+internal Docker network. The default permits only model traffic; the optional
+`controlled_web` condition uses a hostname-allowlist proxy and never grants
+ordinary egress. See
 [`source/agent_formalizer/README.md`](source/agent_formalizer/README.md) for
 runtime pins, supported provider prefixes, isolation details, and evaluation
 commands.

@@ -1,9 +1,8 @@
 """Build the agent prompt and extract PDDL from agent output.
 
 The prompt instructs the agent to author two files inside the container
-workspace; the orchestrator reads those files back. As a fallback (if the agent
-emitted the PDDL only in its final message), :func:`extract_pddl_from_text`
-parses fenced/JSON blocks out of the transcript.
+workspace; only those files count by default. ``extract_pddl_from_text`` exists
+for the explicitly enabled experimental final-message recovery condition.
 """
 
 from __future__ import annotations
@@ -27,11 +26,23 @@ def build_prompt(
     domain_description: str,
     problem_description: str,
     template_path: Path | None = None,
+    *,
+    domain_output_name: str = DOMAIN_OUTPUT_NAME,
+    problem_output_name: str = PROBLEM_OUTPUT_NAME,
+    agent_tools: list[str] | None = None,
 ) -> str:
     """Render the formalizer prompt for the agent."""
-    template = template_path.read_text() if template_path else _default_template()
-    domain_path = f"{CONTAINER_WORKSPACE}/{DOMAIN_OUTPUT_NAME}"
-    problem_path = f"{CONTAINER_WORKSPACE}/{PROBLEM_OUTPUT_NAME}"
+    if template_path is not None:
+        template = template_path.read_text()
+    elif agent_tools:
+        from agent_formalizer.tools import prompt_template_for_tools
+
+        tool_template = prompt_template_for_tools(agent_tools)
+        template = tool_template.read_text() if tool_template else _default_template()
+    else:
+        template = _default_template()
+    domain_path = f"{CONTAINER_WORKSPACE}/{domain_output_name}"
+    problem_path = f"{CONTAINER_WORKSPACE}/{problem_output_name}"
     return template.format(
         workspace=CONTAINER_WORKSPACE,
         domain_description=domain_description,

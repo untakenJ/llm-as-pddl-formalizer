@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from copy import deepcopy
 import shutil
 import sqlite3
 import subprocess
@@ -12,6 +13,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from agent_formalizer.claws import CLAWS, get_adapter
+from agent_formalizer.benchmark_profile import (
+    DEFAULT_BENCHMARK_PROFILE,
+    with_google_vertex_project,
+)
 from agent_formalizer.claws.common import (
     google_vertex_openai_base,
     jsonl_steps,
@@ -19,15 +24,21 @@ from agent_formalizer.claws.common import (
     tool_records,
 )
 from agent_formalizer.claws.generic import (
-    FILTERED_GENERIC_TOOLS,
     GenericAgentAdapter,
     _parse_usage_text,
 )
 from agent_formalizer.claws.hermes import HermesAdapter, _read_hermes_usage
 from agent_formalizer.claws.nanobot import NanoBotAdapter
+from agent_formalizer.claws.openclaw import OpenClawAdapter
 from agent_formalizer.claws.zeroclaw import ZeroClawAdapter, _parse_costs
-from agent_formalizer.config import agent_model_label
-from sweep_agent_pipeline import _formalize_indices_for_resume, _resolve_model_label
+from agent_formalizer.config import CLAW_DEFAULTS, agent_model_label
+from agent_formalizer.util import read_named_secret, read_named_setting
+from sweep_agent_pipeline import (
+    _formalize_indices_for_resume,
+    _freeze_study_profile,
+    _qualify_model_label,
+    _resolve_model_label,
+)
 
 
 class AdapterRegistryTests(unittest.TestCase):
@@ -38,12 +49,103 @@ class AdapterRegistryTests(unittest.TestCase):
         )
 
     def test_defaults_construct(self):
-        for name in ("hermes", "nanobot", "zeroclaw", "generic"):
+        for name in CLAWS:
             with self.subTest(name=name):
-                self.assertEqual(get_adapter(name).name, name)
+                adapter = get_adapter(name)
+                self.assertEqual(adapter.name, name)
+                self.assertEqual(adapter.model, "google-vertex/gemini-3.1-flash-lite")
+                self.assertEqual(adapter.timeout, 1800)
+                self.assertEqual(adapter.max_turns, 200)
+                self.assertEqual(adapter.max_model_calls, 50)
+                self.assertFalse(adapter.allow_network)
+
+    def test_versioned_profile_drives_every_default(self):
+        self.assertEqual(DEFAULT_BENCHMARK_PROFILE.schema_version, 2)
+        self.assertEqual(
+            {value["model"] for value in CLAW_DEFAULTS.values()},
+            {DEFAULT_BENCHMARK_PROFILE.default_model},
+        )
+
+    def test_unrestricted_legacy_network_flag_is_rejected(self):
+        for name in CLAWS:
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError):
+                    get_adapter(name, allow_network=True)
+
+    def test_controlled_web_requires_and_records_allowlist(self):
+        raw = deepcopy(DEFAULT_BENCHMARK_PROFILE.raw)
+        raw["condition_profile"] = {
+            "id": "controlled-docs",
+            "overrides": {
+                "network_mode": "controlled_web",
+                "controlled_web_allowlist": ["docs.example.org"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "profile.json"
+            path.write_text(json.dumps(raw))
+            from agent_formalizer.benchmark_profile import load_benchmark_profile
+            profile = load_benchmark_profile(path)
+            for name in CLAWS:
+                adapter = get_adapter(name, benchmark_profile=profile)
+                self.assertEqual(adapter.network_policy()["mode"], "controlled_web")
+                self.assertEqual(
+                    adapter.network_policy()["controlled_web_allowlist"],
+                    ["docs.example.org"],
+                )
+                if name == "openclaw":
+                    adapter._cleanup_run_state()
 
 
 class ProviderTests(unittest.TestCase):
+    def test_runner_dotenv_reads_only_named_values_without_exporting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".env"
+            path.write_text(
+                "IGNORED=personal-setting\n"
+                "GOOGLE_CLOUD_PROJECT='study-project'\n"
+                "GOOGLE_CLOUD_API_KEY=runner-secret # comment\n"
+            )
+            with patch.dict(os.environ, {"GOOGLE_CLOUD_API_KEY": "ambient"}):
+                self.assertEqual(
+                    read_named_secret("GOOGLE_CLOUD_API_KEY", path),
+                    "runner-secret",
+                )
+            self.assertEqual(
+                read_named_setting("GOOGLE_CLOUD_PROJECT", path), "study-project"
+            )
+            self.assertNotIn("IGNORED", os.environ)
+
+    def test_materialized_vertex_project_participates_in_hash(self):
+        materialized = with_google_vertex_project(
+            DEFAULT_BENCHMARK_PROFILE, "study-project"
+        )
+        self.assertNotEqual(materialized.sha256, DEFAULT_BENCHMARK_PROFILE.sha256)
+        self.assertEqual(
+            materialized.raw["providers"]["google_vertex"]["project"],
+            "study-project",
+        )
+
+    def test_real_secret_is_gateway_only_for_all_harnesses(self):
+        secret = "must-not-reach-agent"
+        for name in CLAWS:
+            with self.subTest(name=name):
+                adapter = get_adapter(
+                    name,
+                    model="openai/test-model",
+                    api_key=secret,
+                    api_key_name="BENCHMARK_KEY",
+                )
+                self.assertEqual(adapter.model_gateway_secret(), secret)
+                self.assertNotIn(secret, json.dumps(adapter.effective_config()))
+                if name == "openclaw":
+                    self.assertNotIn(secret, json.dumps(adapter.container_run_args("x")))
+                    adapter._cleanup_run_state()
+                else:
+                    self.assertNotIn(
+                        secret, json.dumps(adapter.docker_exec_env_args())
+                    )
+
     def test_default_label_separates_harnesses(self):
         self.assertEqual(
             agent_model_label("hermes", "openrouter/anthropic/claude"),
@@ -57,6 +159,32 @@ class ProviderTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             _resolve_model_label("nanobot", "openai/gpt", "custom", 2)
+
+    def test_output_label_always_contains_config_identity(self):
+        self.assertEqual(
+            _qualify_model_label("custom", "native--default--abc123"),
+            "custom__native--default--abc123",
+        )
+        self.assertEqual(
+            _qualify_model_label(
+                "custom__native--default--abc123",
+                "native--default--abc123",
+            ),
+            "custom__native--default--abc123",
+        )
+
+    def test_sweep_freezes_profile_and_rejects_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            frozen = _freeze_study_profile(DEFAULT_BENCHMARK_PROFILE, root)
+            self.assertEqual(frozen.raw, DEFAULT_BENCHMARK_PROFILE.raw)
+            changed = deepcopy(DEFAULT_BENCHMARK_PROFILE.raw)
+            changed["condition_profile"]["id"] = "changed"
+            profile_path = root / "changed.json"
+            profile_path.write_text(json.dumps(changed))
+            from agent_formalizer.benchmark_profile import load_benchmark_profile
+            with self.assertRaises(ValueError):
+                _freeze_study_profile(load_benchmark_profile(profile_path), root)
 
     def test_nested_gateway_model_is_preserved(self):
         self.assertEqual(
@@ -80,7 +208,30 @@ class ProviderTests(unittest.TestCase):
         self.assertTrue(auth["api_key_present"])
         self.assertNotIn("do-not-record", json.dumps(auth))
 
-    def test_sweep_resume_retries_only_unfinished_and_explicit_429(self):
+    def test_openclaw_host_commands_ignore_operator_openclaw_environment(self):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "test-key",
+                "OPENCLAW_CONFIG_PATH": "/home/operator/personal.json",
+                "OPENCLAW_PROFILE": "personal",
+                "OPENCLAW_BUNDLED_SKILLS_DIR": "/home/operator/skills",
+                "CLAWDBOT_GATEWAY_PASSWORD": "personal-password",
+            },
+            clear=False,
+        ):
+            adapter = OpenClawAdapter("openai/gpt-5.4-mini", 120, 17)
+            env = adapter._openclaw_env()
+            self.assertEqual(env["OPENCLAW_CONFIG_PATH"], str(adapter._config_path()))
+            self.assertEqual(env["OPENCLAW_STATE_DIR"], str(adapter._state_dir))
+            self.assertEqual(env["OPENCLAW_NO_AUTO_UPDATE"], "1")
+            self.assertNotIn("OPENCLAW_PROFILE", env)
+            self.assertNotIn("OPENCLAW_BUNDLED_SKILLS_DIR", env)
+            self.assertNotIn("CLAWDBOT_GATEWAY_PASSWORD", env)
+            self.assertNotIn("test-key", json.dumps(env))
+            adapter._cleanup_run_state()
+
+    def test_sweep_resume_uses_valid_completion_not_outcome(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             model_label = "openclaw__google-vertex__gemini"
@@ -88,7 +239,9 @@ class ProviderTests(unittest.TestCase):
 
             ok = base / "p01"
             ok.mkdir(parents=True)
-            (ok / "metadata.json").write_text(json.dumps({"status": "ok"}))
+            (ok / "completion.json").write_text(
+                json.dumps({"complete": True, "attempt_valid": True})
+            )
             (ok / f"p01_{model_label}_df.pddl").write_text("domain")
             (ok / f"p01_{model_label}_pf.pddl").write_text("problem")
             (ok / "agent_stderr.log").write_text(
@@ -97,14 +250,16 @@ class ProviderTests(unittest.TestCase):
 
             agent_failure = base / "p02"
             agent_failure.mkdir()
-            (agent_failure / "metadata.json").write_text(
-                json.dumps({"status": "failed", "error": "agent did not produce PDDL"})
+            (agent_failure / "completion.json").write_text(
+                json.dumps({"complete": True, "attempt_valid": True,
+                            "generation_success": False})
             )
 
             rate_limited = base / "p03"
             rate_limited.mkdir()
-            (rate_limited / "metadata.json").write_text(
-                json.dumps({"status": "failed", "error": "agent did not produce PDDL"})
+            (rate_limited / "completion.json").write_text(
+                json.dumps({"complete": True, "attempt_valid": True,
+                            "generation_success": False, "error": "429"})
             )
             (rate_limited / "agent_stderr.log").write_text(
                 "Google Vertex AI API error (429): Resource exhausted"
@@ -112,13 +267,15 @@ class ProviderTests(unittest.TestCase):
 
             incomplete_ok = base / "p05"
             incomplete_ok.mkdir()
-            (incomplete_ok / "metadata.json").write_text(json.dumps({"status": "ok"}))
+            (incomplete_ok / "completion.json").write_text(
+                json.dumps({"complete": False, "attempt_valid": True})
+            )
 
             pending = _formalize_indices_for_resume(
                 root, "blocksworld", "dataset", model_label, [1, 2, 3, 4, 5]
             )
 
-        self.assertEqual(pending, [3, 4, 5])
+        self.assertEqual(pending, [4, 5])
 
 
 class GeneratedConfigTests(unittest.TestCase):
@@ -137,7 +294,7 @@ class GeneratedConfigTests(unittest.TestCase):
         self.assertEqual(config["plugins"]["enabled"], [])
         self.assertNotIn("test-secret", json.dumps(config))
 
-    def test_nanobot_config_limits_tools_and_workspace(self):
+    def test_nanobot_config_preserves_clean_native_tools(self):
         adapter = NanoBotAdapter("openai/gpt-5.4-mini", 120, 17)
         config = adapter._benchmark_config()
         self.assertEqual(
@@ -145,9 +302,11 @@ class GeneratedConfigTests(unittest.TestCase):
             "${PDDL_BENCHMARK_API_KEY}",
         )
         self.assertNotIn("test-secret", json.dumps(config))
-        self.assertFalse(config["tools"]["web"]["enable"])
-        self.assertTrue(config["tools"]["restrictToWorkspace"])
-        self.assertFalse(config["tools"]["cliApps"]["enable"])
+        self.assertTrue(config["tools"]["web"]["enable"])
+        self.assertFalse(config["tools"]["restrictToWorkspace"])
+        self.assertTrue(config["tools"]["cliApps"]["enable"])
+        self.assertTrue(config["tools"]["my"]["enable"])
+        self.assertEqual(config["agents"]["defaults"]["fallbackModels"], [])
         self.assertEqual(config["tools"]["mcpServers"], {})
 
     def test_zeroclaw_v3_config_has_no_persisted_key(self):
@@ -155,9 +314,30 @@ class GeneratedConfigTests(unittest.TestCase):
         config = adapter._benchmark_config_toml()
         self.assertIn("schema_version = 3", config)
         self.assertIn("max_tool_iterations = 17", config)
-        self.assertIn('allowed_tools = ["shell", "file_read"', config)
+        self.assertIn('auto_approve = ["shell", "file_read"', config)
+        self.assertIn("allowed_tools = []", config)
+        self.assertNotIn("native_tools = true", config)
         self.assertNotIn("test-secret", config)
         self.assertNotIn("api_key =", config)
+
+    def test_zeroclaw_vertex_custom_provider_enables_native_tools(self):
+        options = {
+            "google_vertex": {
+                "project": "benchmark-project",
+                "location": "global",
+                "origin": "https://aiplatform.googleapis.com",
+            }
+        }
+        adapter = ZeroClawAdapter(
+            "google-vertex/gemini-3.1-flash-lite",
+            120,
+            17,
+            provider_options=options,
+        )
+        config = adapter._benchmark_config_toml()
+        self.assertIn("[providers.models.custom.benchmark]", config)
+        self.assertIn("native_tools = true", config)
+        self.assertIn('wire_api = "chat_completions"', config)
 
     def test_generic_mykey_reads_secret_from_environment(self):
         adapter = GenericAgentAdapter("openai/gpt-5.4-mini", 120)
@@ -165,7 +345,7 @@ class GeneratedConfigTests(unittest.TestCase):
         self.assertIn("PDDL_BENCHMARK_API_KEY", source)
         self.assertNotIn("test-secret", source)
 
-    def test_generic_tool_schema_is_physically_filtered(self):
+    def test_generic_tool_schema_preserves_official_bundle(self):
         adapter = GenericAgentAdapter("openai/gpt-5.4-mini", 120)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -175,63 +355,90 @@ class GeneratedConfigTests(unittest.TestCase):
             config.mkdir()
             source = [
                 {"function": {"name": name}}
-                for name in (*FILTERED_GENERIC_TOOLS, "web_scan", "ask_user")
+                for name in ("code_run", "file_read", "web_scan", "ask_user")
             ]
             for filename in ("tools_schema.json", "tools_schema_cn.json"):
                 (assets / filename).write_text(json.dumps(source))
             adapter.runtime_repo = root
             adapter._write_filtered_schemas(config)
-            filtered = json.loads((config / "tools_schema.json").read_text())
-        names = {entry["function"]["name"] for entry in filtered}
-        self.assertEqual(names, FILTERED_GENERIC_TOOLS)
+            copied = json.loads((config / "tools_schema.json").read_text())
+        names = {entry["function"]["name"] for entry in copied}
+        self.assertEqual(names, {"code_run", "file_read", "web_scan", "ask_user"})
 
     def test_vertex_configs_use_cloud_endpoint_without_persisting_key(self):
-        vertex_env = {
-            "GOOGLE_CLOUD_API_KEY": "vertex-test-secret",
-            "GOOGLE_CLOUD_PROJECT": "benchmark-project",
-            "GOOGLE_CLOUD_LOCATION": "global",
-        }
-        with patch.dict(os.environ, vertex_env, clear=False):
+        options = {"google_vertex": {
+            "project": "benchmark-project",
+            "location": "global",
+            "origin": "https://aiplatform.googleapis.com",
+        }}
+        with patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "ignored-host"}, clear=False):
             model = "google-vertex/gemini-3.1-flash-lite"
             expected_base = (
                 "https://aiplatform.googleapis.com/v1/projects/benchmark-project/"
                 "locations/global/endpoints/openapi"
             )
-            self.assertEqual(google_vertex_openai_base(), expected_base)
+            self.assertEqual(google_vertex_openai_base(options), expected_base)
 
-            hermes = HermesAdapter(model, 120)._benchmark_config()
+            hermes = HermesAdapter(model, 120, provider_options=options)._benchmark_config()
             self.assertEqual(hermes["model"]["provider"], "custom")
             self.assertEqual(
                 hermes["model"]["default"], "google/gemini-3.1-flash-lite"
             )
-            self.assertEqual(hermes["model"]["base_url"], expected_base)
+            gateway_base = (
+                "http://model-gateway:8766/v1/projects/benchmark-project/"
+                "locations/global/endpoints/openapi"
+            )
+            self.assertEqual(hermes["model"]["base_url"], gateway_base)
             self.assertEqual(hermes["model"]["default_headers"]["Authorization"], "")
 
-            nanobot = NanoBotAdapter(model, 120)._benchmark_config()
+            nanobot = NanoBotAdapter(model, 120, provider_options=options)._benchmark_config()
             self.assertEqual(
                 nanobot["agents"]["defaults"]["model"],
                 "google/gemini-3.1-flash-lite",
             )
-            self.assertEqual(nanobot["providers"]["openai"]["apiBase"], expected_base)
+            self.assertEqual(nanobot["providers"]["openai"]["apiBase"], gateway_base)
+            self.assertEqual(nanobot["agents"]["defaults"]["disabledSkills"], [])
             self.assertEqual(
                 nanobot["providers"]["openai"]["extraHeaders"]["Authorization"],
                 "",
             )
 
-            zeroclaw = ZeroClawAdapter(model, 120)._benchmark_config_toml()
+            zeroclaw = ZeroClawAdapter(
+                model, 120, provider_options=options
+            )._benchmark_config_toml()
             self.assertIn('model = "google/gemini-3.1-flash-lite"', zeroclaw)
-            self.assertIn("http://127.0.0.1:8765/v1/projects/benchmark-project", zeroclaw)
+            self.assertIn("http://model-gateway:8766/v1/projects/benchmark-project", zeroclaw)
+            self.assertIn("native_tools = true", zeroclaw)
 
-            generic = GenericAgentAdapter(model, 120)
+            generic = GenericAgentAdapter(model, 120, provider_options=options)
             generic_key = generic._mykey_source()
-            sitecustomize = generic._vertex_sitecustomize_source()
             self.assertIn("google/gemini-3.1-flash-lite", generic_key)
-            self.assertIn("x-goog-api-key", sitecustomize)
 
         serialized = json.dumps(
             {"hermes": hermes, "nanobot": nanobot, "zeroclaw": zeroclaw}
-        ) + generic_key + sitecustomize
-        self.assertNotIn("vertex-test-secret", serialized)
+        ) + generic_key
+        self.assertNotIn("ignored-host", serialized)
+
+    def test_generic_max_turns_is_patched_without_editing_runtime(self):
+        adapter = GenericAgentAdapter("openai/gpt-5.4-mini", 120, 200)
+        wrapper = adapter._agentmain_wrapper_source()
+        self.assertIn("max_turns=200", wrapper)
+        self.assertIn("max_turns=180", wrapper)
+
+    def test_generic_container_args_avoid_nested_schema_file_mounts(self):
+        adapter = GenericAgentAdapter("openai/gpt-5.4-mini", 120, api_key="test-key")
+        try:
+            args = adapter.container_run_args("generic-mount-regression")
+            joined = " ".join(args)
+            self.assertIn(f"{adapter.runtime_repo}:{adapter.runtime_repo}:ro", joined)
+            self.assertIn(f"{adapter.runtime_repo / 'temp'}:rw", joined)
+            self.assertIn(f"{adapter.runtime_repo / 'memory'}:rw", joined)
+            self.assertNotIn("tools_schema.json:", joined)
+            self.assertNotIn("tools_schema_cn.json:", joined)
+        finally:
+            state = adapter._instance_states.pop("generic-mount-regression", None)
+            if state and state.exists():
+                shutil.rmtree(state)
 
 
 class ArtifactParsingTests(unittest.TestCase):

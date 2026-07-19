@@ -11,7 +11,8 @@
 # Build:
 #   docker build -t pddl-agent-base:latest source/agent_formalizer/docker
 #
-# Override the image name via $PDDL_AGENT_IMAGE or --image.
+# The host-side runtime lock selects and verifies the image ID; the container
+# itself does not read an ambient image-name override.
 
 FROM python:3.12-slim-bookworm
 

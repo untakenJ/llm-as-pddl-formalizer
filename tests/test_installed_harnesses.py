@@ -11,12 +11,17 @@ from unittest.mock import patch
 from agent_formalizer.claws.generic import GenericAgentAdapter
 from agent_formalizer.claws.hermes import HERMES_PROVIDER_MAP
 from agent_formalizer.claws.nanobot import NanoBotAdapter
+from agent_formalizer.claws.openclaw import OpenClawAdapter
 from agent_formalizer.claws.zeroclaw import ZeroClawAdapter
+from agent_formalizer.claws import get_adapter
+from agent_formalizer.runtime_lock import validate_runtime_lock
 from agent_formalizer.config import (
     GENERIC_ENV_PATH,
     GENERIC_REPO_PATH,
     HERMES_ENV_PATH,
     NANOBOT_ENV_PATH,
+    OPENCLAW_MODULE_DIR,
+    OPENCLAW_NODE_BIN,
     ZEROCLAW_BIN,
 )
 
@@ -36,6 +41,18 @@ class InstalledHarnessTests(unittest.TestCase):
     def tearDown(self):
         self.key_patch.stop()
 
+    def test_all_installed_runtime_closures_match_lock(self):
+        for name in ("hermes", "nanobot", "zeroclaw", "generic", "openclaw"):
+            with self.subTest(name=name):
+                adapter = get_adapter(
+                    name, model="openai/test-model", api_key="integration-test-key"
+                )
+                try:
+                    self.assertEqual(validate_runtime_lock(adapter)["status"], "pass")
+                finally:
+                    if name == "openclaw":
+                        adapter._cleanup_run_state()
+
     def test_hermes_provider_mapping_exists_in_installed_catalog(self):
         python = HERMES_ENV_PATH / "bin" / "python"
         require_path(python)
@@ -49,6 +66,41 @@ class InstalledHarnessTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         available = set(result.stdout.splitlines())
         self.assertTrue(set(HERMES_PROVIDER_MAP.values()).issubset(available))
+
+    def test_openclaw_accepts_benchmark_owned_gateway_config(self):
+        require_path(Path(OPENCLAW_NODE_BIN))
+        require_path(Path(OPENCLAW_MODULE_DIR) / "openclaw.mjs")
+        adapter = OpenClawAdapter(
+            "google-vertex/gemini-3.1-flash-lite", 120, 50,
+            max_model_calls=10,
+            api_key="integration-test-key",
+            provider_options={"google_vertex": {
+                "project": "benchmark-project",
+                "location": "global",
+                "origin": "https://aiplatform.googleapis.com",
+            }},
+        )
+        try:
+            result = subprocess.run(
+                [
+                    str(OPENCLAW_NODE_BIN),
+                    str(Path(OPENCLAW_MODULE_DIR) / "openclaw.mjs"),
+                    "config",
+                    "validate",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=adapter._openclaw_env(),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config = json.loads(adapter._config_path().read_text())
+            provider = config["models"]["providers"]["google-vertex"]
+            self.assertEqual(provider["baseUrl"], "http://model-gateway:8766")
+            self.assertEqual(provider["api"], "google-vertex")
+            self.assertNotIn("integration-test-key", json.dumps(config))
+        finally:
+            adapter._cleanup_run_state()
 
     def test_nanobot_accepts_generated_config(self):
         python = NANOBOT_ENV_PATH / "bin" / "python"
@@ -67,7 +119,7 @@ class InstalledHarnessTests(unittest.TestCase):
             timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("gpt-5.4-mini True", result.stdout)
+        self.assertIn("gpt-5.4-mini False", result.stdout)
 
     def test_zeroclaw_accepts_generated_v3_config(self):
         require_path(ZEROCLAW_BIN)

@@ -22,6 +22,7 @@ unreachable from Docker).
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import logging
@@ -31,10 +32,13 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Iterable
 
 from agent_formalizer.config import (
+    MODEL_GATEWAY_HOST,
+    MODEL_GATEWAY_PORT,
     OPENCLAW_BENCHMARK_STATE_DIR,
     OPENCLAW_MODULE_DIR,
     OPENCLAW_NODE_BIN,
@@ -43,13 +47,13 @@ from agent_formalizer.config import (
     provider_for_model,
 )
 from agent_formalizer.claws.base import BaseClawAdapter
+from agent_formalizer.claws.common import provider_spec, google_vertex_settings, split_model_id
 from agent_formalizer.result_types import AgentResult
 
 logger = logging.getLogger(__name__)
 
 # Extra buffer beyond the agent timeout for the subprocess (let OpenClaw handle
 # its own timeout first; only kill the subprocess as a last resort).
-SUBPROCESS_TIMEOUT_BUFFER = 60
 AGENT_ADMIN_TIMEOUT = 120
 AGENT_ADD_ATTEMPTS = 3
 
@@ -59,27 +63,12 @@ AGENT_ADD_ATTEMPTS = 3
 TEMP_WORKSPACE_ROOT = Path("/tmp/openclaw-pddl-workspaces")
 
 GOOGLE_VERTEX_PROVIDER = "google-vertex"
-GOOGLE_VERTEX_API_KEY_FALLBACK_ENVS = ("GOOGLE_API_KEY",)
-GOOGLE_VERTEX_CONTAINER_ENV = (
-    "GOOGLE_CLOUD_PROJECT",
-    "GCLOUD_PROJECT",
-    "GOOGLE_CLOUD_PROJECT_ID",
-    "GOOGLE_CLOUD_LOCATION",
-    "GOOGLE_GENAI_USE_ENTERPRISE",
-    "GOOGLE_GENAI_USE_VERTEXAI",
-    "GOOGLE_API_KEY",
-)
-
-
 class OpenClawAdapter(BaseClawAdapter):
     """Drives the OpenClaw agent via CLI and returns structured results.
 
-    Credentials are taken purely from the environment (populated from
-    ``_private/.env``); the host's personal OpenClaw credential store is never
-    read. Each model's API key comes from one environment variable, resolved via
-    :func:`config.api_key_env_for_model` (per-model override, else provider
-    default), and injected into the container under the provider's canonical env
-    var name so OpenClaw's standard env-key resolution picks it up.
+    The host's personal OpenClaw config and credential store are never read.
+    OpenClaw receives only a placeholder credential; the actual provider secret
+    is held by the benchmark model-gateway sidecar.
     """
 
     name = "openclaw"
@@ -94,21 +83,50 @@ class OpenClawAdapter(BaseClawAdapter):
         tools_allow: list[str] | None = None,
         tools_deny: list[str] | None = None,
         model_api_keys: dict[str, str] | None = None,
+        api_key: str | None = None,
+        api_key_name: str | None = None,
+        provider_options: dict | None = None,
+        max_model_calls: int = 50,
+        allow_network: bool = False,
+        network_mode: str | None = None,
+        skills_mode: str = "official",
+        benchmark_profile=None,
+        resolved_config=None,
     ):
-        # max_turns accepted for interface uniformity; OpenClaw has no
-        # turn-limit flag (its own timeout bounds the run).
-        super().__init__(model, timeout, max_turns)
+        super().__init__(
+            model,
+            timeout,
+            max_turns,
+            max_model_calls=max_model_calls,
+            allow_network=allow_network,
+            network_mode=network_mode,
+            skills_mode=skills_mode,
+            benchmark_profile=benchmark_profile,
+            resolved_config=resolved_config,
+        )
         self.tools_profile = tools_profile
         self.tools_allow = tools_allow
         self.tools_deny = list(tools_deny or [])
         self.model_api_keys = dict(model_api_keys or {})
+        self._api_key = api_key
+        self._api_key_name = api_key_name
+        self.provider_options = dict(provider_options or {})
         self._config_lock = threading.Lock()
+        OPENCLAW_BENCHMARK_STATE_DIR.mkdir(parents=True, exist_ok=True)
+        self._run_state_dir = (
+            OPENCLAW_BENCHMARK_STATE_DIR
+            / f"run-{os.getpid()}-{uuid.uuid4().hex[:12]}"
+        )
+        atexit.register(self._cleanup_run_state)
         self._ensure_benchmark_state()
 
     @property
     def _state_dir(self) -> Path:
         """Isolated OpenClaw state used for benchmark runs (not ~/.openclaw)."""
-        return OPENCLAW_BENCHMARK_STATE_DIR
+        return self._run_state_dir
+
+    def _cleanup_run_state(self) -> None:
+        shutil.rmtree(self._run_state_dir, ignore_errors=True)
 
     # ------------------------------------------------------------------
     # Model authentication (env-only; no host credential store)
@@ -120,24 +138,17 @@ class OpenClawAdapter(BaseClawAdapter):
 
     def api_key_env(self) -> str | None:
         """Env var configured to hold this model's API key."""
-        return api_key_env_for_model(self.model, self.model_api_keys)
+        return self._api_key_name or api_key_env_for_model(self.model, self.model_api_keys)
 
     def _canonical_provider_env(self) -> str | None:
         """Env var name OpenClaw recognizes for this model's provider."""
         return PROVIDER_API_KEY_ENV.get(self.provider) or self.api_key_env()
 
     def _resolved_api_key(self) -> str | None:
+        if self._api_key:
+            return self._api_key
         env_var = self.api_key_env()
-        if env_var:
-            value = os.environ.get(env_var)
-            if value:
-                return value
-        if self.provider == GOOGLE_VERTEX_PROVIDER:
-            for fallback_env in GOOGLE_VERTEX_API_KEY_FALLBACK_ENVS:
-                value = os.environ.get(fallback_env)
-                if value:
-                    return value
-        return None
+        return os.environ.get(env_var) if env_var else None
 
     def model_auth(self) -> dict:
         """Auth summary for trace/metadata (never includes the key value)."""
@@ -145,33 +156,138 @@ class OpenClawAdapter(BaseClawAdapter):
         return {
             "model": self.model,
             "provider": self.provider,
+            "api_base": f"http://{MODEL_GATEWAY_HOST}:{MODEL_GATEWAY_PORT}",
+            "upstream_api_base": self.upstream_api_base(),
             "api_key_env": env_var,
             "api_key_present": bool(self._resolved_api_key()),
         }
 
+    def validate_runtime(self) -> None:
+        if not Path(OPENCLAW_NODE_BIN).is_file():
+            raise RuntimeError(f"OpenClaw Node.js binary not found: {OPENCLAW_NODE_BIN}")
+        if not Path(OPENCLAW_MODULE_DIR).is_dir():
+            raise RuntimeError(f"OpenClaw module directory not found: {OPENCLAW_MODULE_DIR}")
+        if not self._resolved_api_key():
+            raise RuntimeError(
+                f"No API key for {self.model}. Pass it explicitly or set only "
+                f"{self.api_key_env()} for the benchmark runner."
+            )
+        if self.provider == GOOGLE_VERTEX_PROVIDER:
+            google_vertex_settings(self.provider_options)
+
     def tool_policy(self) -> dict:
         """Effective tool policy for this benchmark run (recorded in trace)."""
         policy = {
-            "state_dir": str(self._state_dir),
+            "state_dir": "<benchmark-process-isolated-state>",
             "profile": self.tools_profile,
         }
         if self.tools_allow:
             policy["allow"] = self.tools_allow
         if self.tools_deny:
             policy["deny"] = self.tools_deny
+        policy["skills"] = self.skills_mode
         return policy
 
-    def _openclaw_env(self) -> dict[str, str]:
-        """Environment for host-side ``openclaw`` subprocesses."""
-        env = {
-            **os.environ,
-            "OPENCLAW_STATE_DIR": str(self._state_dir),
+    def effective_config(self) -> dict:
+        value = super().effective_config()
+        config_path = self._config_path()
+        config = json.loads(config_path.read_text()) if config_path.is_file() else {}
+        # Agent registrations are ephemeral run state, not configuration.
+        if isinstance(config.get("agents"), dict):
+            config["agents"] = {**config["agents"], "list": []}
+        value["harness_config"] = config
+        value["turn_limit_enforcement"] = (
+            "model-call cap dominates OpenClaw loop"
+            if self.max_model_calls <= int(self.max_turns or self.max_model_calls)
+            else "outer timeout plus model-call cap"
+        )
+        return value
+
+    def runtime_info(self) -> dict:
+        from agent_formalizer.provenance import run_text
+
+        return {
+            **super().runtime_info(),
+            "node_binary": str(OPENCLAW_NODE_BIN),
+            "node_version": run_text([str(OPENCLAW_NODE_BIN), "--version"]),
+            "module_dir": str(OPENCLAW_MODULE_DIR),
+            "openclaw_version": run_text(
+                [
+                    str(OPENCLAW_NODE_BIN),
+                    str(Path(OPENCLAW_MODULE_DIR) / "openclaw.mjs"),
+                    "--version",
+                ]
+            ),
         }
-        value = self._resolved_api_key()
+
+    def skills_info(self) -> dict:
+        from agent_formalizer.provenance import file_manifest
+
+        root = Path(OPENCLAW_MODULE_DIR)
+        paths = [
+            path for path in (root / "skills").glob("**/*")
+            if "__pycache__" not in path.parts and path.suffix != ".pyc"
+        ]
+        return {
+            "mode": self.skills_mode,
+            "baseline": "pinned-host-install-bundled-skills-only",
+            "personal_and_extra_dirs": [],
+            "manifest": file_manifest(paths, root=root),
+        }
+
+    def upstream_api_base(self) -> str:
+        if self.provider == GOOGLE_VERTEX_PROVIDER:
+            options = self.provider_options.get("google_vertex", {})
+            location = options.get("location") or "global"
+            return options.get("origin") or (
+                "https://aiplatform.googleapis.com"
+                if location == "global"
+                else f"https://{location}-aiplatform.googleapis.com"
+            )
+        return provider_spec(self.model).api_base
+
+    def model_gateway(self) -> dict:
+        value = super().model_gateway()
+        value["auth_mode"] = provider_spec(self.model).gateway_auth_mode
+        _, runtime_model = split_model_id(self.model)
+        value["allowed_models"] = sorted({self.model, runtime_model})
+        return value
+
+    def model_gateway_secret(self) -> str | None:
+        return self._resolved_api_key()
+
+    def _openclaw_env(self) -> dict[str, str]:
+        """Hermetic environment for host-side ``openclaw`` subprocesses.
+
+        Keep ordinary process settings such as ``PATH`` and the selected model
+        credential, but discard operator-provided OpenClaw knobs.  In
+        particular, an ambient profile/config path must not redirect benchmark
+        administration commands back to a personal state directory.
+        """
+        env = {
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "HOME": str(self._state_dir),
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "TZ": "UTC",
+            "NO_COLOR": "1",
+            "OPENCLAW_STATE_DIR": str(self._state_dir),
+            "OPENCLAW_CONFIG_PATH": str(self._config_path()),
+            "OPENCLAW_NO_AUTO_UPDATE": "1",
+        }
+        value = "benchmark-gateway-placeholder"
         canonical = self._canonical_provider_env()
-        if value and canonical:
+        if canonical:
             env[canonical] = value
         return env
+
+    @staticmethod
+    def _openclaw_command(*args: str) -> list[str]:
+        return [
+            str(OPENCLAW_NODE_BIN),
+            str(Path(OPENCLAW_MODULE_DIR) / "openclaw.mjs"),
+            *args,
+        ]
 
     def _config_path(self) -> Path:
         return self._state_dir / "openclaw.json"
@@ -184,18 +300,34 @@ class OpenClawAdapter(BaseClawAdapter):
     def _sync_benchmark_openclaw_json(self) -> None:
         """Write benchmark-owned ``openclaw.json`` (tools/model/auth/plugins)."""
         config_path = self._config_path()
-        data: dict = {}
+        previous: dict = {}
         if config_path.is_file():
             try:
-                data = json.loads(config_path.read_text())
+                previous = json.loads(config_path.read_text())
             except json.JSONDecodeError:
                 logger.warning("Resetting invalid benchmark openclaw.json")
 
-        agents = data.setdefault("agents", {})
-        defaults = agents.setdefault("defaults", {})
+        # Rebuild all benchmark-owned top-level configuration. Preserve only
+        # agent registrations created by this adapter; no arbitrary host/user
+        # settings survive into a run.
+        previous_agents = previous.get("agents", {}).get("list", [])
+        data: dict = {
+            "agents": {"defaults": {}, "list": previous_agents},
+            "models": {
+                "mode": "merge",
+                "providers": {self.provider: self._gateway_provider_config()},
+            },
+            "skills": {
+                "load": {"extraDirs": [], "watch": False},
+            },
+        }
+
+        agents = data["agents"]
+        defaults = agents["defaults"]
         defaults.setdefault("models", {})
         defaults["model"] = {"primary": self.model}
-        agents.setdefault("list", [])
+        if self.skills_mode != "official":
+            defaults["skills"] = []
 
         tools = data.setdefault("tools", {})
         tools["profile"] = self.tools_profile
@@ -221,6 +353,41 @@ class OpenClawAdapter(BaseClawAdapter):
         config_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
         logger.debug("Synced benchmark openclaw.json at %s", config_path)
 
+    def _gateway_provider_config(self) -> dict:
+        from urllib.parse import urlsplit
+
+        api_by_provider = {
+            "openai": "openai-responses",
+            "anthropic": "anthropic-messages",
+            "openrouter": "openai-completions",
+            "deepseek": "openai-completions",
+            "dashscope": "openai-completions",
+            "qwen": "openai-completions",
+            "google": "google-generative-ai",
+            "gemini": "google-generative-ai",
+            "google-vertex": "google-vertex",
+        }
+        _, runtime_model = split_model_id(self.model)
+        upstream_path = urlsplit(self.upstream_api_base()).path.rstrip("/")
+        gateway_base = f"http://{MODEL_GATEWAY_HOST}:{MODEL_GATEWAY_PORT}"
+        if self.provider != GOOGLE_VERTEX_PROVIDER:
+            gateway_base += upstream_path
+        return {
+            "baseUrl": gateway_base,
+            "api": api_by_provider.get(self.provider, "openai-completions"),
+            "request": {"allowPrivateNetwork": True},
+            "models": [
+                {
+                    "id": runtime_model,
+                    "name": runtime_model,
+                    "reasoning": True,
+                    "input": ["text"],
+                    "contextWindow": 1048576,
+                    "maxTokens": 65536,
+                }
+            ],
+        }
+
     def _auth_profiles(self) -> dict:
         """Minimal ``api_key`` auth profile for the active model's provider."""
         provider = self.provider
@@ -236,47 +403,34 @@ class OpenClawAdapter(BaseClawAdapter):
             "-v", f"{OPENCLAW_NODE_BIN}:/usr/bin/node:ro",
             "-v", f"{OPENCLAW_MODULE_DIR}:/usr/lib/node_modules/openclaw:ro",
             "-v", f"{self._state_dir}:/root/.openclaw",
+            "-e", "OPENCLAW_STATE_DIR=/root/.openclaw",
+            "-e", "OPENCLAW_CONFIG_PATH=/root/.openclaw/openclaw.json",
+            "-e", "OPENCLAW_NO_AUTO_UPDATE=1",
             # Per-problem agent workspaces live here on the host; the in-container
             # ``openclaw agent`` must see the same paths (otherwise WorkspaceVanishedError).
             "-v", f"{TEMP_WORKSPACE_ROOT}:{TEMP_WORKSPACE_ROOT}",
         ]
         exported_envs: set[str] = set()
-        # Inject only the active model's API key, under the provider's canonical
-        # env var name (so OpenClaw's standard env-key resolution finds it). The
-        # source variable in _private/.env may be named anything (decoupled from
-        # both the model id and OpenClaw's expected name).
-        value = self._resolved_api_key()
+        # OpenClaw sees only a syntactically valid placeholder. Authentication
+        # is replaced by the sidecar when it forwards the request.
+        value = "benchmark-gateway-placeholder"
         canonical = self._canonical_provider_env()
-        if value and canonical:
+        if canonical:
             args.extend(["-e", f"{canonical}={value}"])
             exported_envs.add(canonical)
-        else:
-            logger.warning(
-                "No API key for model %s (env var %s unset); OpenClaw auth will "
-                "likely fail. Set it in _private/.env.",
-                self.model, self.api_key_env(),
-            )
         if self.provider == GOOGLE_VERTEX_PROVIDER:
             self._append_google_vertex_env(args, exported_envs)
         return args
 
     def _append_google_vertex_env(self, args: list[str], exported_envs: set[str]) -> None:
-        """Pass Vertex project/location knobs through to the agent container."""
-        for name in GOOGLE_VERTEX_CONTAINER_ENV:
-            self._append_container_env(args, exported_envs, name)
-
-        has_project = bool(
-            os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCLOUD_PROJECT")
-        )
-        if not has_project:
-            logger.warning(
-                "google-vertex requires GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT "
-                "inside the container."
-            )
-        if not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-            logger.warning(
-                "google-vertex requires GOOGLE_CLOUD_LOCATION inside the container."
-            )
+        """Pass only non-secret, resolved Vertex routing values."""
+        project, location, _ = google_vertex_settings(self.provider_options)
+        for name, value in (
+            ("GOOGLE_CLOUD_PROJECT", project),
+            ("GOOGLE_CLOUD_LOCATION", location),
+            ("GOOGLE_GENAI_USE_VERTEXAI", "true"),
+        ):
+            self._append_container_env(args, exported_envs, name, value)
 
     @staticmethod
     def _append_container_env(
@@ -284,7 +438,7 @@ class OpenClawAdapter(BaseClawAdapter):
     ) -> None:
         if name in exported_envs:
             return
-        resolved = os.environ.get(name) if value is None else value
+        resolved = value
         if not resolved:
             return
         args.extend(["-e", f"{name}={resolved}"])
@@ -307,21 +461,23 @@ class OpenClawAdapter(BaseClawAdapter):
 
         with self._config_lock:
             self._sync_benchmark_openclaw_json()
-            command = [
-                "openclaw", "agents", "add", agent_id,
+            command = self._openclaw_command(
+                "agents", "add", agent_id,
                 "--non-interactive",
                 "--workspace", str(workspace),
                 "--model", self.model,
                 "--json",
-            ]
+            )
             last_error = ""
             for attempt in range(1, AGENT_ADD_ATTEMPTS + 1):
+                if self.deadline_exceeded():
+                    raise TimeoutError("OpenClaw startup reached benchmark deadline")
                 try:
                     result = subprocess.run(
                         command,
                         capture_output=True,
                         text=True,
-                        timeout=AGENT_ADMIN_TIMEOUT,
+                        timeout=min(AGENT_ADMIN_TIMEOUT, self.remaining_timeout()),
                         env=self._openclaw_env(),
                     )
                 except subprocess.TimeoutExpired:
@@ -337,7 +493,7 @@ class OpenClawAdapter(BaseClawAdapter):
                         f"returncode={result.returncode}: "
                         f"{result.stderr.strip() or result.stdout.strip()}"
                     )
-                if attempt < AGENT_ADD_ATTEMPTS:
+                if attempt < AGENT_ADD_ATTEMPTS and not self.deadline_exceeded():
                     time.sleep(attempt)
             else:
                 raise RuntimeError(f"Failed to create agent {agent_id}: {last_error}")
@@ -356,10 +512,12 @@ class OpenClawAdapter(BaseClawAdapter):
         with self._config_lock:
             try:
                 subprocess.run(
-                    ["openclaw", "agents", "delete", agent_id, "--force"],
+                    self._openclaw_command(
+                        "agents", "delete", agent_id, "--force"
+                    ),
                     capture_output=True,
                     text=True,
-                    timeout=AGENT_ADMIN_TIMEOUT,
+                    timeout=min(AGENT_ADMIN_TIMEOUT, self.remaining_timeout()),
                     env=self._openclaw_env(),
                 )
             except subprocess.TimeoutExpired:
@@ -452,18 +610,20 @@ class OpenClawAdapter(BaseClawAdapter):
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout + SUBPROCESS_TIMEOUT_BUFFER,
+                timeout=self.remaining_timeout(),
             )
             exit_code = result.returncode
             stdout = result.stdout
             stderr = result.stderr
         except subprocess.TimeoutExpired as e:
             timed_out = True
+            subprocess.run(
+                ["docker", "kill", container_name], capture_output=True, timeout=30
+            )
             exit_code = -1
             stdout = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
             stderr = (e.stderr or b"").decode(errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
-            logger.warning("OpenClaw subprocess timed out after %ds",
-                           self.timeout + SUBPROCESS_TIMEOUT_BUFFER)
+            logger.warning("OpenClaw subprocess reached the %.3fs deadline", self.timeout)
 
         duration = time.time() - start_time
 
@@ -517,9 +677,11 @@ class OpenClawAdapter(BaseClawAdapter):
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             session_id=agent_meta.get("sessionId"),
-            session_file=_container_path_to_host(agent_meta.get("sessionFile")),
+            session_file=_container_path_to_host(
+                agent_meta.get("sessionFile"), self._state_dir
+            ),
             openclaw_agent_id=_openclaw_agent_id_from_session_file(
-                agent_meta.get("sessionFile")
+                agent_meta.get("sessionFile"), self._state_dir
             ),
             duration_seconds=round(duration, 1),
             usage=agent_meta.get("lastCallUsage", {}),
@@ -530,8 +692,8 @@ class OpenClawAdapter(BaseClawAdapter):
     # Session backup & step-by-step trace
     # ------------------------------------------------------------------
 
-    @staticmethod
     def _resolve_agent_state_dir(
+        self,
         agent_id: str,
         *,
         session_file: str | Path | None = None,
@@ -543,13 +705,13 @@ class OpenClawAdapter(BaseClawAdapter):
         we pass to ``openclaw agents add``.
         """
         if session_file:
-            host = Path(_container_path_to_host(str(session_file)))
+            host = Path(_container_path_to_host(str(session_file), self._state_dir))
             if host.is_file():
                 return host.parent.parent
             if host.parent.name == "sessions" and host.parent.parent.exists():
                 return host.parent.parent
 
-        agents_root = OPENCLAW_BENCHMARK_STATE_DIR / "agents"
+        agents_root = self._state_dir / "agents"
         if not agents_root.is_dir():
             return None
 
@@ -618,7 +780,7 @@ class OpenClawAdapter(BaseClawAdapter):
             return candidates
 
         if session_file:
-            host = Path(_container_path_to_host(str(session_file)))
+            host = Path(_container_path_to_host(str(session_file), self._state_dir))
             if host.is_file():
                 return [host]
         return []
@@ -628,21 +790,21 @@ class OpenClawAdapter(BaseClawAdapter):
         container_name: str,
         sessions_dir: Path,
     ) -> None:
-        """Widen permissions on session files created as root inside the container.
+        """Make benchmark-owned state readable and removable by the host user.
 
         OpenClaw writes ``*.trajectory.jsonl`` sidecars with mode ``600`` when
         ``openclaw agent --local`` runs in Docker as root. The bind-mounted
-        benchmark state dir is then unreadable to the host user during backup.
+        benchmark state dir can otherwise be unreadable or impossible to clean
+        up from the unprivileged host process after backup.
         """
-        container_path = _host_path_to_container(sessions_dir)
-        if not container_path:
+        if not _host_path_to_container(sessions_dir, self._state_dir):
             return
         try:
             subprocess.run(
                 [
                     "docker", "exec", container_name,
                     "bash", "-c",
-                    f"chmod -R a+rX {shlex.quote(container_path)}",
+                    "chmod -R a+rwX /root/.openclaw",
                 ],
                 capture_output=True,
                 text=True,
@@ -681,7 +843,7 @@ class OpenClawAdapter(BaseClawAdapter):
                     logger.warning("Could not copy session file %s: %s", f, e)
 
         if session_file and copied == 0:
-            host = Path(_container_path_to_host(session_file))
+            host = Path(_container_path_to_host(session_file, self._state_dir))
             if host.is_file():
                 try:
                     shutil.copy2(host, out / host.name)
@@ -791,31 +953,33 @@ class OpenClawAdapter(BaseClawAdapter):
         return None
 
 
-def _container_path_to_host(path: str | None) -> str | None:
+def _container_path_to_host(path: str | None, state_dir: Path) -> str | None:
     """Map an OpenClaw path from inside the container to the host state dir."""
     if not path:
         return None
     for prefix in ("/root/.openclaw", "/home/node/.openclaw"):
         if path.startswith(prefix + "/") or path == prefix:
             rel = path[len(prefix) :].lstrip("/")
-            return str(OPENCLAW_BENCHMARK_STATE_DIR / rel) if rel else str(OPENCLAW_BENCHMARK_STATE_DIR)
+            return str(state_dir / rel) if rel else str(state_dir)
     return path
 
 
-def _host_path_to_container(path: Path | str) -> str | None:
+def _host_path_to_container(path: Path | str, state_dir: Path) -> str | None:
     """Map a host benchmark-state path to its in-container ``/root/.openclaw`` path."""
     host = Path(path)
     try:
-        rel = host.resolve().relative_to(OPENCLAW_BENCHMARK_STATE_DIR.resolve())
+        rel = host.resolve().relative_to(state_dir.resolve())
     except ValueError:
         return None
     return f"/root/.openclaw/{rel.as_posix()}" if rel.parts else "/root/.openclaw"
 
 
-def _openclaw_agent_id_from_session_file(session_file: str | None) -> str | None:
+def _openclaw_agent_id_from_session_file(
+    session_file: str | None, state_dir: Path
+) -> str | None:
     if not session_file:
         return None
-    host = Path(_container_path_to_host(session_file))
+    host = Path(_container_path_to_host(session_file, state_dir))
     parts = host.parts
     try:
         idx = parts.index("agents")

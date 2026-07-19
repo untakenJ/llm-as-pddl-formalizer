@@ -4,12 +4,16 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-RUNTIME_ROOT="${PDDL_HARNESS_RUNTIME_ROOT:-${ROOT_DIR}/.cache/harness-runtimes}"
+RUNTIME_ROOT="${ROOT_DIR}/.cache/harness-runtimes"
+LOCK_ROOT="${ROOT_DIR}/source/agent_formalizer/runtime_requirements"
 
 HERMES_VERSION="0.18.2"
 NANOBOT_VERSION="0.2.2"
 GENERIC_COMMIT="e6bbc91631b42026a2bc1e91cb51537d1151aa14"
-ZEROCLAW_COMMIT="42fa19711e769d9aa142592bf7c52d43628277e2"
+# Unreleased official fix for Gemini thought_signature round-trip (PR #8935).
+# No beta/release tag contains 85e0cfaf yet; pin the PR tip and annotate VERSION_NOTE.
+ZEROCLAW_COMMIT="85e0cfafbe677590e4fe5947f83673bb49ba0fc2"  # unreleased-pr8935+gemini-thought-signature
+ZEROCLAW_VERSION_NOTE="unreleased-pr8935+gemini-thought-signature"
 
 if ! command -v uv >/dev/null 2>&1; then
     printf 'uv is required. Install it first: curl -LsSf https://astral.sh/uv/install.sh | sh\n' >&2
@@ -49,13 +53,15 @@ checkout_commit() {
 install_hermes() {
     local env_path="${RUNTIME_ROOT}/hermes"
     ensure_venv "${env_path}"
-    uv pip install --python "${env_path}/bin/python" "hermes-agent==${HERMES_VERSION}"
+    uv pip sync --python "${env_path}/bin/python" \
+        "${LOCK_ROOT}/hermes.txt"
 }
 
 install_nanobot() {
     local env_path="${RUNTIME_ROOT}/nanobot"
     ensure_venv "${env_path}"
-    uv pip install --python "${env_path}/bin/python" "nanobot-ai==${NANOBOT_VERSION}"
+    uv pip sync --python "${env_path}/bin/python" \
+        "${LOCK_ROOT}/nanobot.txt"
 }
 
 install_generic() {
@@ -66,21 +72,30 @@ install_generic() {
         "${GENERIC_COMMIT}"
     mkdir -p "${root}/repo/temp"
     ensure_venv "${root}/venv"
-    uv pip install --python "${root}/venv/bin/python" "${root}/repo"
+    uv pip sync --python "${root}/venv/bin/python" \
+        "${LOCK_ROOT}/generic.txt"
+    uv pip install --python "${root}/venv/bin/python" --no-deps "${root}/repo"
 }
 
 install_zeroclaw() {
     local source_path="${RUNTIME_ROOT}/zeroclaw-source"
+    local prefix="${RUNTIME_ROOT}/zeroclaw"
     checkout_commit \
         "https://github.com/zeroclaw-labs/zeroclaw.git" \
         "${source_path}" \
         "${ZEROCLAW_COMMIT}"
-    sh "${source_path}/install.sh" \
-        --prefix "${RUNTIME_ROOT}/zeroclaw" \
-        --prebuilt \
-        --without-tui \
-        --skip-quickstart \
-        --no-modify-path
+    # --prebuilt always downloads GitHub releases/latest (still without the fix).
+    # Build the pinned PR checkout from source so the binary matches ZEROCLAW_COMMIT.
+    (
+        cd "${source_path}"
+        sh ./install.sh \
+            --prefix "${prefix}" \
+            --source \
+            --without-tui \
+            --skip-quickstart \
+            --no-modify-path
+    )
+    printf '%s\n' "${ZEROCLAW_VERSION_NOTE}" > "${prefix}/VERSION_NOTE"
 }
 
 if [[ $# -eq 0 ]]; then

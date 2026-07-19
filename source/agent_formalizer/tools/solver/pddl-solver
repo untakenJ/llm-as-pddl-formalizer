@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Agent-facing PDDL solver CLI (mounted into every harness container).
+
+Talks only to the per-attempt solver gateway on the internal Docker network.
+The gateway itself calls the same planning.domains backend as ``run_solver.py``.
+
+Usage:
+  pddl-solver [--domain PATH] [--problem PATH] [--solver NAME]
+
+Defaults:
+  --domain  /workspace/domain.pddl
+  --problem /workspace/problem.pddl
+  --solver  dual-bfws-ffparser
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+
+DEFAULT_GATEWAY = os.environ.get(
+    "PDDL_SOLVER_GATEWAY", "http://solver-gateway:8768"
+).rstrip("/")
+DEFAULT_DOMAIN = os.environ.get("PDDL_SOLVER_DOMAIN", "/workspace/domain.pddl")
+DEFAULT_PROBLEM = os.environ.get("PDDL_SOLVER_PROBLEM", "/workspace/problem.pddl")
+DEFAULT_SOLVER = os.environ.get("PDDL_SOLVER_PACKAGE", "dual-bfws-ffparser")
+
+
+def _read(path: str) -> str:
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="pddl-solver",
+        description=(
+            "Solve workspace PDDL via the benchmark solver gateway "
+            "(same remote backend as run_solver.py)."
+        ),
+    )
+    parser.add_argument("--domain", default=DEFAULT_DOMAIN)
+    parser.add_argument("--problem", default=DEFAULT_PROBLEM)
+    parser.add_argument("--solver", default=DEFAULT_SOLVER)
+    parser.add_argument(
+        "--gateway",
+        default=DEFAULT_GATEWAY,
+        help="solver gateway origin (default from PDDL_SOLVER_GATEWAY)",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        domain = _read(args.domain)
+        problem = _read(args.problem)
+    except OSError as exc:
+        print(f"pddl-solver: failed to read PDDL files: {exc}", file=sys.stderr)
+        return 2
+
+    body = json.dumps(
+        {"domain": domain, "problem": problem, "solver": args.solver}
+    ).encode()
+    request = urllib.request.Request(
+        f"{args.gateway.rstrip('/')}/solve",
+        data=body,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            status = int(getattr(response, "status", 200) or 200)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+        status = int(exc.code)
+        try:
+            payload = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            print(f"pddl-solver: HTTP {status}\n{raw}", file=sys.stderr)
+            return 1
+        error = payload.get("error") if isinstance(payload, dict) else raw
+        print(f"pddl-solver: solve failed (HTTP {status})", file=sys.stderr)
+        print(error if isinstance(error, str) else json.dumps(error, indent=2))
+        return 1
+    except Exception as exc:  # noqa: BLE001 - CLI surface
+        print(f"pddl-solver: request failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        payload = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        print(f"pddl-solver: non-JSON response (HTTP {status})\n{raw}", file=sys.stderr)
+        return 1
+
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        print("pddl-solver: solve failed", file=sys.stderr)
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 1
+
+    plan = payload.get("plan", "")
+    if plan:
+        print(plan if isinstance(plan, str) else json.dumps(plan))
+    else:
+        print("(empty plan)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

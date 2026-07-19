@@ -11,6 +11,8 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
+import shlex
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -36,32 +38,57 @@ def run_parallel(items, worker, workers: int = 1):
         return list(ex.map(worker, items))
 
 
-def load_private_secrets(root: Path | None = None) -> dict[str, str]:
-    """Load ``_private/.env`` into the environment as the highest-priority source.
+_ENV_ASSIGNMENT = re.compile(
+    r"^\s*(?:export\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<value>.*)$"
+)
 
-    ``_private/.env`` is the single, explicit credential source for benchmark
-    runs. Values here OVERRIDE any pre-existing environment variables (so a run
-    never silently uses a stale shell value or the operator's personal harness
-    config). Returns the dict of keys that were applied.
-    """
-    from agent_formalizer.config import ROOT_DIR
 
-    base = Path(root) if root is not None else ROOT_DIR
-    env_file = base / "_private" / ".env"
-    applied: dict[str, str] = {}
-    if not env_file.is_file():
-        return applied
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+def _read_named_env_file_value(name: str, env_file: str | Path) -> str | None:
+    """Read one dotenv assignment without evaluating or expanding the file."""
+    path = Path(env_file).expanduser()
+    if not path.is_file():
+        return None
+    selected = None
+    for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+        match = _ENV_ASSIGNMENT.match(line)
+        if not match or match.group("name") != name:
             continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key:
-            os.environ[key] = value  # .env wins over the inherited environment
-            applied[key] = value
-    return applied
+        lexer = shlex.shlex(match.group("value"), posix=True)
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
+        try:
+            parts = list(lexer)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Invalid dotenv value for {name!r} at {path}:{line_number}"
+            ) from exc
+        selected = " ".join(parts)
+    return selected
+
+
+def read_named_setting(name: str, env_file: str | Path | None = None) -> str:
+    """Read one explicitly named runner input from a dotenv file or environment.
+
+    The repository-local file has precedence. No other assignments are
+    returned, exported, interpolated, or inherited by an agent process.
+    """
+    value = (
+        _read_named_env_file_value(name, env_file)
+        if env_file is not None
+        else None
+    )
+    if value is None:
+        value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(
+            f"Required benchmark runner variable {name!r} is not set"
+        )
+    return value
+
+
+def read_named_secret(name: str, env_file: str | Path | None = None) -> str:
+    """Read exactly one credential without scanning personal harness config."""
+    return read_named_setting(name, env_file)
 
 
 class Tracer:

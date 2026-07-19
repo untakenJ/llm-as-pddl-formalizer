@@ -20,7 +20,7 @@ Examples::
     uv run python source/agent_formalizer/run_formalizer_agent.py \\
         --claw openclaw --domain blocksworld \\
         --data Heavily_Templated_BlocksWorld-100 \\
-        --model openrouter/anthropic/claude-opus-4.6 --indices 1,2,3
+        --model google-vertex/gemini-3.1-flash-lite --indices 1,2,3
 
 Then evaluate (note the sanitized model label, slashes -> ``__``)::
 
@@ -48,14 +48,16 @@ if SOURCE_DIR not in sys.path:
     sys.path.insert(0, SOURCE_DIR)
 
 from agent_formalizer.claws import CLAWS, get_adapter
+from agent_formalizer.benchmark_profile import load_benchmark_profile
 from agent_formalizer.config import (
-    CLAW_DEFAULTS,
     DATASETS,
+    DEFAULT_SECRETS_ENV_FILE,
     DOMAINS,
     agent_model_label,
+    api_key_env_for_model,
 )
 from agent_formalizer.orchestrator import run_batch
-from agent_formalizer.util import load_private_secrets
+from agent_formalizer.util import read_named_secret, read_named_setting
 
 
 def _resolve_problem_numbers(args) -> list[int]:
@@ -77,16 +79,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data", required=True, choices=DATASETS,
                    help="which dataset to formalize")
     p.add_argument("--model", default=None,
-                   help="model id passed to the claw (default: per-claw default)")
+                   help="model id passed to the claw (default: benchmark profile)")
+    p.add_argument("--benchmark-config", default=None,
+                   help="JSON benchmark profile (default: bundled benchmark_profile.json)")
     p.add_argument("--api-key-env", default=None,
-                   help="env var (defined in _private/.env) holding the API key "
+                   help="the one runner environment variable holding the API key "
                         "for --model; overrides the per-harness model_api_keys "
-                        "map and the provider default. Lets harness, model, and "
-                        "API key be combined freely.")
+                        "map and provider default")
+    p.add_argument("--secrets-env-file", default=str(DEFAULT_SECRETS_ENV_FILE),
+                   help="runner-only dotenv source for explicitly named provider "
+                        "inputs; never mounted or passed to the agent container")
     p.add_argument("--model_label", default=None,
                    help="filesystem/solver-safe label for output dirs "
-                        "(default: <claw>__<sanitized-model>; pass this same value to "
-                        "run_solver.py / run_val.py via --model)")
+                        "(the resolved config name/hash is always appended; pass the "
+                        "resulting label to run_solver.py / run_val.py via --model)")
     p.add_argument("--index_start", help="index to start from (inclusive)")
     p.add_argument("--index_end", help="index to end at (exclusive)")
     p.add_argument("--indices", default=None,
@@ -96,12 +102,28 @@ def build_parser() -> argparse.ArgumentParser:
                    help="base output directory; defaults to {ROOT_DIR}/output")
     p.add_argument("--image", default=None,
                    help="Docker base image to run the agent in "
-                        "(default: $PDDL_AGENT_IMAGE or pddl-agent-base:latest)")
+                        "(must resolve to the image ID in runtime_lock.json)")
     p.add_argument("--timeout", type=int, default=None,
-                   help="agent timeout in seconds (default: per-claw default)")
+                   help="agent timeout in seconds (default: benchmark profile)")
     p.add_argument("--max_turns", type=int, default=None,
-                   help="max tool-use turns (default: per-claw default; "
-                        "ignored by claws without a turn limit)")
+                   help="max agent turns (default: benchmark profile)")
+    p.add_argument("--max-model-calls", type=int, default=None,
+                   help="maximum model API calls per problem (default: benchmark profile)")
+    p.add_argument("--network-mode", choices=("model_only", "controlled_web"),
+                   default=None, help="network condition override")
+    p.add_argument("--attempts-per-case", type=int, default=None,
+                   help="fixed independent attempts for every case")
+    p.add_argument("--max-execution-tries", type=int, default=None,
+                   help="maximum infra-only execution tries per attempt")
+    p.add_argument("--allow-final-message-recovery",
+                   action=argparse.BooleanOptionalAction, default=None,
+                   help="experimental recovery from final text; default false")
+    p.add_argument("--vertex-project", default=None,
+                   help="explicit Vertex project override")
+    p.add_argument("--vertex-project-env", default="GOOGLE_CLOUD_PROJECT",
+                   help="runner variable read when the profile has no Vertex project")
+    p.add_argument("--vertex-location", default=None,
+                   help="Vertex location override (default from profile)")
     p.add_argument("--trace", action=argparse.BooleanOptionalAction, default=True,
                    help="record per-problem JSONL trace (default on; "
                         "pass --no-trace to disable)")
@@ -116,7 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "(optional; narrows the profile)")
     p.add_argument("--tools-deny", default=None,
                    help="comma-separated OpenClaw tool deny list "
-                        "(default: per-claw benchmark deny list)")
+                        "(default: no condition-level tool override)")
     return p
 
 
@@ -127,7 +149,7 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     args = build_parser().parse_args()
-    load_private_secrets()
+    profile = load_benchmark_profile(args.benchmark_config)
 
     openclaw_tool_flags = (
         args.tools_profile is not None
@@ -140,9 +162,16 @@ def main() -> None:
             "--claw openclaw; other adapters use repository-pinned tool policies."
         )
 
-    defaults = CLAW_DEFAULTS[args.claw]
-    model = args.model or defaults["model"]
-    model_label = args.model_label or agent_model_label(args.claw, model)
+    model = args.model or profile.default_model
+    key_name = args.api_key_env or api_key_env_for_model(model)
+    if not key_name:
+        raise SystemExit(
+            f"No credential variable mapping for model {model!r}; pass --api-key-env"
+        )
+    try:
+        api_key = read_named_secret(key_name, args.secrets_env_file)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
 
     adapter_kwargs: dict = {}
     if args.tools_profile is not None:
@@ -155,15 +184,47 @@ def main() -> None:
         adapter_kwargs["tools_deny"] = [
             x.strip() for x in args.tools_deny.split(",") if x.strip()
         ]
-    if args.api_key_env is not None:
-        adapter_kwargs["model_api_keys"] = {model: args.api_key_env}
+    vertex_project = args.vertex_project
+    if (
+        model.startswith("google-vertex/")
+        and vertex_project is None
+        and profile.raw["providers"]["google_vertex"]["project"] is None
+    ):
+        try:
+            vertex_project = read_named_setting(
+                args.vertex_project_env, args.secrets_env_file
+            )
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
+
+    provider_options = None
+    if vertex_project is not None or args.vertex_location is not None:
+        provider_options = {"google_vertex": {}}
+        if vertex_project is not None:
+            provider_options["google_vertex"]["project"] = vertex_project
+        if args.vertex_location is not None:
+            provider_options["google_vertex"]["location"] = args.vertex_location
 
     adapter = get_adapter(
         args.claw,
         model=model,
         timeout=args.timeout,
         max_turns=args.max_turns,
+        max_model_calls=args.max_model_calls,
+        network_mode=args.network_mode,
+        attempts_per_case=args.attempts_per_case,
+        max_execution_tries=args.max_execution_tries,
+        allow_final_message_recovery=args.allow_final_message_recovery,
+        provider_options=provider_options,
+        api_key=api_key,
+        api_key_name=key_name,
+        benchmark_profile=profile,
         **adapter_kwargs,
+    )
+    base_label = args.model_label or agent_model_label(args.claw, model)
+    config_suffix = f"__{adapter.resolved_config.label}"
+    model_label = (
+        base_label if base_label.endswith(config_suffix) else base_label + config_suffix
     )
 
     problem_numbers = _resolve_problem_numbers(args)
@@ -172,7 +233,7 @@ def main() -> None:
         args.claw, args.domain, args.data, model, model_label, problem_numbers,
     )
 
-    run_batch(
+    results = run_batch(
         adapter,
         domain=args.domain,
         data=args.data,
@@ -183,6 +244,8 @@ def main() -> None:
         image=args.image,
         workers=args.workers,
     )
+    if any(not result.attempt_valid for result in results):
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

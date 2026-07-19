@@ -29,15 +29,6 @@ from agent_formalizer.result_types import AgentResult
 logger = logging.getLogger(__name__)
 
 ROUND_END = "[ROUND END]"
-GENERIC_EFFECTIVE_MAX_TURNS = 180
-FILTERED_GENERIC_TOOLS = {
-    "code_run",
-    "file_read",
-    "file_patch",
-    "file_write",
-    "update_working_checkpoint",
-}
-
 ANTHROPIC_USAGE_RE = re.compile(
     r"\[Cache\]\s*input=(\d+)\s*creation=(\d+)\s*read=(\d+)"
 )
@@ -46,7 +37,7 @@ OAI_OUTPUT_RE = re.compile(r"\[Output\]\s*tokens=(\d+)")
 
 
 class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
-    """Run GenericAgent without its host ``mykey.py``, plugins, or memory."""
+    """Run GenericAgent with benchmark-owned config and clean official memory."""
 
     name = "generic"
     runtime_env = GENERIC_ENV_PATH
@@ -60,20 +51,31 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         max_turns: int | None = None,
         *,
         model_api_keys: dict[str, str] | None = None,
+        api_key: str | None = None,
+        api_key_name: str | None = None,
+        provider_options: dict | None = None,
+        max_model_calls: int = 50,
+        allow_network: bool = False,
+        network_mode: str | None = None,
+        skills_mode: str = "official",
+        benchmark_profile=None,
+        resolved_config=None,
     ):
-        requested = max_turns
         super().__init__(
             model,
             timeout,
-            GENERIC_EFFECTIVE_MAX_TURNS,
+            max_turns,
             model_api_keys=model_api_keys,
+            api_key=api_key,
+            api_key_name=api_key_name,
+            provider_options=provider_options,
+            max_model_calls=max_model_calls,
+            allow_network=allow_network,
+            network_mode=network_mode,
+            skills_mode=skills_mode,
+            benchmark_profile=benchmark_profile,
+            resolved_config=resolved_config,
         )
-        if requested not in (None, GENERIC_EFFECTIVE_MAX_TURNS):
-            logger.warning(
-                "GenericAgent currently hardcodes max_turns=%d; requested %s is ignored",
-                GENERIC_EFFECTIVE_MAX_TURNS,
-                requested,
-            )
         self._state_lock = threading.Lock()
         self._instance_states: dict[str, Path] = {}
         self._agent_states: dict[str, Path] = {}
@@ -100,20 +102,16 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         state = self._prepare_instance_state(instance_id)
         config_dir = state / "config"
         args = self.python_runtime_mount_args()
+        # Mount the pinned repo read-only, then overlay only per-attempt
+        # writable state (temp/memory). Do not bind-mount individual files
+        # under that read-only tree: Docker's archive walk for `docker cp`
+        # fails on nested file mounts over a read-only parent, which silently
+        # drops official /workspace delivery files after a successful agent run.
         args.extend(
             [
                 "-v", f"{self.runtime_repo}:{self.runtime_repo}:ro",
                 "-v", f"{state / 'temp'}:{self.runtime_repo / 'temp'}:rw",
                 "-v", f"{state / 'memory'}:{self.runtime_repo / 'memory'}:rw",
-                "-v", f"{state / 'empty-plugins'}:{self.runtime_repo / 'plugins'}:ro",
-                "-v", (
-                    f"{config_dir / 'tools_schema.json'}:"
-                    f"{self.runtime_repo / 'assets' / 'tools_schema.json'}:ro"
-                ),
-                "-v", (
-                    f"{config_dir / 'tools_schema_cn.json'}:"
-                    f"{self.runtime_repo / 'assets' / 'tools_schema_cn.json'}:ro"
-                ),
                 "-v", f"{config_dir}:{config_dir}:ro",
             ]
         )
@@ -131,14 +129,15 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
                 shutil.rmtree(state)
             (state / "temp").mkdir(parents=True)
             (state / "config").mkdir()
-            (state / "empty-plugins").mkdir()
-            shutil.copytree(self.runtime_repo / "memory", state / "memory")
+            if self.skills_mode == "official":
+                shutil.copytree(self.runtime_repo / "memory", state / "memory")
+            else:
+                (state / "memory").mkdir()
             (state / "config" / "mykey.py").write_text(self._mykey_source())
-            if self.is_google_vertex:
-                (state / "config" / "sitecustomize.py").write_text(
-                    self._vertex_sitecustomize_source()
-                )
-            self._write_filtered_schemas(state / "config")
+            self._copy_official_schemas(state / "config")
+            (state / "config" / "benchmark_agentmain.py").write_text(
+                self._agentmain_wrapper_source()
+            )
             self._instance_states[instance_id] = state
         return state
 
@@ -165,50 +164,99 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             "}\n"
         )
 
-    @staticmethod
-    def _vertex_sitecustomize_source() -> str:
-        """Patch GenericAgent's requests transport without editing its checkout."""
-        return (
-            "import os\n"
-            "from urllib.parse import urlsplit\n"
-            "import requests.sessions\n\n"
-            "_pddl_original_request = requests.sessions.Session.request\n"
-            "def _pddl_vertex_request(self, method, url, **kwargs):\n"
-            "    host = urlsplit(str(url)).hostname or ''\n"
-            "    if host == 'aiplatform.googleapis.com' or "
-            "host.endswith('-aiplatform.googleapis.com'):\n"
-            "        headers = dict(kwargs.get('headers') or {})\n"
-            "        for name in list(headers):\n"
-            "            if name.lower() == 'authorization':\n"
-            "                headers.pop(name)\n"
-            "        headers['x-goog-api-key'] = "
-            "os.environ.get('PDDL_BENCHMARK_API_KEY', '')\n"
-            "        kwargs['headers'] = headers\n"
-            "    return _pddl_original_request(self, method, url, **kwargs)\n"
-            "requests.sessions.Session.request = _pddl_vertex_request\n"
-        )
+    def _copy_official_schemas(self, config_dir: Path) -> None:
+        """Keep a host-side copy of the pinned official schemas for audit.
 
-    def _write_filtered_schemas(self, config_dir: Path) -> None:
+        Runtime still reads ``assets/tools_schema*.json`` from the read-only
+        repository mount; these copies are not remounted over that tree.
+        """
         for filename in ("tools_schema.json", "tools_schema_cn.json"):
             source = self.runtime_repo / "assets" / filename
-            schema = json.loads(source.read_text())
-            filtered = [
-                entry
-                for entry in schema
-                if entry.get("function", {}).get("name") in FILTERED_GENERIC_TOOLS
-            ]
-            (config_dir / filename).write_text(
-                json.dumps(filtered, indent=2, ensure_ascii=False) + "\n"
+            shutil.copyfile(source, config_dir / filename)
+
+    # Compatibility alias for callers from the earlier implementation.
+    _write_filtered_schemas = _copy_official_schemas
+
+    def _official_tool_names(self) -> list[str]:
+        try:
+            schema = json.loads(
+                (self.runtime_repo / "assets" / "tools_schema.json").read_text()
             )
+        except (OSError, json.JSONDecodeError):
+            return []
+        return sorted(
+            entry.get("function", {}).get("name")
+            for entry in schema
+            if entry.get("function", {}).get("name")
+        )
 
     def tool_policy(self) -> dict:
+        native = self._official_tool_names()
+        noninteractive_exclusions = [
+            name for name in ("ask_user", "start_long_term_update")
+            if name in native
+        ]
         return {
-            "allowed": sorted(FILTERED_GENERIC_TOOLS),
-            "web": False,
-            "plugins": False,
+            "native_schema": native,
+            "effective": [
+                name for name in native if name not in noninteractive_exclusions
+            ],
+            "envelope_noninteractive_exclusions": noninteractive_exclusions,
+            "tool_schema": "pinned-official-unmodified",
+            "web_egress": self.network_mode,
+            "plugins": "pinned-official-repository",
             "user_tools": False,
-            "memory": "per-run-clean-copy",
+            "memory": (
+                "per-run-official-clean-copy" if self.skills_mode == "official" else "empty"
+            ),
             "state_dir": str(GENERIC_BENCHMARK_STATE_DIR),
+        }
+
+    def _agentmain_wrapper_source(self) -> str:
+        max_turns = int(self.max_turns or 200)
+        return (
+            "from pathlib import Path\n"
+            f"source_path = Path({str(self.runtime_repo / 'agentmain.py')!r})\n"
+            "source = source_path.read_text()\n"
+            "needle = 'max_turns=180'\n"
+            "if source.count(needle) != 1:\n"
+            "    raise RuntimeError('GenericAgent max-turn patch point changed')\n"
+            f"source = source.replace(needle, 'max_turns={max_turns}', 1)\n"
+            "scope = {'__name__': '__main__', '__file__': str(source_path)}\n"
+            "exec(compile(source, str(source_path), 'exec'), scope, scope)\n"
+        )
+
+    def effective_config(self) -> dict:
+        value = super().effective_config()
+        value["harness_config"] = {
+            "model_config_source": self._mykey_source(),
+            "tool_schemas": "pinned-official-unmodified",
+            "plugins": "pinned-official-repository",
+            "memory": self.tool_policy()["memory"],
+            "max_turns_patch": int(self.max_turns or 200),
+        }
+        return value
+
+    def runtime_info(self) -> dict:
+        from agent_formalizer.provenance import git_info
+
+        return {
+            **super().runtime_info(),
+            **self.python_runtime_info(),
+            "source": git_info(self.runtime_repo),
+        }
+
+    def skills_info(self) -> dict:
+        from agent_formalizer.provenance import file_manifest
+
+        paths = [
+            path for path in (self.runtime_repo / "memory").glob("**/*")
+            if "__pycache__" not in path.parts and path.suffix != ".pyc"
+        ]
+        return {
+            "mode": self.skills_mode,
+            "baseline": "clean-copy-of-pinned-official-memory-bundle",
+            "manifest": file_manifest(paths, root=self.runtime_repo),
         }
 
     def send_task(
@@ -252,7 +300,7 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             [
                 container_name,
                 str(self.runtime_python),
-                str(self.runtime_repo / "agentmain.py"),
+                str(config_dir / "benchmark_agentmain.py"),
                 "--task",
                 agent_id,
                 "--llm_no",
@@ -269,7 +317,8 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         output_path = host_task / "output.txt"
         sentinel_seen = False
         timed_out = False
-        deadline = started + self.timeout
+        attempt_deadline = getattr(self._attempt_clock, "deadline", None)
+        deadline = min(started + self.timeout, attempt_deadline or float("inf"))
         with capture_stdout.open("w") as stdout_fp, capture_stderr.open("w") as stderr_fp:
             proc = subprocess.Popen(cmd, stdout=stdout_fp, stderr=stderr_fp, text=True)
             try:
@@ -288,6 +337,12 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
                     timed_out = True
             finally:
                 if proc.poll() is None:
+                    if timed_out:
+                        subprocess.run(
+                            ["docker", "kill", container_name],
+                            capture_output=True,
+                            timeout=30,
+                        )
                     proc.terminate()
                     try:
                         proc.wait(timeout=20)

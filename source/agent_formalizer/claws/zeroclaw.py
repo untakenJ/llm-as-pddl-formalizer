@@ -7,10 +7,14 @@ from pathlib import Path
 
 from agent_formalizer.claws.common import (
     EnvConfiguredAdapter,
-    google_vertex_openai_base,
     run_captured_agent,
 )
-from agent_formalizer.config import CONTAINER_WORKSPACE, ZEROCLAW_BIN
+from agent_formalizer.config import (
+    CONTAINER_WORKSPACE,
+    ZEROCLAW_BIN,
+    ZEROCLAW_SOURCE_PATH,
+    ZEROCLAW_VERSION_NOTE_PATH,
+)
 from agent_formalizer.result_types import AgentResult
 
 ZEROCLAW_CONFIG_DIR = "/tmp/zeroclaw-pddl-benchmark"
@@ -28,14 +32,27 @@ ZEROCLAW_PROVIDER_MAP = {
     "dashscope": "qwen",
 }
 
-ZEROCLAW_ALLOWED_TOOLS = [
+ZEROCLAW_NONINTERACTIVE_APPROVALS = [
     "shell",
     "file_read",
     "file_write",
     "file_edit",
     "glob_search",
     "content_search",
+    "calculator",
+    "image_info",
+    "git_operations",
+    "tool_search",
+    "browser",
+    "browser_open",
+    "web_search",
+    "web_search_tool",
+    "web_fetch",
+    "weather",
 ]
+# Backward-compatible name for external inspection; this is an approval list,
+# not an adapter-level tool allowlist.
+ZEROCLAW_ALLOWED_TOOLS = ZEROCLAW_NONINTERACTIVE_APPROVALS
 
 
 class ZeroClawAdapter(EnvConfiguredAdapter):
@@ -54,8 +71,6 @@ class ZeroClawAdapter(EnvConfiguredAdapter):
 
     @property
     def zeroclaw_api_base(self) -> str:
-        if self.is_google_vertex:
-            return google_vertex_openai_base(proxy=True)
         base = self.api_base.rstrip("/")
         if self.provider == "gemini" and base.endswith("/openai"):
             # ZeroClaw's typed Gemini provider speaks generateContent, unlike
@@ -78,12 +93,9 @@ class ZeroClawAdapter(EnvConfiguredAdapter):
             )
 
     def container_run_args(self, instance_id: str) -> list[str]:
-        args = ["-v", f"{ZEROCLAW_BIN}:/usr/local/bin/zeroclaw:ro"]
-        args.extend(self.vertex_proxy_container_args())
-        return args
+        return ["-v", f"{ZEROCLAW_BIN}:/usr/local/bin/zeroclaw:ro"]
 
     def post_container_start(self, workspace) -> None:
-        self.start_vertex_proxy(workspace)
         result = workspace.run_in_container(f"mkdir -p {ZEROCLAW_CONFIG_DIR}")
         if result.exit_code != 0:
             raise RuntimeError(f"Failed to create ZeroClaw config dir: {result.stderr}")
@@ -96,7 +108,15 @@ class ZeroClawAdapter(EnvConfiguredAdapter):
         family = self.zeroclaw_provider
         max_turns = self.max_turns or 200
         q = json.dumps
-        tools = ", ".join(q(tool) for tool in ZEROCLAW_ALLOWED_TOOLS)
+        approvals = ", ".join(q(tool) for tool in ZEROCLAW_NONINTERACTIVE_APPROVALS)
+        # ZeroClaw's `custom` family defaults to prompt-guided tools
+        # (native_tools unset/false). Vertex is reached through the OpenAI
+        # chat-completions gateway, so native tool schemas + tool-result
+        # history must stay enabled; otherwise the model retries the same
+        # file_write and the harness loop detector aborts.
+        native_tools_line = (
+            "native_tools = true\n" if family == "custom" else ""
+        )
         return f"""schema_version = 3
 
 [providers.models.{family}.benchmark]
@@ -104,7 +124,7 @@ model = {q(self.openai_compatible_model)}
 uri = {q(self.zeroclaw_api_base)}
 timeout_secs = {int(self.timeout)}
 wire_api = "chat_completions"
-
+{native_tools_line}
 [agents.{ZEROCLAW_AGENT_ALIAS}]
 model_provider = "{family}.benchmark"
 risk_profile = "benchmark"
@@ -116,37 +136,73 @@ path = {q(CONTAINER_WORKSPACE)}
 [risk_profiles.benchmark]
 level = "supervised"
 workspace_only = true
-allowed_commands = ["*"]
 require_approval_for_medium_risk = false
-block_high_risk_commands = false
-auto_approve = [{tools}]
+block_high_risk_commands = true
+auto_approve = [{approvals}]
 always_ask = []
-allowed_tools = [{tools}]
-excluded_tools = ["web_search", "web_fetch", "memory_recall", "memory_store", "spawn_subagent", "delegate", "session_status"]
+allowed_tools = []
+excluded_tools = []
 
 [runtime_profiles.benchmark]
 agentic = true
 max_tool_iterations = {int(max_turns)}
-max_actions_per_hour = 10000
-max_cost_per_day_cents = 100000
-shell_timeout_secs = {min(int(self.timeout), 600)}
+max_actions_per_hour = 20
+max_cost_per_day_cents = 500
+# Preserve the pinned native-clean per-shell timeout.  The common 1800s
+# harness deadline is enforced independently by the benchmark runner.
+shell_timeout_secs = 60
 parallel_tools = false
-strict_tool_parsing = true
+strict_tool_parsing = false
 
-[memory]
-backend = "none"
-auto_save = false
 """
 
     def tool_policy(self) -> dict:
         return {
-            "allowed": ZEROCLAW_ALLOWED_TOOLS,
+            "registry": "pinned-native-unfiltered",
+            "noninteractive_auto_approve": list(ZEROCLAW_NONINTERACTIVE_APPROVALS),
             "workspace_only": True,
-            "web": False,
-            "memory": False,
-            "delegation": False,
+            "network_mode": self.network_mode,
+            "memory": "official-clean-ephemeral",
+            "delegation": "native-risk-profile-default",
             "schema_version": 3,
             "state": "throwaway-container",
+            "skills": self.skills_mode,
+        }
+
+    def effective_config(self) -> dict:
+        value = super().effective_config()
+        value["harness_config"] = {
+            "format": "toml",
+            "content": self._benchmark_config_toml(),
+        }
+        return value
+
+    def runtime_info(self) -> dict:
+        from agent_formalizer.provenance import git_info, run_text
+
+        version = run_text([str(ZEROCLAW_BIN), "--version"])
+        if ZEROCLAW_VERSION_NOTE_PATH.is_file():
+            note = ZEROCLAW_VERSION_NOTE_PATH.read_text(encoding="utf-8").strip()
+            if note:
+                version = f"{version} ({note})"
+        return {
+            **super().runtime_info(),
+            "binary": str(ZEROCLAW_BIN),
+            "version": version,
+            "source": git_info(ZEROCLAW_SOURCE_PATH),
+        }
+
+    def skills_info(self) -> dict:
+        from agent_formalizer.provenance import file_manifest
+
+        paths = [
+            path for path in ZEROCLAW_SOURCE_PATH.glob("shared/skills/**/*")
+            if "__pycache__" not in path.parts and path.suffix != ".pyc"
+        ]
+        return {
+            "mode": self.skills_mode,
+            "baseline": "pinned-official-clean-install-with-no-installed-skills",
+            "manifest": file_manifest(paths, root=ZEROCLAW_SOURCE_PATH),
         }
 
     def send_task(
@@ -166,11 +222,8 @@ auto_save = false
             "ZEROCLAW_providers__models__"
             f"{self.zeroclaw_provider}__benchmark__api_key"
         )
-        provider_key = (
-            "vertex-auth-via-x-goog-api-key"
-            if self.is_google_vertex
-            else self.resolved_api_key() or ""
-        )
+        # The real provider credential exists only in the gateway sidecar.
+        provider_key = "benchmark-gateway-placeholder"
         cmd = ["docker", "exec", "-w", CONTAINER_WORKSPACE]
         cmd.extend(
             self.docker_exec_env_args(
@@ -196,9 +249,10 @@ auto_save = false
         )
         return run_captured_agent(
             cmd,
-            timeout=self.timeout,
+            timeout=self.remaining_timeout(),
             stdout_path=stdout_path,
             stderr_path=stderr_path,
+            container_name=container_name,
         )
 
     def collect_usage(self, workspace, artifact_dir: Path) -> dict:
