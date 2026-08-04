@@ -46,7 +46,10 @@ from agent_formalizer.config import (
     api_key_env_for_model,
     provider_for_model,
 )
-from agent_formalizer.claws.base import BaseClawAdapter
+from agent_formalizer.claws.base import (
+    BaseClawAdapter,
+    run_process_with_attempt_clock,
+)
 from agent_formalizer.claws.common import provider_spec, google_vertex_settings, split_model_id
 from agent_formalizer.result_types import AgentResult
 
@@ -77,7 +80,7 @@ class OpenClawAdapter(BaseClawAdapter):
         self,
         model: str,
         timeout: int,
-        max_turns: int | None = None,
+        max_action_steps: int = 200,
         *,
         tools_profile: str = "coding",
         tools_allow: list[str] | None = None,
@@ -85,6 +88,7 @@ class OpenClawAdapter(BaseClawAdapter):
         model_api_keys: dict[str, str] | None = None,
         api_key: str | None = None,
         api_key_name: str | None = None,
+        credential_metadata: dict | None = None,
         provider_options: dict | None = None,
         max_model_calls: int = 50,
         allow_network: bool = False,
@@ -96,7 +100,7 @@ class OpenClawAdapter(BaseClawAdapter):
         super().__init__(
             model,
             timeout,
-            max_turns,
+            max_action_steps,
             max_model_calls=max_model_calls,
             allow_network=allow_network,
             network_mode=network_mode,
@@ -110,6 +114,7 @@ class OpenClawAdapter(BaseClawAdapter):
         self.model_api_keys = dict(model_api_keys or {})
         self._api_key = api_key
         self._api_key_name = api_key_name
+        self.credential_metadata = dict(credential_metadata or {})
         self.provider_options = dict(provider_options or {})
         self._config_lock = threading.Lock()
         OPENCLAW_BENCHMARK_STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -153,7 +158,7 @@ class OpenClawAdapter(BaseClawAdapter):
     def model_auth(self) -> dict:
         """Auth summary for trace/metadata (never includes the key value)."""
         env_var = self.api_key_env()
-        return {
+        value = {
             "model": self.model,
             "provider": self.provider,
             "api_base": f"http://{MODEL_GATEWAY_HOST}:{MODEL_GATEWAY_PORT}",
@@ -161,6 +166,9 @@ class OpenClawAdapter(BaseClawAdapter):
             "api_key_env": env_var,
             "api_key_present": bool(self._resolved_api_key()),
         }
+        if self.credential_metadata:
+            value["credential"] = dict(self.credential_metadata)
+        return value
 
     def validate_runtime(self) -> None:
         if not Path(OPENCLAW_NODE_BIN).is_file():
@@ -196,11 +204,6 @@ class OpenClawAdapter(BaseClawAdapter):
         if isinstance(config.get("agents"), dict):
             config["agents"] = {**config["agents"], "list": []}
         value["harness_config"] = config
-        value["turn_limit_enforcement"] = (
-            "model-call cap dominates OpenClaw loop"
-            if self.max_model_calls <= int(self.max_turns or self.max_model_calls)
-            else "outer timeout plus model-call cap"
-        )
         return value
 
     def runtime_info(self) -> dict:
@@ -606,11 +609,21 @@ class OpenClawAdapter(BaseClawAdapter):
         timed_out = False
 
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=self.remaining_timeout(),
+            clock = self.current_attempt_clock()
+            result = (
+                run_process_with_attempt_clock(
+                    cmd,
+                    clock=clock,
+                    capture_output=True,
+                    text=True,
+                )
+                if clock is not None
+                else subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.remaining_timeout(),
+                )
             )
             exit_code = result.returncode
             stdout = result.stdout
@@ -684,7 +697,7 @@ class OpenClawAdapter(BaseClawAdapter):
                 agent_meta.get("sessionFile"), self._state_dir
             ),
             duration_seconds=round(duration, 1),
-            usage=agent_meta.get("lastCallUsage", {}),
+            usage=_normalize_openclaw_usage(agent_meta),
             final_text=final_text,
         )
 
@@ -986,6 +999,41 @@ def _openclaw_agent_id_from_session_file(
         return parts[idx + 1]
     except (ValueError, IndexError):
         return None
+
+
+def _normalize_openclaw_usage(agent_meta: object) -> dict:
+    """Return aggregate run usage rather than OpenClaw's last-call snapshot.
+
+    OpenClaw exposes both ``agentMeta.usage`` (aggregate) and
+    ``agentMeta.lastCallUsage``.  Its aggregate ``total`` field may retain the
+    last call's total, so recompute it from the disjoint token buckets.
+    """
+    if not isinstance(agent_meta, dict):
+        return {}
+    aggregate = agent_meta.get("usage")
+    if not isinstance(aggregate, dict) or not any(
+        aggregate.get(key) for key in ("input", "output", "cacheRead", "cacheWrite")
+    ):
+        aggregate = agent_meta.get("lastCallUsage")
+    if not isinstance(aggregate, dict):
+        return {}
+
+    def token(name: str) -> int:
+        try:
+            return max(0, int(aggregate.get(name, 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    usage = {
+        "input": token("input"),
+        "output": token("output"),
+        "cacheRead": token("cacheRead"),
+        "cacheWrite": token("cacheWrite"),
+    }
+    if not any(usage.values()):
+        return {}
+    usage["total"] = sum(usage.values())
+    return usage
 
 
 def _truncate_text(value: str, max_len: int = 500) -> str:

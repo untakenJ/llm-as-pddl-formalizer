@@ -10,6 +10,8 @@ replaced with the PDDL-formalizer equivalents.
 
 from __future__ import annotations
 
+import hashlib
+import uuid
 from pathlib import Path
 
 from agent_formalizer.benchmark_profile import DEFAULT_BENCHMARK_PROFILE
@@ -52,6 +54,10 @@ PREDICTION_TYPE = "llm-as-formalizer-agent"
 # Node.js binary (OpenClaw bind-mounts the host node into the container).
 BASE_IMAGE = "pddl-agent-base:latest"
 
+# Keep resource names comfortably below Docker's implementation-specific
+# limits.  Uniqueness is carried in a fixed suffix, never in a truncatable tail.
+DOCKER_RESOURCE_NAME_MAX = 120
+
 # Working directory inside the container where the agent authors PDDL files.
 CONTAINER_WORKSPACE = "/workspace"
 
@@ -75,8 +81,8 @@ DATASETS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Per-claw defaults. Shared model and budgets come from benchmark_profile.json;
-# adapter-only settings stay here.
+# Per-claw defaults. Shared model and budgets come from the default profile in
+# benchmark_profiles/; adapter-only settings stay here.
 # ---------------------------------------------------------------------------
 # OpenClaw keeps its official clean ``coding`` profile unless a condition
 # explicitly provides a narrow tools override.
@@ -85,7 +91,7 @@ CLAW_DEFAULTS: dict[str, dict] = {
     "openclaw": {
         "model": DEFAULT_BENCHMARK_PROFILE.default_model,
         "timeout": DEFAULT_BENCHMARK_PROFILE.timeout,
-        "max_turns": DEFAULT_BENCHMARK_PROFILE.max_turns,
+        "max_action_steps": DEFAULT_BENCHMARK_PROFILE.max_action_steps,
         "max_model_calls": DEFAULT_BENCHMARK_PROFILE.max_model_calls,
         "allow_network": DEFAULT_BENCHMARK_PROFILE.allow_network,
         "skills_mode": DEFAULT_BENCHMARK_PROFILE.harness("openclaw").get(
@@ -96,16 +102,14 @@ CLAW_DEFAULTS: dict[str, dict] = {
         ),
         "tools_allow": None,
         "tools_deny": None,
-        # Per-model API-key env override (model id -> env var name). Models not
-        # listed fall back to PROVIDER_API_KEY_ENV by provider prefix. This is
-        # how harness / model / API-key env are decoupled and freely combined,
-        # e.g. {"openai/gpt-5.4-mini": "OPENAI_API_KEY_BENCH"}.
+        # Programmatic compatibility override. CLI runs use the named,
+        # provider/model-scoped registry in credential_profiles.json.
         "model_api_keys": {},
     },
     "hermes": {
         "model": DEFAULT_BENCHMARK_PROFILE.default_model,
         "timeout": DEFAULT_BENCHMARK_PROFILE.timeout,
-        "max_turns": DEFAULT_BENCHMARK_PROFILE.max_turns,
+        "max_action_steps": DEFAULT_BENCHMARK_PROFILE.max_action_steps,
         "max_model_calls": DEFAULT_BENCHMARK_PROFILE.max_model_calls,
         "allow_network": DEFAULT_BENCHMARK_PROFILE.allow_network,
         "skills_mode": DEFAULT_BENCHMARK_PROFILE.harness("hermes").get(
@@ -116,7 +120,7 @@ CLAW_DEFAULTS: dict[str, dict] = {
     "nanobot": {
         "model": DEFAULT_BENCHMARK_PROFILE.default_model,
         "timeout": DEFAULT_BENCHMARK_PROFILE.timeout,
-        "max_turns": DEFAULT_BENCHMARK_PROFILE.max_turns,
+        "max_action_steps": DEFAULT_BENCHMARK_PROFILE.max_action_steps,
         "max_model_calls": DEFAULT_BENCHMARK_PROFILE.max_model_calls,
         "allow_network": DEFAULT_BENCHMARK_PROFILE.allow_network,
         "skills_mode": DEFAULT_BENCHMARK_PROFILE.harness("nanobot").get(
@@ -127,7 +131,7 @@ CLAW_DEFAULTS: dict[str, dict] = {
     "zeroclaw": {
         "model": DEFAULT_BENCHMARK_PROFILE.default_model,
         "timeout": DEFAULT_BENCHMARK_PROFILE.timeout,
-        "max_turns": DEFAULT_BENCHMARK_PROFILE.max_turns,
+        "max_action_steps": DEFAULT_BENCHMARK_PROFILE.max_action_steps,
         "max_model_calls": DEFAULT_BENCHMARK_PROFILE.max_model_calls,
         "allow_network": DEFAULT_BENCHMARK_PROFILE.allow_network,
         "skills_mode": DEFAULT_BENCHMARK_PROFILE.harness("zeroclaw").get(
@@ -138,12 +142,21 @@ CLAW_DEFAULTS: dict[str, dict] = {
     "generic": {
         "model": DEFAULT_BENCHMARK_PROFILE.default_model,
         "timeout": DEFAULT_BENCHMARK_PROFILE.timeout,
-        "max_turns": DEFAULT_BENCHMARK_PROFILE.max_turns,
+        "max_action_steps": DEFAULT_BENCHMARK_PROFILE.max_action_steps,
         "max_model_calls": DEFAULT_BENCHMARK_PROFILE.max_model_calls,
         "allow_network": DEFAULT_BENCHMARK_PROFILE.allow_network,
         "skills_mode": DEFAULT_BENCHMARK_PROFILE.harness("generic").get(
             "skills_mode", "official"
         ),
+        "model_api_keys": {},
+    },
+    "minimum": {
+        "model": DEFAULT_BENCHMARK_PROFILE.default_model,
+        "timeout": DEFAULT_BENCHMARK_PROFILE.timeout,
+        "max_action_steps": DEFAULT_BENCHMARK_PROFILE.max_action_steps,
+        "max_model_calls": DEFAULT_BENCHMARK_PROFILE.max_model_calls,
+        "allow_network": DEFAULT_BENCHMARK_PROFILE.allow_network,
+        "skills_mode": "none",
         "model_api_keys": {},
     },
 }
@@ -159,11 +172,10 @@ DEFAULT_AGENT_TIMEOUT = DEFAULT_BENCHMARK_PROFILE.timeout
 # CI-compatible fallback. It never imports a harness's personal credential
 # store or passes the dotenv file into an agent container.
 #
-# Each model resolves its API key from one environment variable. By default the
-# variable is chosen by the model's provider (first path segment of the model
-# id; e.g. "openai/gpt-5.4-mini" -> provider "openai"). A per-harness
-# ``model_api_keys`` mapping overrides this per model, so harness, model id, and
-# API-key env var stay fully decoupled and freely combinable.
+# Direct adapter construction retains a one-variable provider default and an
+# optional ``model_api_keys`` override for compatibility. Runner/sweep commands
+# instead resolve a named credential profile, which binds the key reference to
+# provider availability settings before constructing the adapter.
 PROVIDER_API_KEY_ENV: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
@@ -271,10 +283,59 @@ def problem_output_dir(out_root: Path, domain: str, data: str, model_label: str,
     return out_root / PREDICTION_TYPE / domain / data / model_label / problem
 
 
-def container_name(claw_name: str, domain: str, data: str, model_label: str,
-                   problem: str) -> str:
-    """Stable, collision-resistant container name for one problem run."""
-    raw = f"{claw_name}-pddl-{domain}-{data}-{model_label}-{problem}"
-    # Docker names allow [a-zA-Z0-9][a-zA-Z0-9_.-]*
-    safe = "".join(c if (c.isalnum() or c in "_.-") else "-" for c in raw)
-    return safe[:120]
+def new_runtime_id() -> str:
+    """Return an opaque identifier for one live execution environment."""
+    return uuid.uuid4().hex[:16]
+
+
+def _safe_docker_name(value: str) -> str:
+    """Sanitize ``value`` to Docker's ASCII resource-name character set."""
+    safe = "".join(
+        c if c.isascii() and (c.isalnum() or c in "_.-") else "-"
+        for c in value
+    )
+    safe = safe.lstrip("_.-")
+    return safe or "pddl"
+
+
+def _bounded_docker_name(readable: str, unique_suffix: str) -> str:
+    """Fit a readable name while preserving the complete unique suffix."""
+    safe = _safe_docker_name(readable)
+    suffix = "-" + _safe_docker_name(unique_suffix)
+    prefix_limit = DOCKER_RESOURCE_NAME_MAX - len(suffix)
+    if prefix_limit < 1:
+        raise ValueError("Docker resource unique suffix is too long")
+    prefix = safe[:prefix_limit].rstrip("_.-") or "pddl"
+    return f"{prefix}{suffix}"
+
+
+def container_name(
+    claw_name: str,
+    domain: str,
+    data: str,
+    model_label: str,
+    problem: str,
+    *,
+    runtime_id: str | None = None,
+) -> str:
+    """Return a readable, per-execution unique Docker container name.
+
+    The logical-identity digest distinguishes tasks whose readable prefixes are
+    truncated.  The runtime token distinguishes concurrent executions of the
+    same logical task in separate sweeps.
+    """
+    logical = f"{claw_name}-pddl-{domain}-{data}-{model_label}-{problem}"
+    readable = f"{claw_name}-pddl-{domain}-{data}-{problem}"
+    logical_digest = hashlib.sha256(logical.encode()).hexdigest()[:10]
+    token = runtime_id or new_runtime_id()
+    runtime_digest = hashlib.sha256(token.encode()).hexdigest()[:16]
+    return _bounded_docker_name(
+        readable,
+        f"{logical_digest}-{runtime_digest}",
+    )
+
+
+def related_docker_resource_name(container: str, role: str) -> str:
+    """Derive a unique sidecar/network name without dropping container entropy."""
+    parent_digest = hashlib.sha256(container.encode()).hexdigest()[:16]
+    return _bounded_docker_name(container, f"{parent_digest}-{role}")

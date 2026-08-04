@@ -66,8 +66,13 @@ def _http_json(
     *,
     body: dict | None = None,
     timeout: float = REQUEST_TIMEOUT_SECONDS,
-) -> tuple[dict | None, str | None, int | None]:
-    """Return ``(payload, error_message, http_status)``."""
+) -> tuple[dict | None, str | None, int | None, str | None]:
+    """Return ``(payload, error_message, http_status, response_body)``.
+
+    ``response_body`` is populated only when the response cannot be represented
+    as a JSON object.  This preserves upstream diagnostics without duplicating
+    successful or structured error payloads in the caller's audit record.
+    """
     data = None
     headers = {"Accept": "application/json"}
     if body is not None:
@@ -84,22 +89,37 @@ def _http_json(
         try:
             payload = json.loads(raw) if raw else {}
         except json.JSONDecodeError:
-            return None, f"HTTP {status} with non-JSON body", status
+            return None, f"HTTP {status} with non-JSON body", status, raw
         if isinstance(payload, dict):
-            return payload, None, status
-        return None, f"expected a JSON object, got {type(payload).__name__}", status
+            return payload, None, status, None
+        return (
+            None,
+            f"expected a JSON object, got {type(payload).__name__}",
+            status,
+            raw,
+        )
     except urllib.error.URLError as exc:
-        return None, f"request failed ({type(exc).__name__}: {exc})", None
+        return None, f"request failed ({type(exc).__name__}: {exc})", None, None
     except TimeoutError as exc:
-        return None, f"request failed (TimeoutError: {exc})", None
+        return None, f"request failed (TimeoutError: {exc})", None, None
 
     try:
         payload = json.loads(raw) if raw else {}
     except json.JSONDecodeError as exc:
-        return None, f"response was not valid JSON ({type(exc).__name__}: {exc})", status
+        return (
+            None,
+            f"response was not valid JSON ({type(exc).__name__}: {exc})",
+            status,
+            raw,
+        )
     if not isinstance(payload, dict):
-        return None, f"expected a JSON object, got {type(payload).__name__}", status
-    return payload, None, status
+        return (
+            None,
+            f"expected a JSON object, got {type(payload).__name__}",
+            status,
+            raw,
+        )
+    return payload, None, status, None
 
 
 def _task_url(task_reference: str, base_url: str) -> str:
@@ -152,7 +172,7 @@ def solve_pddl(
         return solver_failure("validate", "problem PDDL is empty", solver=solver)
 
     submit_url = f"{base_url.rstrip('/')}/package/{solver}/solve"
-    submit_payload, error, status = _http_json(
+    submit_payload, error, status, response_body = _http_json(
         "POST",
         submit_url,
         body={"domain": domain_file, "problem": problem_file},
@@ -165,6 +185,7 @@ def solve_pddl(
             solver=solver,
             http_status=status,
             payload=submit_payload,
+            response_body=response_body,
         )
     assert submit_payload is not None
     if status is not None and not 200 <= status < 300:
@@ -192,7 +213,7 @@ def solve_pddl(
     task_url = _task_url(task_reference, base_url)
 
     while True:
-        terminal_payload, error, status = _http_json(
+        terminal_payload, error, status, response_body = _http_json(
             "POST",
             task_url,
             timeout=timeout_seconds,
@@ -205,6 +226,7 @@ def solve_pddl(
                 task_url=task_url,
                 http_status=status,
                 payload=terminal_payload,
+                response_body=response_body,
             )
         assert terminal_payload is not None
         if status is not None and not 200 <= status < 300:

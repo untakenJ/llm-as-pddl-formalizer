@@ -29,7 +29,6 @@ from pathlib import Path
 from agent_formalizer.claws import CLAWS
 from agent_formalizer.benchmark_profile import (
     load_benchmark_profile,
-    with_google_vertex_project,
 )
 from agent_formalizer.config import (
     CLAW_DEFAULTS,
@@ -38,7 +37,10 @@ from agent_formalizer.config import (
     agent_model_label,
     sanitize_model_name,
 )
-from agent_formalizer.util import read_named_setting
+from agent_formalizer.credentials import (
+    DEFAULT_CREDENTIAL_PROFILES_PATH,
+    load_credential_registry,
+)
 from batch_utils import format_problem_name
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -65,6 +67,9 @@ class AgentBatchResult:
     domain: str
     dataset: str
     pddl_completed: int = 0
+    valid_attempts: int = 0
+    invalid_attempts: int = 0
+    generation_failures: int = 0
     solvability: str = "-"
     correctness: str = "-"
     total: int = 0
@@ -161,6 +166,56 @@ def _count_pddl_outputs(out_dir: Path, domain: str, dataset: str, model_label: s
     return count
 
 
+def _valid_completion_indices(
+    out_dir: Path,
+    domain: str,
+    dataset: str,
+    model_label: str,
+    indices: list[int],
+) -> list[int]:
+    valid: list[int] = []
+    for index in indices:
+        problem = format_problem_name(index)
+        path = _agent_output_dir(
+            out_dir, domain, dataset, model_label, problem
+        ) / "completion.json"
+        try:
+            value = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError, TypeError):
+            continue
+        if value.get("complete") is True and value.get("attempt_valid") is True:
+            valid.append(index)
+    return valid
+
+
+def _invalid_attempt_count(
+    out_dir: Path,
+    domain: str,
+    dataset: str,
+    model_label: str,
+    indices: list[int],
+) -> int:
+    count = 0
+    for index in indices:
+        problem = format_problem_name(index)
+        directory = _agent_output_dir(out_dir, domain, dataset, model_label, problem)
+        completion_path = directory / "completion.json"
+        try:
+            completion = json.loads(completion_path.read_text())
+        except (OSError, json.JSONDecodeError, TypeError):
+            completion = {}
+        if completion.get("complete") is True and completion.get("attempt_valid") is True:
+            continue
+        path = directory / "invalid_attempt.json"
+        try:
+            value = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError, TypeError):
+            continue
+        if value.get("attempt_valid") is False and value.get("status") == "infra_invalid":
+            count += 1
+    return count
+
+
 def _formalize_indices_for_resume(
     out_dir: Path,
     domain: str,
@@ -215,7 +270,7 @@ def run_agent_pipeline(
     solver_workers: int,
     val_workers: int,
     timeout: int | None,
-    max_turns: int | None,
+    max_action_steps: int | None,
     max_model_calls: int | None,
     network_mode: str | None,
     attempts_per_case: int | None,
@@ -231,6 +286,8 @@ def run_agent_pipeline(
     tools_allow: str | None,
     tools_deny: str | None,
     resume: bool,
+    credential_profile: str | None = None,
+    credential_profiles_file: str = str(DEFAULT_CREDENTIAL_PROFILES_PATH),
 ) -> AgentBatchResult:
     harness_overrides = None
     if claw == "openclaw" and any((tools_profile, tools_allow, tools_deny)):
@@ -245,7 +302,7 @@ def run_agent_pipeline(
         claw,
         model=model,
         timeout=timeout,
-        max_turns=max_turns,
+        max_action_steps=max_action_steps,
         max_model_calls=max_model_calls,
         network_mode=network_mode,
         attempts_per_case=attempts_per_case,
@@ -294,8 +351,8 @@ def run_agent_pipeline(
         ]
         if timeout is not None:
             cmd.extend(["--timeout", str(timeout)])
-        if max_turns is not None:
-            cmd.extend(["--max_turns", str(max_turns)])
+        if max_action_steps is not None:
+            cmd.extend(["--max-action-steps", str(max_action_steps)])
         if max_model_calls is not None:
             cmd.extend(["--max-model-calls", str(max_model_calls)])
         if network_mode is not None:
@@ -312,6 +369,9 @@ def run_agent_pipeline(
             )
         if benchmark_config:
             cmd.extend(["--benchmark-config", benchmark_config])
+        if credential_profile:
+            cmd.extend(["--credential-profile", credential_profile])
+        cmd.extend(["--credential-profiles-file", credential_profiles_file])
         if api_key_env:
             cmd.extend(["--api-key-env", api_key_env])
         cmd.extend(["--secrets-env-file", secrets_env_file])
@@ -328,7 +388,9 @@ def run_agent_pipeline(
             cmd.extend(["--tools-deny", tools_deny])
 
         rc, _, _, elapsed, logs = _run(cmd, "formalize", batch_log_dir)
-        res.stages["formalize"] = "ok" if rc == 0 else "FAIL"
+        res.stages["formalize"] = (
+            "ok" if rc == 0 else "infra_invalid" if rc == 2 else "FAIL"
+        )
         res.durations["formalize"] = elapsed
         res.logs["formalize"] = logs["stderr"]
     elif "formalize" in stages:
@@ -339,17 +401,42 @@ def run_agent_pipeline(
         _count_pddl_outputs(out_dir, domain, dataset, label, indices)
         for label in evaluation_labels
     )
+    valid_indices_by_label = {
+        label: _valid_completion_indices(
+            out_dir, domain, dataset, label, indices
+        )
+        for label in evaluation_labels
+    }
+    res.valid_attempts = sum(len(value) for value in valid_indices_by_label.values())
+    res.invalid_attempts = sum(
+        _invalid_attempt_count(out_dir, domain, dataset, label, indices)
+        for label in evaluation_labels
+    )
+    res.generation_failures = max(0, res.valid_attempts - res.pddl_completed)
     expected_attempts = len(indices) * attempt_count
-    if "formalize" in stages and res.pddl_completed != expected_attempts:
-        missing = expected_attempts - res.pddl_completed
-        res.notes = f"{missing} valid attempt(s) did not generate delivery files"
+    if "formalize" in stages:
+        pending = max(0, expected_attempts - res.valid_attempts - res.invalid_attempts)
+        notes = []
+        if res.invalid_attempts:
+            notes.append(f"{res.invalid_attempts} infrastructure-invalid attempt(s)")
+        if res.generation_failures:
+            notes.append(
+                f"{res.generation_failures} valid attempt(s) did not generate delivery files"
+            )
+        if pending:
+            notes.append(f"{pending} attempt(s) have no terminal record")
+        res.notes = "; ".join(notes)
 
     if "solve" in stages:
         solve_rc = 0
         solve_elapsed = 0.0
         for label in evaluation_labels:
+            valid_indices = valid_indices_by_label[label]
+            if not valid_indices:
+                res.logs[f"solve:{label}"] = "skipped: no valid attempts"
+                continue
             common = _common_eval_flags(
-                label, domain, dataset, indices, out_dir, solver_workers
+                label, domain, dataset, valid_indices, out_dir, solver_workers
             )
             cmd = [
                 PYTHON,
@@ -363,7 +450,13 @@ def run_agent_pipeline(
             solve_rc = solve_rc or rc
             solve_elapsed += elapsed
             res.logs[f"solve:{label}"] = logs["stderr"]
-        res.stages["solve"] = "ok" if solve_rc == 0 else "FAIL"
+        res.stages["solve"] = (
+            "ok"
+            if solve_rc == 0 and res.valid_attempts > 0
+            else "incomplete"
+            if res.valid_attempts == 0 and res.invalid_attempts > 0
+            else "FAIL"
+        )
         res.durations["solve"] = solve_elapsed
 
     if "val" in stages:
@@ -373,8 +466,12 @@ def run_agent_pipeline(
         correctness = 0
         total = 0
         for label in evaluation_labels:
+            valid_indices = valid_indices_by_label[label]
+            if not valid_indices:
+                res.logs[f"val:{label}"] = "skipped: no valid attempts"
+                continue
             common = _common_eval_flags(
-                label, domain, dataset, indices, out_dir, val_workers
+                label, domain, dataset, valid_indices, out_dir, val_workers
             )
             cmd = [
                 PYTHON,
@@ -394,7 +491,13 @@ def run_agent_pipeline(
                 solvability += int(solv) if solv.isdigit() else 0
                 correctness += int(corr) if corr.isdigit() else 0
                 total += row_total
-        res.stages["val"] = "ok" if val_rc == 0 else "FAIL"
+        res.stages["val"] = (
+            "ok"
+            if val_rc == 0 and res.valid_attempts > 0
+            else "incomplete"
+            if res.valid_attempts == 0 and res.invalid_attempts > 0
+            else "FAIL"
+        )
         res.durations["val"] = val_elapsed
         if val_rc == 0:
             res.solvability = str(solvability)
@@ -422,6 +525,7 @@ def write_summary(results: list[AgentBatchResult], out_dir: Path, run_meta: dict
         w = csv.writer(f)
         w.writerow([
             "claw", "model", "model_label", "domain", "dataset",
+            "valid_attempts", "invalid_attempts", "generation_failures",
             "pddl_completed", "solvability", "correctness", "total",
             "stage_status", "durations_sec", "indices", "notes",
         ])
@@ -430,6 +534,7 @@ def write_summary(results: list[AgentBatchResult], out_dir: Path, run_meta: dict
             durations = ", ".join(f"{k}={v:.1f}" for k, v in r.durations.items())
             w.writerow([
                 r.claw, r.model, r.model_label, r.domain, r.dataset,
+                r.valid_attempts, r.invalid_attempts, r.generation_failures,
                 r.pddl_completed, r.solvability, r.correctness, r.total,
                 stages, durations, ",".join(str(i) for i in r.indices), r.notes,
             ])
@@ -450,14 +555,15 @@ def write_summary(results: list[AgentBatchResult], out_dir: Path, run_meta: dict
             f"solver={run_meta['solver_workers']}, val={run_meta['val_workers']}"
         ),
         "",
-        "| claw | model | label | domain | dataset | PDDL | solvability | correctness | total | stages | durations | notes |",
-        "|---|---|---|---|---|---:|---:|---:|---:|---|---|---|",
+        "| claw | model | label | domain | dataset | valid | invalid | gen-fail | PDDL | solvability | correctness | total | stages | durations | notes |",
+        "|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for r in results:
         stages = "<br>".join(f"`{k}`={v}" for k, v in r.stages.items())
         durations = "<br>".join(f"`{k}`={v:.1f}s" for k, v in r.durations.items())
         lines.append(
             f"| {r.claw} | {r.model} | {r.model_label} | {r.domain} | {r.dataset} | "
+            f"{r.valid_attempts} | {r.invalid_attempts} | {r.generation_failures} | "
             f"{r.pddl_completed}/{len(r.indices)} | {r.solvability} | {r.correctness} | "
             f"{r.total} | {stages} | {durations} | {r.notes} |"
         )
@@ -498,6 +604,28 @@ def _freeze_study_profile(profile, out_dir: Path):
                 f"profile: {path}"
             )
     return load_benchmark_profile(path)
+
+
+def _freeze_credential_registry(registry, out_dir: Path):
+    """Freeze secret references for operational consistency, not identity."""
+    path = out_dir / "study_credential_profiles.json"
+    payload = json.dumps(registry.raw, indent=2, ensure_ascii=False) + "\n"
+    try:
+        with path.open("x") as stream:
+            stream.write(payload)
+    except FileExistsError:
+        try:
+            existing = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"existing frozen credential registry is unreadable: {path}"
+            ) from exc
+        if existing != registry.raw:
+            raise ValueError(
+                "output directory already contains a different frozen credential "
+                f"registry: {path}"
+            )
+    return load_credential_registry(path)
 
 
 def _sample_indices(index_start: int, index_end: int, samples: int | None, sample_seed: int) -> list[int]:
@@ -581,8 +709,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--val-workers", type=int, default=None)
     p.add_argument("--timeout", type=int, default=None,
                    help="agent timeout in seconds; omitted means claw default")
-    p.add_argument("--max_turns", type=int, default=None,
-                   help="agent max turns; omitted means claw default")
+    p.add_argument("--max-action-steps", type=int, default=None,
+                   help="maximum model_calls + tool_calls per problem; "
+                        "omitted means profile default")
     p.add_argument("--max-model-calls", type=int, default=None,
                    help="maximum model API calls per problem; omitted means profile default")
     p.add_argument("--network-mode", choices=("model_only", "controlled_web"),
@@ -591,12 +720,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-execution-tries", type=int, default=None)
     p.add_argument("--allow-final-message-recovery",
                    action=argparse.BooleanOptionalAction, default=None)
+    p.add_argument("--credential-profile", default=None,
+                   help="named credential profile applied to each compatible model; "
+                        "omitted uses each model/provider default")
+    p.add_argument("--credential-profiles-file",
+                   default=str(DEFAULT_CREDENTIAL_PROFILES_PATH),
+                   help="secret-free named credential registry")
     p.add_argument("--api-key-env", default=None,
-                   help="the one runner environment variable holding the model key")
+                   help="legacy key-variable override; prefer --credential-profile")
     p.add_argument("--secrets-env-file", default=str(DEFAULT_SECRETS_ENV_FILE),
                    help="runner-only dotenv source for explicitly named provider inputs")
     p.add_argument("--vertex-project-env", default="GOOGLE_CLOUD_PROJECT",
-                   help="dotenv/process variable used if a Vertex project is absent")
+                   help="legacy project variable fallback; prefer project in a named "
+                        "credential profile")
     p.add_argument("--image", default=None,
                    help="Docker image for the agent container")
     p.add_argument("--trace", action=argparse.BooleanOptionalAction, default=True)
@@ -614,6 +750,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    if args.credential_profile and args.api_key_env:
+        parser.error(
+            "--credential-profile cannot be combined with --api-key-env; "
+            "put the key/project binding in the named profile"
+        )
     args._benchmark_profile = load_benchmark_profile(args.benchmark_config)
 
     claws = _split_csv(args.claw)
@@ -627,19 +768,16 @@ def main() -> None:
     if not jobs:
         parser.error("--model must name at least one model when no claw default is available")
     models = sorted({model for _, model in jobs})
-    if (
-        any(model.startswith("google-vertex/") for model in models)
-        and args._benchmark_profile.raw["providers"]["google_vertex"]["project"] is None
-    ):
-        try:
-            vertex_project = read_named_setting(
-                args.vertex_project_env, args.secrets_env_file
-            )
-        except RuntimeError as exc:
-            parser.error(str(exc))
-        args._benchmark_profile = with_google_vertex_project(
-            args._benchmark_profile, vertex_project
+    try:
+        credential_registry = load_credential_registry(
+            args.credential_profiles_file
         )
+        credential_profiles_by_model = {
+            model: credential_registry.profile(model, args.credential_profile)[0]
+            for model in models
+        }
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if args.domain or args.data:
         if not (args.domain and args.data):
@@ -671,6 +809,9 @@ def main() -> None:
         args._benchmark_profile = _freeze_study_profile(
             args._benchmark_profile, out_dir
         )
+        credential_registry = _freeze_credential_registry(
+            credential_registry, out_dir
+        )
     except ValueError as exc:
         parser.error(str(exc))
     frozen_benchmark_config = str(args._benchmark_profile.path)
@@ -690,9 +831,14 @@ def main() -> None:
         "val_workers": val_workers,
         "resume": args.resume,
         "benchmark_profile": args._benchmark_profile.metadata(),
+        "credential_profiles": {
+            "by_model": credential_profiles_by_model,
+            "registry_sha256": credential_registry.sha256,
+            "experiment_identity": "excluded",
+        },
         "budget_overrides": {
             "timeout_seconds": args.timeout,
-            "max_turns": args.max_turns,
+            "max_action_steps": args.max_action_steps,
             "max_model_calls": args.max_model_calls,
         },
         "network_mode_override": args.network_mode,
@@ -743,13 +889,15 @@ def main() -> None:
                     solver_workers=solver_workers,
                     val_workers=val_workers,
                     timeout=args.timeout,
-                    max_turns=args.max_turns,
+                    max_action_steps=args.max_action_steps,
                     max_model_calls=args.max_model_calls,
                     network_mode=args.network_mode,
                     attempts_per_case=args.attempts_per_case,
                     max_execution_tries=args.max_execution_tries,
                     allow_final_message_recovery=args.allow_final_message_recovery,
                     benchmark_config=frozen_benchmark_config,
+                    credential_profile=args.credential_profile,
+                    credential_profiles_file=str(credential_registry.path),
                     api_key_env=args.api_key_env,
                     secrets_env_file=args.secrets_env_file,
                     vertex_project_env=args.vertex_project_env,

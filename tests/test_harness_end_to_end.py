@@ -11,6 +11,10 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from agent_formalizer.claws import get_adapter
+from agent_formalizer.benchmark_profile import (
+    BENCHMARK_PROFILES_DIR,
+    load_benchmark_profile,
+)
 from agent_formalizer.claws.generic import GenericAgentAdapter
 from agent_formalizer.claws.hermes import HermesAdapter
 from agent_formalizer.claws.nanobot import NanoBotAdapter
@@ -59,9 +63,23 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
         if body.get("stream"):
             self._stream_chat_completion(body.get("model", "gpt-4o-mini"))
         else:
-            self._json(self._chat_completion(body.get("model", "gpt-4o-mini")))
+            self._json(
+                self._chat_completion(body.get("model", "gpt-4o-mini"), body)
+            )
 
-    def _chat_completion(self, model: str) -> dict:
+    def _chat_completion(self, model: str, request: dict) -> dict:
+        prompt_text = json.dumps(request.get("messages", []))
+        content = (
+            json.dumps(
+                {
+                    "reasoning": "The mock files are internally consistent.",
+                    "domain_file": DOMAIN,
+                    "problem_file": PROBLEM,
+                }
+            )
+            if "Minimum Formalizer Agent" in prompt_text
+            else FINAL_TEXT
+        )
         return {
             "id": "chatcmpl-pddl-benchmark",
             "object": "chat.completion",
@@ -70,7 +88,7 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
             "choices": [
                 {
                     "index": 0,
-                    "message": {"role": "assistant", "content": FINAL_TEXT},
+                    "message": {"role": "assistant", "content": content},
                     "finish_reason": "stop",
                 }
             ],
@@ -156,26 +174,39 @@ class HarnessEndToEndTests(unittest.TestCase):
                 ),
                 TemporaryDirectory() as out_dir,
             ):
-                adapters = [
-                    get_adapter(
-                        name,
-                        model=(
-                            "openrouter/gpt-4o-mini"
-                            if name == "openclaw"
-                            else "openai/gpt-4o-mini"
-                        ),
-                        timeout=90,
-                        max_turns=3,
-                        max_model_calls=3,
-                        allow_final_message_recovery=True,
-                        api_key="local-test-key",
+                names = (
+                    [os.environ["E2E_ADAPTER"]]
+                    if os.environ.get("E2E_ADAPTER")
+                    else (
+                        "openclaw", "hermes", "nanobot", "zeroclaw", "generic",
+                        "minimum",
                     )
-                    for name in (
-                        [os.environ["E2E_ADAPTER"]]
-                        if os.environ.get("E2E_ADAPTER")
-                        else ("openclaw", "hermes", "nanobot", "zeroclaw", "generic")
+                )
+                minimum_profile = load_benchmark_profile(
+                    BENCHMARK_PROFILES_DIR / "native_safety_minimum_agent.json"
+                )
+                adapters = []
+                for name in names:
+                    adapters.append(
+                        get_adapter(
+                            name,
+                            model=(
+                                "openrouter/gpt-4o-mini"
+                                if name == "openclaw"
+                                else "openai/gpt-4o-mini"
+                            ),
+                            timeout=90,
+                            max_action_steps=3,
+                            max_model_calls=3,
+                            allow_final_message_recovery=(
+                                False if name == "minimum" else True
+                            ),
+                            api_key="local-test-key",
+                            benchmark_profile=(
+                                minimum_profile if name == "minimum" else None
+                            ),
+                        )
                     )
-                ]
                 for adapter in adapters:
                     with self.subTest(adapter=adapter.name):
                         request_start = len(FakeOpenAIHandler.seen_tool_sets)
@@ -219,6 +250,31 @@ class HarnessEndToEndTests(unittest.TestCase):
                         )
                         self.assertTrue((problem_dir / "metadata.json").is_file())
                         metadata = json.loads((problem_dir / "metadata.json").read_text())
+                        usage = metadata["agent"]["usage"]
+                        expected_calls = 2 if adapter.name == "minimum" else 1
+                        self.assertEqual(usage["input"], 10 * expected_calls)
+                        self.assertEqual(usage["output"], 10 * expected_calls)
+                        self.assertEqual(usage["cacheRead"], 0)
+                        self.assertEqual(usage["total"], 20 * expected_calls)
+                        if adapter.name == "nanobot":
+                            self.assertEqual(usage["providerTokens"], 20)
+                            self.assertEqual(usage["estimatedTokens"], 0)
+                            session_dir = (
+                                problem_dir
+                                / "executions"
+                                / "execution-001"
+                                / "sessions"
+                            )
+                            usage_report = json.loads(
+                                (session_dir / "usage.json").read_text()
+                            )
+                            self.assertEqual(
+                                usage_report["measurement"],
+                                "provider-reported",
+                            )
+                            self.assertTrue(
+                                (session_dir / "nanobot.jsonl").is_file()
+                            )
                         gateway = metadata["evidence"]["model_gateway_summary"]
                         self.assertGreater(gateway["model_calls"], 0)
                         self.assertLessEqual(
@@ -258,7 +314,18 @@ class HarnessEndToEndTests(unittest.TestCase):
                         )
                         tool_sets = FakeOpenAIHandler.seen_tool_sets[request_start:]
                         exposed = set().union(*tool_sets) if tool_sets else set()
-                        self.assertTrue(exposed, f"{adapter.name} sent no tool schema")
+                        if adapter.name == "minimum":
+                            self.assertFalse(exposed)
+                            self.assertEqual(gateway["tool_calls"], 0)
+                            self.assertEqual(gateway["model_calls"], 2)
+                            self.assertEqual(
+                                metadata["evidence"]["actions"]["fixed_solver_calls"],
+                                0,
+                            )
+                        else:
+                            self.assertTrue(
+                                exposed, f"{adapter.name} sent no tool schema"
+                            )
         finally:
             server.shutdown()
             server.server_close()

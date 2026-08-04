@@ -1,14 +1,22 @@
 # Agent harness PDDL formalizer
 
-This package benchmarks OpenClaw, Hermes, NanoBot, ZeroClaw, and GenericAgent
-as PDDL formalizers. Each harness receives the same canonical task prompt and
-must deliver `domain.pddl` and `problem.pddl` in `/workspace`. The runner copies
-those files byte-for-byte to the existing solver/VAL-compatible layout.
+This package benchmarks OpenClaw, Hermes, NanoBot, ZeroClaw, GenericAgent, and
+the benchmark-owned Minimum Formalizer Agent as PDDL formalizers. The five
+native harnesses run in Docker, receive the canonical workspace task prompt, and author
+`domain.pddl` and `problem.pddl` in `/workspace`. The minimum baseline instead
+uses a repository-owned standard-library host process, an explicit
+condition-owned conversation template, and a fixed reflection loop. It has no
+shell, file, plugin, memory, or model-selectable tool surface, so it does not
+start an agent container. Its adapter parses the last model response and writes
+the same two official files. The runner then copies official files byte-for-byte
+to the existing solver/VAL-compatible layout.
 
 ## Configuration model
 
-[`benchmark_profile.json`](benchmark_profile.json) implements the agreed four
-layers:
+Versioned, runnable profiles live together in
+[`benchmark_profiles/`](benchmark_profiles/). The default
+[`native_safety_native_clean.json`](benchmark_profiles/native_safety_native_clean.json)
+implements the agreed four layers:
 
 1. `native_clean`: the pinned harness's official clean initialization or a
    version-bound equivalent;
@@ -26,13 +34,20 @@ envelope/condition require cross-harness mappings. Every run records the config
 name, full resolved config, SHA-256, translation ledger, task hash, runtime
 closure, image identity, and validation evidence.
 
-The default `native-safety-v1` envelope uses:
+The default `native-safety-v4` envelope uses:
 
 - model: `google-vertex/gemini-3.1-flash-lite`;
-- harness execution deadline: 1800 seconds;
-- control-model request guard: 50 accepted attempts;
-- native iteration guard: 200 (recorded as not inherently cross-harness
-  comparable);
+- harness active-time deadline: 1800 seconds, excluding benchmark-owned
+  provider-transient recovery pauses;
+- control-model request guard: 50 logical calls; gateway physical retries do
+  not consume additional slots;
+- action-step guard: 200, where
+  `action_steps = model_calls + tool_calls`; all three values are recorded
+  separately by the common gateway;
+- fixed `external-transient-v2` routing: all upstream 429 plus safe
+  408/502/503/504,
+  selected CDN/overload statuses, and pre-response transport faults are hidden
+  and retried up to five times with `[1, 2, 4, 8, 16]` second backoff;
 - network: `model_only`;
 - interaction/state: noninteractive execution with per-attempt state and no
   personal or cross-attempt harness state;
@@ -67,6 +82,9 @@ of the relevant harness closures:
 - ZeroClaw 0.8.2, commit `42fa1971…`, and `Cargo.lock`;
 - OpenClaw `2026.6.10 (aa69b12)`, its installed Node distribution manifest,
   runtime payload, and 83 bundled skill assets.
+- Minimum Formalizer Agent's benchmark-owned, standard-library Python host
+  runtime entrypoint. It has no Docker dependency, external harness
+  distribution, native tools, skills, or memory.
 
 OpenClaw remains host-installed at the repository-defined paths, but its
 personal state/config is never used. A mismatch is an infra invalidator, not an
@@ -75,49 +93,89 @@ command uses the same image even if a tag later changes.
 
 ## Credentials and host environment
 
-The runner may read explicitly named provider inputs from the git-ignored
-`_private/.env` (or `--secrets-env-file`); it does not load that file into the
-process environment and does not import personal harness configuration. For a
-Vertex run these inputs are the selected API-key variable and, when absent from
-the profile, `GOOGLE_CLOUD_PROJECT`. An explicitly named process variable is a
-CI-compatible fallback. The API-key value is passed only to the model gateway.
-The dotenv file is never mounted, and harness processes and agent containers
-receive only placeholder credentials, so the agent cannot inspect the real key.
+[`credential_profiles.json`](credential_profiles.json) is the secret-free
+credential registry. Each named profile binds one API-key variable reference to
+the auxiliary provider values needed by that key. For Vertex this means the key
+and project are selected as one unit. Resolution uses an exact model default
+first, then a provider default; `models` on a profile constrains the model pool
+in which it may be selected.
+
+The bundled Vertex profiles are:
+
+- `google-vertex-default`: `GOOGLE_CLOUD_API_KEY` + `GOOGLE_CLOUD_PROJECT`;
+- `google-vertex-fallback`: `FALLBACK_GOOGLE_CLOUD_API_KEY` +
+  `FALLBACK_GOOGLE_CLOUD_PROJECT`.
+
+The runner reads only those referenced values from the git-ignored
+`_private/.env` (or `--secrets-env-file`); it does not load the file into the
+process environment or import personal harness configuration. Explicitly named
+process variables remain a CI-compatible fallback. The dotenv file is never
+mounted. A selected key is staged in a per-Gateway `0600` temporary secret file,
+so its plaintext does not appear in `docker run` arguments. Harness processes
+and agent containers receive only placeholder credentials and cannot mount or
+inspect the Gateway secret.
 
 Example:
 
 ```bash
-export BENCHMARK_MODEL_KEY='...'
-
 .venv/bin/python source/agent_formalizer/run_formalizer_agent.py \
   --claw hermes \
-  --model openai/gpt-5.4-mini \
-  --api-key-env BENCHMARK_MODEL_KEY \
+  --model google-vertex/gemini-3.1-flash-lite \
+  --credential-profile google-vertex-fallback \
   --domain blocksworld \
   --data Heavily_Templated_BlocksWorld-100 \
   --indices 1,2,3
 ```
 
-Vertex routing is materialized configuration, not ambient harness state. Set
-`providers.google_vertex.project` in a benchmark profile, pass
-`--vertex-project`, or define `GOOGLE_CLOUD_PROJECT` in the runner-only dotenv
-file. A sweep resolves this once and writes it into the frozen study profile so
-the route participates in the configuration hash. Location remains profile/CLI
-configuration and can be set with `--vertex-location`.
+Credential profiles are operational availability configuration, not experiment
+profiles. Their name, registry hash, variable references, and redacted route are
+recorded as provenance, but the key, project, location, and origin in a
+credential profile do not enter `resolved_config_sha256`, output labels, or
+resume identity. Switching primary/fallback therefore continues the same
+experiment. If a study intends region or endpoint to be an experimental
+variable, model it explicitly as a condition rather than changing credentials.
 
-Image, runtime path, provider base URL, tool policy, budget, and harness config
-environment variables are deliberately ignored. Use the benchmark profile or
-explicit CLI fields instead.
+`--api-key-env`, `--vertex-project`, `--vertex-project-env`, and
+`--vertex-location` remain compatibility overrides; new runs should add/select
+a named profile instead. A custom secret-free registry can be supplied with
+`--credential-profiles-file`.
+
+Image, runtime path, experimental provider route, tool policy, budget, and
+harness config environment variables are deliberately ignored. Use the
+benchmark/condition profile for experimental variables and a credential profile
+only for provider availability material.
 
 ## Network isolation
 
-The agent always stays on an internal Docker network. In `model_only`, only the
-fixed-route model gateway has egress. It:
+The five native agents always stay on an internal Docker network. The minimum
+agent instead runs benchmark-owned code on the host and is restricted by its
+code/config surface: it receives only a fixed per-attempt loopback gateway URL,
+has no arbitrary-I/O or tool API, and never receives the gateway credential.
+In `model_only`, the fixed-route model gateway is the only model transport. It:
 
 - accepts only the configured model and provider path;
 - replaces placeholder auth with the real gateway-only credential;
-- reserves at most the configured model-call budget;
-- records a secret-free per-request ledger.
+- reserves the configured logical model-call and total action-step budgets;
+- buffers successful model responses long enough to count structured OpenAI,
+  Anthropic, or Gemini tool calls before delivery, and rejects an entire tool
+  batch if it would exceed the action-step budget;
+- classifies errors by source and structured reason, so an upstream rate-limit
+  429 is retried while the gateway's own `benchmark_model_call_limit` 429 is
+  never retried;
+- pauses the agent container and active-time clock during transparent retry;
+- records every failed physical attempt and its selected backoff in a
+  secret-free logical/physical request ledger, including failures that later
+  recover.
+
+Invalid input and other model-addressable errors are returned unchanged so the
+native harness can adjust using its official policy. The gateway deliberately
+does not infer whether an upstream 429 means a short rate limit, long-term
+quota, or depleted funds: every upstream 429 uses the same bounded retry
+policy. If retries are exhausted, the execution is terminated as
+`attempt_valid=false`/`status=infra_invalid`; it is not counted as a
+formalization failure and no valid `completion.json` is written. A human uses
+the ledger to decide whether a persistent 429 warrants stopping or rerunning a
+case or batch.
 
 `controlled_web` is the optional web condition. It requires a non-empty hostname
 allowlist in the condition profile and adds an HTTP/HTTPS allowlist proxy. The
@@ -126,7 +184,16 @@ There is no unrestricted-egress mode.
 
 Before harness timing begins, required presets verify the runtime lock,
 environment/secret isolation, direct IPv4 and domain blocking, host-gateway and
-CONNECT rejection, model-gateway reachability, and the gateway call guard.
+CONNECT rejection, model-gateway reachability, and the gateway action-step
+guard.
+
+Each execution also receives a random runtime ID. Docker container names retain
+a digest of both the logical task and that runtime ID in a fixed suffix; model,
+web, and solver sidecars plus the internal network derive their own names from
+the complete parent name. Therefore two sweeps may execute the same
+claw/domain/problem concurrently without sharing names or removing one
+another's resources. The runtime ID is operational isolation metadata and does
+not change task, experiment, or resume identity.
 
 ## Native clean tools and skills
 
@@ -142,15 +209,25 @@ CONNECT rejection, model-gateway reachability, and the gateway call guard.
   an ephemeral clean workspace/state, and no adapter-level six-tool allowlist.
 - GenericAgent copies its official tool schemas unchanged, uses official
   repository plugins and a clean copy of pinned memory. Its official
-  `--no-user-tools` switch implements the noninteractive envelope, and the
-  version-bound wrapper implements the native-iteration guard.
+  `--no-user-tools` switch implements the noninteractive envelope.
+
+Harness-native internal stopping counters remain part of each pinned
+`native_clean` baseline. They are not rewritten into a shared `turns` metric;
+cross-harness accounting uses only the gateway-defined `model_calls`,
+`tool_calls`, and `action_steps`.
 
 ## Solver-as-tool condition
 
 The optional condition profile `solver-as-tool` keeps the same `native_clean` +
-`native-safety-v1` envelope as the default profile and only adds
+`native-safety-v4` envelope as the default profile and only adds
 `agent_tools: ["pddl_solver"]`. Tool implementations live under
 `agent_formalizer/tools/<tool>/` (solver is the first optional tool).
+
+The two bundled runnable profiles are:
+
+- `native_safety_native_clean.json`: the default native-clean baseline;
+- `native_safety_solver_as_tool.json`: the same baseline and envelope with the
+  `solver-as-tool` condition override.
 
 Every harness then receives:
 
@@ -168,11 +245,66 @@ internal network and does not get open internet.
 Use the frozen study profile:
 
 ```bash
-.venv/bin/python source/sweep_agent_pipeline.py \
+uv run python source/sweep_agent_pipeline.py \
   --benchmark-config source/agent_formalizer/benchmark_profiles/native_safety_solver_as_tool.json \
   --claw openclaw --model google-vertex/gemini-3.1-flash-lite \
   --index_start 1 --index_end 3 ...
 ```
+
+## Minimum Formalizer Agent baseline
+
+`minimum` is a separate adapter for a deliberately small, fixed control loop.
+It does not give the model a shell, file API, workspace view, or tool schema.
+It executes directly as a host Python subprocess; Docker image discovery,
+container startup, and container cleanup are skipped only for this adapter.
+The five native adapters retain their existing Docker path unchanged.
+The bundled
+[`native_safety_minimum_agent.json`](benchmark_profiles/native_safety_minimum_agent.json)
+profile explicitly defines:
+
+- `execution_backend: "host"` (the only supported minimum backend);
+- `reflection_count`: non-negative `n`; the run makes exactly `n + 1` logical
+  model calls;
+- `solver_feedback.enabled`: when true, exactly one fixed solver call occurs
+  before each reflection and its output is appended to the next user message;
+- `solver_feedback.solver` and `max_chars`;
+- `prompt_template.before_task`, `after_task`, and `reflection`, with a strict
+  placeholder allowlist.
+
+Every model response must be exactly one JSON object with string fields
+`reasoning`, `domain_file`, and `problem_file`. The complete assistant response,
+including its reasoning, remains in all later conversation context. A
+reflection returns complete replacement files, not a diff. Only the last
+response is eligible for official delivery; if that response cannot be parsed,
+the attempt produces no PDDL even if an earlier response was valid.
+
+Fixed solver observations are recorded as `fixed_solver_calls`, not as
+model-selected `tool_calls`; therefore the public metric remains
+`action_steps = model_calls + tool_calls`. Full per-call request messages,
+responses, parsed fields, usage, and solver observations are stored in
+`executions/execution-*/minimum_agent_session/transcript.json`.
+Normalized provider-measured token buckets and raw per-call usage are also
+stored in `minimum_agent_session/usage.json`, so cost reports can apply their
+chosen model price table without rerunning a case. Every model call is emitted
+to the ordinary `*_agent_steps.jsonl` trace with its phase, reflection index,
+complete response, parsed PDDL, provider usage, and `reasoning` field.
+
+Run the complete formalize/solver/VAL pipeline with:
+
+```bash
+uv run python source/sweep_agent_pipeline.py \
+  --benchmark-config source/agent_formalizer/benchmark_profiles/native_safety_minimum_agent.json \
+  --claw minimum \
+  --model google-vertex/gemini-3.1-flash-lite \
+  --domain barman \
+  --data Heavily_Templated_Barman-100 \
+  --index_start 1 --index_end 101
+```
+
+Copy the bundled profile to create a new versioned condition before changing
+`reflection_count`, solver feedback, or prompt text. The strict schema rejects
+unknown fields/placeholders and configurations whose `n + 1` calls exceed the
+resolved model/action budgets.
 
 ## Attempt semantics
 
@@ -180,7 +312,10 @@ The hierarchy is `case → fixed attempts → infra execution tries`.
 
 - `attempts_per_case` is fixed before execution (default 1).
 - Every non-infra outcome is a valid attempt: timeout, harness crash, missing
-  files, invalid PDDL, exhausted model budget, and provider errors included.
+  files, invalid PDDL, exhausted benchmark model/action budget, and errors
+  deliberately routed to the harness are included.
+- Gateway-confirmed external transient exhaustion is an invalid attempt,
+  distinct from a valid attempt that fails to generate PDDL.
 - Only predeclared infra invalidators may start another execution try.
 - There is no result-based retry and no best-of-N selection.
 - A matching atomic `completion.json` (config + task + runtime hashes) is the
@@ -205,7 +340,13 @@ output/llm-as-formalizer-agent/<domain>/<dataset>/<model_label>/<problem>/
 Empty delivery files count as generated; content correctness is evaluated later.
 When N>1, each attempt gets a solver-compatible label suffix
 `__attempt_001`, `__attempt_002`, and so on. `case.json` lists them, and the
-sweep runs every attempt through solver and VAL.
+sweep runs only attempts with a valid atomic completion through solver and VAL.
+Valid attempts without PDDL remain evaluation failures; infrastructure-invalid
+attempts are excluded from the solver/VAL denominator and reported separately.
+An invalid attempt has no `completion.json`; its root `invalid_attempt.json`,
+per-execution `infra_invalid.json`, `provider_infra_invalid.json`, and model-call
+ledger preserve the reason and physical retry history. A later manual rerun uses
+a new immutable execution number rather than overwriting that evidence.
 
 ## Evaluation and verification
 

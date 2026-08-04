@@ -198,6 +198,13 @@ def observe_runtime(adapter) -> dict[str, Any]:
             observed["source_payload_manifest_sha256"] = payload_digest
             observed["source_payload_count"] = payload_count
         return {**observed, **asset_identity}
+    if name == "minimum":
+        runtime = Path(__file__).with_name("minimum_agent_runtime.py")
+        return {
+            "runtime_kind": "benchmark-owned-python-stdlib",
+            "runtime_entrypoint_sha256": _file_sha256(runtime),
+            **asset_identity,
+        }
     if name == "openclaw":
         root = Path(OPENCLAW_MODULE_DIR)
         digest, count = _node_manifest(root)
@@ -250,14 +257,21 @@ def validate_runtime_lock(
     container_expected = lock["container"]
     container_mismatches = {}
     dockerfile = Path(__file__).with_name("docker") / "Dockerfile"
-    observed_dockerfile_sha256 = _file_sha256(dockerfile)
-    if observed_dockerfile_sha256 != container_expected["dockerfile_sha256"]:
+    container_required = adapter.name != "minimum"
+    observed_dockerfile_sha256 = (
+        _file_sha256(dockerfile) if container_required else None
+    )
+    if (
+        container_required
+        and observed_dockerfile_sha256 != container_expected["dockerfile_sha256"]
+    ):
         container_mismatches["dockerfile_sha256"] = {
             "expected": container_expected["dockerfile_sha256"],
             "observed": observed_dockerfile_sha256,
         }
     if (
-        container_image_id is not None
+        container_required
+        and container_image_id is not None
         and container_image_id != container_expected["image_id"]
     ):
         container_mismatches["image_id"] = {
@@ -274,6 +288,7 @@ def validate_runtime_lock(
         "observed": observed,
         "mismatches": mismatches,
         "container": {
+            "required": container_required,
             "expected": container_expected,
             "observed": {
                 "image_id": container_image_id,

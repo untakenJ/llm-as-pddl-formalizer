@@ -17,7 +17,7 @@ class AgentResult:
     success: bool
     timeout: bool
     exit_code: int
-    finish_reason: str  # "stop" / "timeout" / "error" / "empty"
+    finish_reason: str  # "stop" / "timeout" / "action_step_limit" / "error" / "empty"
     stdout_path: Path | None = None
     stderr_path: Path | None = None
     session_id: str | None = None
@@ -33,7 +33,7 @@ class FormalizerResult:
     """Outcome of formalizing one problem with an agent harness."""
 
     problem: str
-    status: str  # "ok" / "failed"
+    status: str  # "ok" / "failed" / "infra_invalid"
     domain_file: str | None = None
     problem_file: str | None = None
     extraction_source: str | None = None  # "file" / "parsed" / None

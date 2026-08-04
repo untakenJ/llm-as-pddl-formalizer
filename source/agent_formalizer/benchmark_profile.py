@@ -7,17 +7,26 @@ import json
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
+from string import Formatter
 from typing import Any
 
 
-DEFAULT_PROFILE_PATH = Path(__file__).with_name("benchmark_profile.json")
-KNOWN_HARNESSES = {"openclaw", "hermes", "nanobot", "zeroclaw", "generic"}
+BENCHMARK_PROFILES_DIR = Path(__file__).with_name("benchmark_profiles")
+DEFAULT_PROFILE_PATH = BENCHMARK_PROFILES_DIR / "native_safety_native_clean.json"
+KNOWN_HARNESSES = {
+    "openclaw",
+    "hermes",
+    "nanobot",
+    "zeroclaw",
+    "generic",
+    "minimum",
+}
 NETWORK_MODES = {"model_only", "controlled_web"}
 VALIDATION_PRESETS = {
     "runtime-lock",
     "network-model-only",
     "environment-isolation",
-    "model-call-guard",
+    "action-step-guard",
 }
 
 
@@ -53,6 +62,12 @@ def _keys(
 def _positive_int(value: Any, path: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"{path} must be a positive integer")
+    return value
+
+
+def _nonnegative_int(value: Any, path: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{path} must be a non-negative integer")
     return value
 
 
@@ -92,7 +107,7 @@ def _validate_profile(raw: dict[str, Any], path: Path) -> None:
         },
         path=str(path),
     )
-    if raw["schema_version"] != 2:
+    if raw["schema_version"] != 3:
         raise ValueError(f"Unsupported benchmark profile schema: {raw['schema_version']}")
     _string(raw["profile_id"], "profile_id")
 
@@ -109,6 +124,7 @@ def _validate_profile(raw: dict[str, Any], path: Path) -> None:
             "control_model",
             "safety_guards",
             "network",
+            "model_error_routing",
             "interaction",
             "state_isolation",
             "environment",
@@ -129,7 +145,7 @@ def _validate_profile(raw: dict[str, Any], path: Path) -> None:
         required={
             "harness_execution_timeout_seconds",
             "control_model_request_attempts",
-            "native_iterations",
+            "action_steps",
         },
         path="benchmark_envelope.safety_guards",
     )
@@ -142,10 +158,17 @@ def _validate_profile(raw: dict[str, Any], path: Path) -> None:
         "safety_guards.control_model_request_attempts",
     )
     _validate_budget(
-        guards["native_iterations"],
-        "safety_guards.native_iterations",
+        guards["action_steps"],
+        "safety_guards.action_steps",
         comparable_field=True,
     )
+    if (
+        guards["control_model_request_attempts"]["limit"]
+        > guards["action_steps"]["limit"]
+    ):
+        raise ValueError(
+            "control_model_request_attempts.limit cannot exceed action_steps.limit"
+        )
 
     network = _object(envelope["network"], "benchmark_envelope.network")
     _keys(
@@ -161,6 +184,54 @@ def _validate_profile(raw: dict[str, Any], path: Path) -> None:
         raise ValueError("controlled_web_allowlist must be a list of strings")
     if network["mode"] == "controlled_web" and not network["controlled_web_allowlist"]:
         raise ValueError("controlled_web requires a non-empty allowlist")
+
+    routing = _object(
+        envelope["model_error_routing"], "benchmark_envelope.model_error_routing"
+    )
+    _keys(
+        routing,
+        required={
+            "id",
+            "max_retries",
+            "backoff_seconds",
+            "max_retry_after_seconds",
+            "retryable_http_statuses",
+        },
+        path="benchmark_envelope.model_error_routing",
+    )
+    _string(routing["id"], "model_error_routing.id")
+    _positive_int(routing["max_retries"], "model_error_routing.max_retries")
+    if not isinstance(routing["backoff_seconds"], list) or not all(
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and value >= 0
+        for value in routing["backoff_seconds"]
+    ):
+        raise ValueError("model_error_routing.backoff_seconds must be non-negative numbers")
+    if len(routing["backoff_seconds"]) != routing["max_retries"]:
+        raise ValueError(
+            "model_error_routing.backoff_seconds must contain one value per retry"
+        )
+    if (
+        isinstance(routing["max_retry_after_seconds"], bool)
+        or not isinstance(routing["max_retry_after_seconds"], (int, float))
+        or routing["max_retry_after_seconds"] < 0
+    ):
+        raise ValueError(
+            "model_error_routing.max_retry_after_seconds must be non-negative"
+        )
+    statuses = routing["retryable_http_statuses"]
+    if not isinstance(statuses, list) or not statuses or not all(
+        isinstance(status, int)
+        and not isinstance(status, bool)
+        and 400 <= status <= 599
+        for status in statuses
+    ):
+        raise ValueError(
+            "model_error_routing.retryable_http_statuses must be HTTP error codes"
+        )
+    if len(set(statuses)) != len(statuses):
+        raise ValueError("model_error_routing.retryable_http_statuses must be unique")
 
     interaction = _object(envelope["interaction"], "benchmark_envelope.interaction")
     _keys(interaction, required={"mode"}, path="benchmark_envelope.interaction")
@@ -183,7 +254,7 @@ def _validate_profile(raw: dict[str, Any], path: Path) -> None:
     environment = _object(envelope["environment"], "benchmark_envelope.environment")
     _keys(environment, required={"inherit", "fixed"}, path="environment")
     if environment["inherit"] != []:
-        raise ValueError("environment.inherit must be empty for native-safety-v1")
+        raise ValueError("environment.inherit must be empty for native-safety-v4")
     if not isinstance(environment["fixed"], dict) or not all(
         isinstance(k, str) and isinstance(v, str)
         for k, v in environment["fixed"].items()
@@ -266,6 +337,25 @@ def _validate_profile(raw: dict[str, Any], path: Path) -> None:
         isinstance(item, str) and item for item in retry["invalidators"]
     ):
         raise ValueError("infra_retry.invalidators must be a list of strings")
+    minimum_agent = condition["overrides"].get("minimum_agent")
+    if minimum_agent is not None:
+        required_calls = int(minimum_agent["reflection_count"]) + 1
+        if required_calls > guards["control_model_request_attempts"]["limit"]:
+            raise ValueError(
+                "minimum_agent reflection_count + 1 exceeds the profile model-call guard"
+            )
+        if required_calls > guards["action_steps"]["limit"]:
+            raise ValueError(
+                "minimum_agent reflection_count + 1 exceeds the profile action-step guard"
+            )
+        if (
+            minimum_agent["solver_feedback"]["enabled"]
+            and "solver_gateway_start_failed" not in retry["invalidators"]
+        ):
+            raise ValueError(
+                "minimum_agent solver feedback requires solver_gateway_start_failed "
+                "in infra_retry.invalidators"
+            )
 
     providers = _object(raw["providers"], "providers")
     _keys(providers, required={"google_vertex"}, path="providers")
@@ -316,6 +406,8 @@ def _validate_condition_overrides(value: Any, path: str) -> None:
             "allow_final_message_recovery",
             "skills_mode",
             "agent_tools",
+            "generation",
+            "minimum_agent",
         },
         path=path,
     )
@@ -340,6 +432,28 @@ def _validate_condition_overrides(value: Any, path: str) -> None:
         overrides["agent_tools"] = _validate_agent_tools(
             overrides["agent_tools"], f"{path}.agent_tools"
         )
+    if "generation" in overrides:
+        generation = _object(overrides["generation"], f"{path}.generation")
+        _keys(
+            generation,
+            optional={"temperature"},
+            path=f"{path}.generation",
+        )
+        if "temperature" in generation:
+            temperature = generation["temperature"]
+            if (
+                isinstance(temperature, bool)
+                or not isinstance(temperature, (int, float))
+                or not 0 < float(temperature) <= 2
+            ):
+                raise ValueError(
+                    f"{path}.generation.temperature must be in (0, 2]"
+                )
+            generation["temperature"] = float(temperature)
+    if "minimum_agent" in overrides:
+        _validate_minimum_agent(
+            overrides["minimum_agent"], f"{path}.minimum_agent"
+        )
     if "experimental_budgets" in overrides:
         budgets = _object(overrides["experimental_budgets"], f"{path}.experimental_budgets")
         _keys(
@@ -347,12 +461,84 @@ def _validate_condition_overrides(value: Any, path: str) -> None:
             optional={
                 "harness_execution_timeout_seconds",
                 "control_model_request_attempts",
-                "native_iterations",
+                "action_steps",
             },
             path=f"{path}.experimental_budgets",
         )
         for key, limit in budgets.items():
             _positive_int(limit, f"{path}.experimental_budgets.{key}")
+
+
+def _validate_prompt_template(
+    value: Any,
+    path: str,
+    *,
+    allowed_fields: set[str],
+) -> str:
+    template = _string(value, path)
+    for _, field_name, format_spec, conversion in Formatter().parse(template):
+        if field_name is None:
+            continue
+        if field_name not in allowed_fields:
+            raise ValueError(
+                f"{path} uses unsupported placeholder {field_name!r}; "
+                f"allowed: {', '.join(sorted(allowed_fields)) or '(none)'}"
+            )
+        if format_spec or conversion:
+            raise ValueError(f"{path} placeholders cannot use formatting or conversion")
+    return template
+
+
+def _validate_minimum_agent(value: Any, path: str) -> None:
+    row = _object(value, path)
+    _keys(
+        row,
+        required={
+            "execution_backend",
+            "reflection_count",
+            "solver_feedback",
+            "prompt_template",
+        },
+        path=path,
+    )
+    if row["execution_backend"] != "host":
+        raise ValueError(f"{path}.execution_backend must be host")
+    _nonnegative_int(row["reflection_count"], f"{path}.reflection_count")
+
+    solver = _object(row["solver_feedback"], f"{path}.solver_feedback")
+    _keys(
+        solver,
+        required={"enabled", "solver", "max_chars"},
+        path=f"{path}.solver_feedback",
+    )
+    if not isinstance(solver["enabled"], bool):
+        raise ValueError(f"{path}.solver_feedback.enabled must be boolean")
+    if solver["solver"] not in {"dual-bfws-ffparser", "lama-first"}:
+        raise ValueError(f"{path}.solver_feedback.solver is not supported")
+    _positive_int(solver["max_chars"], f"{path}.solver_feedback.max_chars")
+
+    prompt = _object(row["prompt_template"], f"{path}.prompt_template")
+    _keys(
+        prompt,
+        required={"before_task", "after_task", "reflection"},
+        path=f"{path}.prompt_template",
+    )
+    shared = {"reflection_count", "solver_feedback_enabled"}
+    _validate_prompt_template(
+        prompt["before_task"],
+        f"{path}.prompt_template.before_task",
+        allowed_fields=shared,
+    )
+    _validate_prompt_template(
+        prompt["after_task"],
+        f"{path}.prompt_template.after_task",
+        allowed_fields=shared,
+    )
+    _validate_prompt_template(
+        prompt["reflection"],
+        f"{path}.prompt_template.reflection",
+        allowed_fields={*shared, "reflection_index"},
+    )
 
 
 def _validate_harness_overrides(harness: str, value: Any, path: str) -> None:
@@ -398,8 +584,8 @@ class ResolvedBenchmarkConfig:
         return self.raw["resolved"]["budgets"]["control_model_request_attempts"]["limit"]
 
     @property
-    def max_turns(self) -> int:
-        return self.raw["resolved"]["budgets"]["native_iterations"]["limit"]
+    def max_action_steps(self) -> int:
+        return self.raw["resolved"]["budgets"]["action_steps"]["limit"]
 
     @property
     def network_mode(self) -> str:
@@ -434,8 +620,21 @@ class ResolvedBenchmarkConfig:
         return deepcopy(self.raw["resolved"]["harness_overrides"])
 
     @property
+    def generation_overrides(self) -> dict[str, Any]:
+        return deepcopy(self.raw["resolved"].get("generation", {}))
+
+    @property
+    def minimum_agent(self) -> dict[str, Any] | None:
+        value = self.raw["resolved"].get("minimum_agent")
+        return deepcopy(value) if value is not None else None
+
+    @property
     def allow_final_message_recovery(self) -> bool:
         return bool(self.raw["resolved"]["artifact_contract"]["allow_final_message_recovery"])
+
+    @property
+    def model_error_routing(self) -> dict[str, Any]:
+        return deepcopy(self.raw["resolved"]["model_error_routing"])
 
     def metadata(self) -> dict[str, Any]:
         return {"label": self.label, "sha256": self.sha256, "raw": deepcopy(self.raw)}
@@ -466,9 +665,9 @@ class BenchmarkProfile:
         )
 
     @property
-    def max_turns(self) -> int:
+    def max_action_steps(self) -> int:
         return int(
-            self.raw["benchmark_envelope"]["safety_guards"]["native_iterations"]["limit"]
+            self.raw["benchmark_envelope"]["safety_guards"]["action_steps"]["limit"]
         )
 
     @property
@@ -505,7 +704,7 @@ class BenchmarkProfile:
         *,
         model: str | None = None,
         timeout: int | None = None,
-        max_turns: int | None = None,
+        max_action_steps: int | None = None,
         max_model_calls: int | None = None,
         network_mode: str | None = None,
         attempts_per_case: int | None = None,
@@ -532,8 +731,8 @@ class BenchmarkProfile:
             experimental["harness_execution_timeout_seconds"] = timeout
         if max_model_calls is not None:
             experimental["control_model_request_attempts"] = max_model_calls
-        if max_turns is not None:
-            experimental["native_iterations"] = max_turns
+        if max_action_steps is not None:
+            experimental["action_steps"] = max_action_steps
         if experimental:
             overrides["experimental_budgets"] = experimental
         _validate_condition_overrides(overrides, "resolved condition overrides")
@@ -546,8 +745,45 @@ class BenchmarkProfile:
                 "role": "experimental_budget",
                 "scope": "per_attempt",
             }
-            if key == "native_iterations":
-                resolved_budgets[key]["cross_harness_comparable"] = False
+            if key == "action_steps":
+                resolved_budgets[key]["cross_harness_comparable"] = True
+        if (
+            resolved_budgets["control_model_request_attempts"]["limit"]
+            > resolved_budgets["action_steps"]["limit"]
+        ):
+            raise ValueError(
+                "control_model_request_attempts limit cannot exceed action_steps limit"
+            )
+        minimum_agent = deepcopy(overrides.get("minimum_agent"))
+        if harness == "minimum":
+            if minimum_agent is None:
+                raise ValueError(
+                    "minimum adapter requires condition_profile.overrides.minimum_agent; "
+                    "use the bundled native_safety_minimum_agent.json profile"
+                )
+            if overrides.get("agent_tools"):
+                raise ValueError(
+                    "minimum adapter does not expose model-selectable agent_tools; "
+                    "use minimum_agent.solver_feedback.enabled for fixed solver feedback"
+                )
+            required_model_calls = int(minimum_agent["reflection_count"]) + 1
+            if required_model_calls > resolved_budgets[
+                "control_model_request_attempts"
+            ]["limit"]:
+                raise ValueError(
+                    "minimum_agent requires reflection_count + 1 model calls, which "
+                    "exceeds the resolved control-model budget"
+                )
+            if required_model_calls > resolved_budgets["action_steps"]["limit"]:
+                raise ValueError(
+                    "minimum_agent requires reflection_count + 1 action steps, which "
+                    "exceeds the resolved action-step budget"
+                )
+        elif minimum_agent is not None:
+            raise ValueError(
+                "condition_profile.overrides.minimum_agent is only supported by "
+                "the minimum adapter"
+            )
         resolved_network = deepcopy(envelope["network"])
         if "network_mode" in overrides:
             resolved_network["mode"] = overrides["network_mode"]
@@ -555,6 +791,8 @@ class BenchmarkProfile:
             resolved_network["controlled_web_allowlist"] = list(
                 overrides["controlled_web_allowlist"]
             )
+        if harness == "minimum" and resolved_network["mode"] != "model_only":
+            raise ValueError("minimum host runtime supports only model_only network mode")
         if resolved_network["mode"] == "controlled_web" and not resolved_network[
             "controlled_web_allowlist"
         ]:
@@ -609,6 +847,7 @@ class BenchmarkProfile:
                 "control_model": overrides.get("control_model", envelope["control_model"]),
                 "budgets": resolved_budgets,
                 "network": resolved_network,
+                "model_error_routing": deepcopy(envelope["model_error_routing"]),
                 "interaction": deepcopy(envelope["interaction"]),
                 "state_isolation": deepcopy(envelope["state_isolation"]),
                 "environment": deepcopy(envelope["environment"]),
@@ -618,6 +857,8 @@ class BenchmarkProfile:
                 "required_evidence": list(envelope["required_evidence"]),
                 "skills_mode": overrides.get("skills_mode", "official"),
                 "agent_tools": list(overrides.get("agent_tools", [])),
+                "generation": deepcopy(overrides.get("generation", {})),
+                "minimum_agent": minimum_agent,
                 "harness_overrides": effective_harness_overrides,
             },
             "sampling": sampling,
@@ -650,7 +891,11 @@ def load_benchmark_profile(path: str | Path | None = None) -> BenchmarkProfile:
 def with_google_vertex_project(
     profile: BenchmarkProfile, project: str
 ) -> BenchmarkProfile:
-    """Return a validated in-memory profile with its Vertex route materialized."""
+    """Legacy helper that makes Vertex project an experimental config field.
+
+    New runner/sweep paths bind project to the named credential profile instead,
+    so credential rotation does not alter experimental identity.
+    """
     if not isinstance(project, str) or not project.strip():
         raise ValueError("Google Vertex project must be a non-empty string")
     raw = deepcopy(profile.raw)

@@ -53,10 +53,14 @@ for the required variables.
 
 ## Agent Harness Formalizer
 
-The Docker-based agent pipeline supports `openclaw`, `hermes`, `nanobot`,
-`zeroclaw`, and `generic` (GenericAgent). Non-OpenClaw harness configuration,
-tool policy, memory, and session state are created by this repository for each
-benchmark run; personal harness config directories are not read.
+The agent pipeline supports `openclaw`, `hermes`, `nanobot`,
+`zeroclaw`, `generic` (GenericAgent), and the benchmark-owned `minimum`
+baseline. Non-OpenClaw harness configuration, tool policy, memory, and session
+state are created by this repository for each benchmark run; personal harness
+config directories are not read. The `minimum` adapter exposes no tools or
+workspace access to its model and follows a profile-defined fixed generation
+and reflection sequence in a benchmark-owned host subprocess. It alone skips
+Docker; all native third-party agents retain their isolated container path.
 
 ```bash
 bash source/agent_formalizer/install_harnesses.sh all
@@ -69,12 +73,18 @@ uv run python source/agent_formalizer/run_formalizer_agent.py \
     --indices 1,2,3
 ```
 
-The agent runner reads only explicitly named provider inputs from the
-git-ignored `_private/.env` (or an explicit alternative); it never loads or
-mounts the whole file into an agent container. The real API key stays in the
-model gateway, outside the agent container. The versioned default for all five
-harnesses is `google-vertex/gemini-3.1-flash-lite`; a Vertex project is
-materialized into the frozen profile from `GOOGLE_CLOUD_PROJECT` when needed.
+The agent runner selects a secret-free named credential profile and reads only
+its referenced provider inputs from the git-ignored `_private/.env` (or an
+explicit alternative); it never loads or mounts the whole file into an agent
+container. The default Vertex profile binds `GOOGLE_CLOUD_API_KEY` to
+`GOOGLE_CLOUD_PROJECT`; the bundled `google-vertex-fallback` profile binds the
+corresponding `FALLBACK_*` variables and is selected with
+`--credential-profile google-vertex-fallback`. The real API key is passed to the
+model Gateway through a private temporary secret file, never plaintext CLI
+arguments. Credential profiles, including Vertex project, are operational
+provenance and do not change the experiment config hash, label, or resume
+identity. The versioned default model is
+`google-vertex/gemini-3.1-flash-lite`.
 The agent always remains on an
 internal Docker network. The default permits only model traffic; the optional
 `controlled_web` condition uses a hostname-allowlist proxy and never grants
@@ -82,6 +92,17 @@ ordinary egress. See
 [`source/agent_formalizer/README.md`](source/agent_formalizer/README.md) for
 runtime pins, supported provider prefixes, isolation details, and evaluation
 commands.
+
+Run the fixed minimum baseline with its required profile:
+
+```bash
+uv run python source/sweep_agent_pipeline.py \
+  --benchmark-config source/agent_formalizer/benchmark_profiles/native_safety_minimum_agent.json \
+  --claw minimum \
+  --domain barman \
+  --data Heavily_Templated_Barman-100 \
+  --index_start 1 --index_end 3
+```
 
 ## Datasets
 All datasets can be found in the `/data` folders.

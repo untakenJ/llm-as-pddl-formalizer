@@ -31,6 +31,7 @@ from remote_client import (  # noqa: E402
 
 
 LISTEN_PORT = int(os.environ.get("PDDL_SOLVER_GATEWAY_PORT", "8768"))
+LISTEN_HOST = os.environ.get("PDDL_SOLVER_GATEWAY_LISTEN_HOST", "0.0.0.0")
 UPSTREAM_BASE = os.environ.get("PDDL_SOLVER_UPSTREAM_BASE", SOLVER_BASE_URL).rstrip("/")
 DEFAULT_PACKAGE = os.environ.get("PDDL_SOLVER_DEFAULT_PACKAGE", DEFAULT_SOLVER)
 
@@ -200,4 +201,4 @@ class SolverGatewayHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), SolverGatewayHandler).serve_forever()
+    ThreadingHTTPServer((LISTEN_HOST, LISTEN_PORT), SolverGatewayHandler).serve_forever()

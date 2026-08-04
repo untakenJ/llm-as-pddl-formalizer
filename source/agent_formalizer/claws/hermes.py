@@ -101,7 +101,6 @@ class HermesAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
                 **model_config,
             },
             "agent": {
-                "max_turns": self.max_turns or 200,
                 "verbose": False,
             },
             "terminal": {
@@ -173,8 +172,6 @@ class HermesAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             prompt,
             "--quiet",
             "--yolo",
-            "--max-turns",
-            str(self.max_turns or 200),
             "--provider",
             self.hermes_provider,
             "--model",
@@ -209,6 +206,7 @@ class HermesAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             container_name=container_name,
+            attempt_clock=self.current_attempt_clock(),
         )
 
     def collect_usage(self, workspace, artifact_dir: Path) -> dict:

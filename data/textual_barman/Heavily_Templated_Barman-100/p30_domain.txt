@@ -10,7 +10,7 @@ I am creating a cocktail from a set of ingredients. Here are the actions I can d
     Pour an ingredient from a shot glass to a used shaker (pour-shot-to-used-shaker shot ingredient shaker hand level level1)
     Empty a shaker (empty-shaker hand shaker cocktail level level1)
     Clean a shaker (clean-shaker hand1 hand2 shaker)
-    Shake a shaker (shaker cocktil ingredient1 ingredient2 shaker hand1 hand2)
+    Shake a shaker (shake cocktail ingredient1 ingredient2 shaker hand1 hand2)
     Pour a cocktail from a shaker to a shot glass (pour-shaker-to-shot beverage shot hand shaker level level1)
 
 

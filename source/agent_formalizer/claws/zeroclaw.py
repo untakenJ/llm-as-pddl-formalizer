@@ -26,7 +26,7 @@ ZEROCLAW_PROVIDER_MAP = {
     "openrouter": "openrouter",
     "gemini": "gemini",
     # Custom routes through ZeroClaw's OpenAI-compatible transport, which
-    # preserves Gemini extra_content/thought signatures across tool turns.
+    # preserves Gemini extra_content/thought signatures across tool exchanges.
     "google-vertex": "custom",
     "deepseek": "deepseek",
     "dashscope": "qwen",
@@ -106,7 +106,6 @@ class ZeroClawAdapter(EnvConfiguredAdapter):
 
     def _benchmark_config_toml(self) -> str:
         family = self.zeroclaw_provider
-        max_turns = self.max_turns or 200
         q = json.dumps
         approvals = ", ".join(q(tool) for tool in ZEROCLAW_NONINTERACTIVE_APPROVALS)
         # ZeroClaw's `custom` family defaults to prompt-guided tools
@@ -145,7 +144,6 @@ excluded_tools = []
 
 [runtime_profiles.benchmark]
 agentic = true
-max_tool_iterations = {int(max_turns)}
 max_actions_per_hour = 20
 max_cost_per_day_cents = 500
 # Preserve the pinned native-clean per-shell timeout.  The common 1800s
@@ -253,6 +251,7 @@ strict_tool_parsing = false
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             container_name=container_name,
+            attempt_clock=self.current_attempt_clock(),
         )
 
     def collect_usage(self, workspace, artifact_dir: Path) -> dict:
@@ -268,16 +267,15 @@ strict_tool_parsing = false
 
 
 def _parse_costs(path: Path) -> dict:
-    """Sum token usage from ZeroClaw's per-turn cost records."""
+    """Sum ZeroClaw cost rows into disjoint benchmark token buckets."""
     if not path.is_file():
         return {}
     totals = {
-        "turns": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "cache_read_tokens": 0,
-        "reasoning_tokens": 0,
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0,
     }
     for line in path.read_text(errors="replace").splitlines():
         try:
@@ -287,20 +285,30 @@ def _parse_costs(path: Path) -> dict:
         usage = row.get("usage", row) if isinstance(row, dict) else {}
         if not isinstance(usage, dict):
             continue
-        totals["turns"] += 1
-        input_tokens = int(
+        prompt_tokens = max(0, int(
             usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0
-        )
-        output_tokens = int(
+        ))
+        output_tokens = max(0, int(
             usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0
+        ))
+        cached_tokens = max(0, int(
+            usage.get(
+                "cached_input_tokens",
+                usage.get("cache_read_tokens", usage.get("cached_tokens", 0)),
+            )
+            or 0
+        ))
+        cached_tokens = min(prompt_tokens, cached_tokens)
+        totals["input"] += prompt_tokens - cached_tokens
+        totals["output"] += output_tokens
+        totals["cacheRead"] += cached_tokens
+        totals["reasoning"] += max(
+            0, int(usage.get("reasoning_tokens", 0) or 0)
         )
-        totals["input_tokens"] += input_tokens
-        totals["output_tokens"] += output_tokens
-        totals["total_tokens"] += int(
-            usage.get("total_tokens", 0) or input_tokens + output_tokens
-        )
-        totals["cache_read_tokens"] += int(
-            usage.get("cache_read_tokens", usage.get("cached_tokens", 0)) or 0
-        )
-        totals["reasoning_tokens"] += int(usage.get("reasoning_tokens", 0) or 0)
+    totals["total"] = (
+        totals["input"]
+        + totals["output"]
+        + totals["cacheRead"]
+        + totals["cacheWrite"]
+    )
     return totals

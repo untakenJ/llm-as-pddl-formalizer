@@ -10,7 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
 
-from agent_formalizer.claws.base import BaseClawAdapter, decode_output
+from agent_formalizer.claws.base import (
+    AttemptClock,
+    BaseClawAdapter,
+    decode_output,
+    run_process_with_attempt_clock,
+)
 from agent_formalizer.config import (
     MODEL_GATEWAY_HOST,
     MODEL_GATEWAY_PORT,
@@ -82,8 +87,8 @@ def google_vertex_settings(provider_options: dict | None = None) -> tuple[str, s
     project = options.get("project")
     if not project:
         raise RuntimeError(
-            "google-vertex requires providers.google_vertex.project in the "
-            "benchmark profile or an explicit --vertex-project override."
+            "google-vertex requires a project in the selected credential profile "
+            "(or the legacy benchmark/--vertex-project compatibility path)."
         )
     location = options.get("location") or "global"
     origin = options.get("origin")
@@ -118,11 +123,12 @@ class EnvConfiguredAdapter(BaseClawAdapter):
         self,
         model: str,
         timeout: int,
-        max_turns: int | None = None,
+        max_action_steps: int = 200,
         *,
         model_api_keys: dict[str, str] | None = None,
         api_key: str | None = None,
         api_key_name: str | None = None,
+        credential_metadata: dict | None = None,
         provider_options: dict | None = None,
         max_model_calls: int = 50,
         allow_network: bool = False,
@@ -134,7 +140,7 @@ class EnvConfiguredAdapter(BaseClawAdapter):
         super().__init__(
             model,
             timeout,
-            max_turns,
+            max_action_steps,
             max_model_calls=max_model_calls,
             allow_network=allow_network,
             network_mode=network_mode,
@@ -145,6 +151,7 @@ class EnvConfiguredAdapter(BaseClawAdapter):
         self.model_api_keys = dict(model_api_keys or {})
         self._api_key = api_key
         self._api_key_name = api_key_name
+        self.credential_metadata = dict(credential_metadata or {})
         self.provider_options = dict(provider_options or {})
 
     @property
@@ -220,7 +227,7 @@ class EnvConfiguredAdapter(BaseClawAdapter):
         return os.environ.get(name) if name else None
 
     def model_auth(self) -> dict:
-        return {
+        value = {
             "model": self.model,
             "provider": self.raw_provider,
             "normalized_provider": self.provider,
@@ -230,6 +237,9 @@ class EnvConfiguredAdapter(BaseClawAdapter):
             "api_key_env": self.api_key_env(),
             "api_key_present": bool(self.resolved_api_key()),
         }
+        if self.credential_metadata:
+            value["credential"] = dict(self.credential_metadata)
+        return value
 
     def validate_runtime(self) -> None:
         # Resolve the provider first so unsupported or malformed model ids fail
@@ -336,16 +346,29 @@ def run_captured_agent(
     stderr_path: Path | None,
     final_text: str | None = None,
     container_name: str | None = None,
+    attempt_clock: AttemptClock | None = None,
+    env: dict[str, str] | None = None,
 ) -> AgentResult:
     """Run a non-interactive harness command and normalize its result."""
     started = time.monotonic()
     timed_out = False
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+        result = (
+            run_process_with_attempt_clock(
+                cmd,
+                clock=attempt_clock,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            if attempt_clock is not None
+            else subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+            )
         )
         exit_code = result.returncode
         stdout = result.stdout
@@ -388,7 +411,7 @@ def run_captured_agent(
 
 
 def jsonl_steps(paths: Iterable[Path]) -> Iterator[dict]:
-    """Normalize OpenAI-style JSONL messages into agent-step records."""
+    """Normalize OpenAI-style JSONL messages into diagnostic session records."""
     step = 0
     for path in paths:
         try:

@@ -1,0 +1,128 @@
+{
+  "schema_version": 3,
+  "profile_id": "pddl-native-clean-practical-unlimited-v2",
+  "native_clean": {
+    "id": "official-clean-v1",
+    "mode": "official-init-or-version-bound-snapshot"
+  },
+  "benchmark_envelope": {
+    "id": "native-safety-v4",
+    "control_model": "google-vertex/gemini-3.1-flash-lite",
+    "safety_guards": {
+      "harness_execution_timeout_seconds": {
+        "limit": 1800,
+        "role": "safety_guard",
+        "scope": "per_attempt"
+      },
+      "control_model_request_attempts": {
+        "limit": 50,
+        "role": "safety_guard",
+        "scope": "per_attempt"
+      },
+      "action_steps": {
+        "limit": 200,
+        "role": "safety_guard",
+        "scope": "per_attempt",
+        "cross_harness_comparable": true
+      }
+    },
+    "network": {
+      "mode": "model_only",
+      "controlled_web_allowlist": []
+    },
+    "model_error_routing": {
+      "id": "external-transient-v2",
+      "max_retries": 5,
+      "backoff_seconds": [1, 2, 4, 8, 16],
+      "max_retry_after_seconds": 60,
+      "retryable_http_statuses": [408, 429, 502, 503, 504, 520, 521, 522, 523, 524, 525, 529]
+    },
+    "interaction": {
+      "mode": "noninteractive"
+    },
+    "state_isolation": {
+      "scope": "per_attempt",
+      "personal_harness_state": "excluded",
+      "cross_attempt_reuse": false
+    },
+    "environment": {
+      "inherit": [],
+      "fixed": {
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "TZ": "UTC",
+        "NO_COLOR": "1"
+      }
+    },
+    "container_resources": {
+      "pids_limit": 300,
+      "memory": "8g",
+      "memory_swap": "8g"
+    },
+    "artifact_contract": {
+      "workspace_domain_file": "domain.pddl",
+      "workspace_problem_file": "problem.pddl",
+      "allow_final_message_recovery": false,
+      "preserve_bytes": true
+    },
+    "validations": [
+      {"preset": "runtime-lock", "version": 1, "required": true},
+      {"preset": "network-model-only", "version": 2, "required": true},
+      {"preset": "environment-isolation", "version": 1, "required": true},
+      {"preset": "action-step-guard", "version": 1, "required": true}
+    ],
+    "required_evidence": [
+      "resolved_config_sha256",
+      "task_input_sha256",
+      "runtime_lock",
+      "execution_timing",
+      "model_gateway_summary",
+      "actions",
+      "model_call_ledger",
+      "generation_result",
+      "completion_record"
+    ]
+  },
+  "condition_profile": {
+    "id": "practical-unlimited",
+    "overrides": {
+      "experimental_budgets": {
+        "harness_execution_timeout_seconds": 2147483647,
+        "control_model_request_attempts": 2147483647,
+        "action_steps": 2147483647
+      }
+    }
+  },
+  "sampling": {
+    "attempts_per_case": 1
+  },
+  "infra_retry": {
+    "max_execution_tries_per_attempt": 3,
+    "selection": "first_valid_execution",
+    "invalidators": [
+      "container_start_failed",
+      "gateway_start_failed",
+      "task_seed_failed",
+      "runtime_lock_mismatch",
+      "runner_internal_error",
+      "required_evidence_failed",
+      "gateway_pause_failed",
+      "provider_transient_exhausted"
+    ]
+  },
+  "providers": {
+    "google_vertex": {
+      "project": null,
+      "location": "global",
+      "origin": "https://aiplatform.googleapis.com"
+    }
+  },
+  "harness_overrides": {
+    "openclaw": {},
+    "hermes": {},
+    "nanobot": {},
+    "zeroclaw": {},
+    "generic": {},
+    "minimum": {}
+  }
+}

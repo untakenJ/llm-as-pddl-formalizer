@@ -37,6 +37,7 @@ Then evaluate (note the sanitized model label, slashes -> ``__``)::
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import logging
 import os
 import sys
@@ -54,10 +55,13 @@ from agent_formalizer.config import (
     DEFAULT_SECRETS_ENV_FILE,
     DOMAINS,
     agent_model_label,
-    api_key_env_for_model,
+)
+from agent_formalizer.credentials import (
+    DEFAULT_CREDENTIAL_PROFILES_PATH,
+    load_credential_registry,
 )
 from agent_formalizer.orchestrator import run_batch
-from agent_formalizer.util import read_named_secret, read_named_setting
+from agent_formalizer.util import read_named_setting
 
 
 def _resolve_problem_numbers(args) -> list[int]:
@@ -81,11 +85,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", default=None,
                    help="model id passed to the claw (default: benchmark profile)")
     p.add_argument("--benchmark-config", default=None,
-                   help="JSON benchmark profile (default: bundled benchmark_profile.json)")
+                   help="JSON benchmark profile (default: bundled "
+                        "benchmark_profiles/native_safety_native_clean.json)")
+    p.add_argument("--credential-profile", default=None,
+                   help="named credential profile for --model (default: model/provider "
+                        "mapping in credential_profiles.json)")
+    p.add_argument("--credential-profiles-file",
+                   default=str(DEFAULT_CREDENTIAL_PROFILES_PATH),
+                   help="secret-free named credential registry; contains only variable "
+                        "references and provider settings")
     p.add_argument("--api-key-env", default=None,
-                   help="the one runner environment variable holding the API key "
-                        "for --model; overrides the per-harness model_api_keys "
-                        "map and provider default")
+                   help="legacy API-key variable override inside the selected credential "
+                        "profile; prefer --credential-profile")
     p.add_argument("--secrets-env-file", default=str(DEFAULT_SECRETS_ENV_FILE),
                    help="runner-only dotenv source for explicitly named provider "
                         "inputs; never mounted or passed to the agent container")
@@ -105,8 +116,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "(must resolve to the image ID in runtime_lock.json)")
     p.add_argument("--timeout", type=int, default=None,
                    help="agent timeout in seconds (default: benchmark profile)")
-    p.add_argument("--max_turns", type=int, default=None,
-                   help="max agent turns (default: benchmark profile)")
+    p.add_argument("--max-action-steps", type=int, default=None,
+                   help="maximum model_calls + tool_calls per problem "
+                        "(default: benchmark profile)")
     p.add_argument("--max-model-calls", type=int, default=None,
                    help="maximum model API calls per problem (default: benchmark profile)")
     p.add_argument("--network-mode", choices=("model_only", "controlled_web"),
@@ -119,11 +131,14 @@ def build_parser() -> argparse.ArgumentParser:
                    action=argparse.BooleanOptionalAction, default=None,
                    help="experimental recovery from final text; default false")
     p.add_argument("--vertex-project", default=None,
-                   help="explicit Vertex project override")
+                   help="legacy credential-owned Vertex project override; prefer a "
+                        "named credential profile")
     p.add_argument("--vertex-project-env", default="GOOGLE_CLOUD_PROJECT",
-                   help="runner variable read when the profile has no Vertex project")
+                   help="legacy runner variable used when the credential profile and "
+                        "benchmark compatibility config have no Vertex project")
     p.add_argument("--vertex-location", default=None,
-                   help="Vertex location override (default from profile)")
+                   help="legacy credential-owned Vertex location override; prefer a "
+                        "named credential profile")
     p.add_argument("--trace", action=argparse.BooleanOptionalAction, default=True,
                    help="record per-problem JSONL trace (default on; "
                         "pass --no-trace to disable)")
@@ -149,6 +164,15 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     args = build_parser().parse_args()
+    if args.credential_profile and any(
+        value is not None
+        for value in (args.api_key_env, args.vertex_project, args.vertex_location)
+    ):
+        raise SystemExit(
+            "--credential-profile cannot be combined with --api-key-env, "
+            "--vertex-project, or --vertex-location; put the bound values in "
+            "the named credential profile"
+        )
     profile = load_benchmark_profile(args.benchmark_config)
 
     openclaw_tool_flags = (
@@ -163,15 +187,18 @@ def main() -> None:
         )
 
     model = args.model or profile.default_model
-    key_name = args.api_key_env or api_key_env_for_model(model)
-    if not key_name:
-        raise SystemExit(
-            f"No credential variable mapping for model {model!r}; pass --api-key-env"
-        )
     try:
-        api_key = read_named_secret(key_name, args.secrets_env_file)
-    except RuntimeError as exc:
+        credential_registry = load_credential_registry(args.credential_profiles_file)
+        credential = credential_registry.resolve(
+            model,
+            name=args.credential_profile,
+            env_file=args.secrets_env_file,
+            api_key_env_override=args.api_key_env,
+        )
+    except (RuntimeError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
+    api_key = credential.api_key
+    key_name = credential.api_key_env
 
     adapter_kwargs: dict = {}
     if args.tools_profile is not None:
@@ -184,7 +211,13 @@ def main() -> None:
         adapter_kwargs["tools_deny"] = [
             x.strip() for x in args.tools_deny.split(",") if x.strip()
         ]
-    vertex_project = args.vertex_project
+    provider_options = deepcopy(credential.provider_options)
+    vertex_options = provider_options.setdefault("google_vertex", {}) if (
+        model.startswith("google-vertex/")
+    ) else None
+    vertex_project = args.vertex_project or (
+        vertex_options.get("project") if vertex_options is not None else None
+    )
     if (
         model.startswith("google-vertex/")
         and vertex_project is None
@@ -197,27 +230,41 @@ def main() -> None:
         except RuntimeError as exc:
             raise SystemExit(str(exc)) from exc
 
-    provider_options = None
-    if vertex_project is not None or args.vertex_location is not None:
-        provider_options = {"google_vertex": {}}
+    if vertex_options is not None:
         if vertex_project is not None:
-            provider_options["google_vertex"]["project"] = vertex_project
+            vertex_options["project"] = vertex_project
         if args.vertex_location is not None:
-            provider_options["google_vertex"]["location"] = args.vertex_location
+            vertex_options["location"] = args.vertex_location
+    if not provider_options:
+        provider_options = None
+
+    credential_metadata = credential.metadata()
+    legacy_overrides = [
+        name
+        for name, value in (
+            ("api_key_env", args.api_key_env),
+            ("vertex_project", args.vertex_project),
+            ("vertex_location", args.vertex_location),
+        )
+        if value is not None
+    ]
+    if legacy_overrides:
+        credential_metadata["legacy_overrides"] = legacy_overrides
 
     adapter = get_adapter(
         args.claw,
         model=model,
         timeout=args.timeout,
-        max_turns=args.max_turns,
+        max_action_steps=args.max_action_steps,
         max_model_calls=args.max_model_calls,
         network_mode=args.network_mode,
         attempts_per_case=args.attempts_per_case,
         max_execution_tries=args.max_execution_tries,
         allow_final_message_recovery=args.allow_final_message_recovery,
-        provider_options=provider_options,
+        credential_provider_options=provider_options,
         api_key=api_key,
         api_key_name=key_name,
+        credential_metadata=credential_metadata,
         benchmark_profile=profile,
         **adapter_kwargs,
     )
@@ -229,8 +276,9 @@ def main() -> None:
 
     problem_numbers = _resolve_problem_numbers(args)
     logging.getLogger(__name__).info(
-        "claw=%s domain=%s data=%s model=%s label=%s problems=%s",
-        args.claw, args.domain, args.data, model, model_label, problem_numbers,
+        "claw=%s domain=%s data=%s model=%s credential=%s label=%s problems=%s",
+        args.claw, args.domain, args.data, model, credential.profile_name,
+        model_label, problem_numbers,
     )
 
     results = run_batch(

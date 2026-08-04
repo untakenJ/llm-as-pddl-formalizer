@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import subprocess
 from pathlib import Path
@@ -20,6 +19,89 @@ from agent_formalizer.config import CONTAINER_WORKSPACE, NANOBOT_ENV_PATH
 from agent_formalizer.result_types import AgentResult
 
 NANOBOT_CONFIG_DIR = "/tmp/nanobot-pddl-benchmark"
+NANOBOT_USAGE_PATH = f"{NANOBOT_CONFIG_DIR}/usage.json"
+NANOBOT_CAPTURE_SCRIPT = f"{NANOBOT_CONFIG_DIR}/benchmark_agent.py"
+
+NANOBOT_USAGE_CAPTURE_SOURCE = f'''\
+"""Benchmark wrapper around Nanobot's native CLI.
+
+The wrapper changes no prompt, tools, or loop settings.  It only attaches a
+run-level hook and writes Nanobot's own aggregate AgentRunResult.usage after
+the native run ends.
+"""
+
+import json
+from pathlib import Path
+
+from nanobot.agent.hook import AgentHook
+from nanobot.agent.loop import AgentLoop
+
+
+_USAGE_PATH = Path({NANOBOT_USAGE_PATH!r})
+_ORIGINAL_PROCESS_DIRECT = AgentLoop.process_direct
+
+
+def _clean_usage(value):
+    if not isinstance(value, dict):
+        return {{}}
+    cleaned = {{}}
+    for key, item in value.items():
+        try:
+            cleaned[str(key)] = int(item or 0)
+        except (TypeError, ValueError):
+            continue
+    return cleaned
+
+
+class _BenchmarkUsageHook(AgentHook):
+    def __init__(self):
+        super().__init__()
+        self.finished = False
+
+    def _write(self, capture_status, context):
+        report = {{
+            "schema_version": 1,
+            "source": "nanobot-agent-run-result",
+            "capture_status": capture_status,
+            "stop_reason": context.stop_reason,
+            "error": context.error,
+            "raw_usage": _clean_usage(context.usage),
+        }}
+        temporary = _USAGE_PATH.with_suffix(".json.tmp")
+        try:
+            temporary.write_text(
+                json.dumps(report, indent=2, ensure_ascii=False) + "\\n",
+                encoding="utf-8",
+            )
+            temporary.replace(_USAGE_PATH)
+        except OSError:
+            temporary.unlink(missing_ok=True)
+
+    async def after_run(self, context):
+        self._write("complete", context)
+        self.finished = True
+
+    async def on_error(self, context):
+        self._write("error", context)
+
+    async def on_finally(self, context):
+        if not self.finished:
+            self._write("partial", context)
+
+
+async def _process_direct_with_usage(self, *args, **kwargs):
+    hooks = list(kwargs.get("hooks") or [])
+    kwargs["hooks"] = [*hooks, _BenchmarkUsageHook()]
+    return await _ORIGINAL_PROCESS_DIRECT(self, *args, **kwargs)
+
+
+_USAGE_PATH.unlink(missing_ok=True)
+AgentLoop.process_direct = _process_direct_with_usage
+
+from nanobot.cli.commands import app
+
+app()
+'''
 
 NANOBOT_DISABLED_SKILLS = [
     "clawhub",
@@ -80,6 +162,10 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         config = json.dumps(self._benchmark_config(), indent=2) + "\n"
         if not workspace.write_text_file(f"{NANOBOT_CONFIG_DIR}/config.json", config):
             raise RuntimeError("Failed to provision isolated NanoBot config")
+        if not workspace.write_text_file(
+            NANOBOT_CAPTURE_SCRIPT, NANOBOT_USAGE_CAPTURE_SOURCE
+        ):
+            raise RuntimeError("Failed to provision NanoBot usage capture wrapper")
         # Reproduce a clean official onboarding baseline from the pinned
         # package, never from a host user's NanoBot workspace.
         bootstrap = self._official_bootstrap_files() if self.skills_mode == "official" else {}
@@ -132,7 +218,6 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
                     "model": self.openai_compatible_model,
                     "provider": self.nanobot_provider,
                     "fallbackModels": [],
-                    "maxToolIterations": self.max_turns or 200,
                     "maxConcurrentSubagents": 1,
                     "disabledSkills": (
                         [] if self.skills_mode == "official" else NANOBOT_DISABLED_SKILLS
@@ -181,6 +266,13 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
     def effective_config(self) -> dict:
         value = super().effective_config()
         value["harness_config"] = self._benchmark_config()
+        value["optional_diagnostics"] = {
+            "token_usage": {
+                "source": "nanobot AgentRunResult.usage via run-level hook",
+                "raw_artifact": NANOBOT_USAGE_PATH,
+                "prompt_or_tool_changes": False,
+            }
+        }
         return value
 
     def runtime_info(self) -> dict:
@@ -210,9 +302,13 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
 
     @classmethod
     def _session_path(cls, agent_id: str) -> str:
-        encoded = base64.urlsafe_b64encode(cls._session_id(agent_id).encode()).decode()
-        encoded = encoded.rstrip("=")
-        return f"{CONTAINER_WORKSPACE}/sessions/{encoded}.jsonl"
+        # Nanobot 0.2.2 SessionManager.safe_key replaces filesystem-unsafe
+        # characters (including the session-id colon) with underscores.
+        unsafe = set('<>:"/\\|?*')
+        stem = "".join(
+            "_" if char in unsafe else char for char in cls._session_id(agent_id)
+        ).strip()
+        return f"{CONTAINER_WORKSPACE}/sessions/{stem}.jsonl"
 
     def send_task(
         self,
@@ -228,7 +324,6 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         stderr_path = artifact_dir / "agent_stderr.log" if artifact_dir else None
 
         argv = [
-            "nanobot",
             "agent",
             "--message",
             prompt,
@@ -241,12 +336,6 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             "--no-markdown",
             "--no-logs",
         ]
-        code = (
-            "import sys; "
-            f"sys.argv = {argv!r}; "
-            "from nanobot.cli.commands import app; "
-            "app()"
-        )
         cmd = ["docker", "exec", "-w", CONTAINER_WORKSPACE]
         cmd.extend(
             self.docker_exec_env_args(
@@ -256,13 +345,16 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
                 }
             )
         )
-        cmd.extend([container_name, str(self.runtime_python), "-c", code])
+        cmd.extend(
+            [container_name, str(self.runtime_python), NANOBOT_CAPTURE_SCRIPT, *argv]
+        )
         result = run_captured_agent(
             cmd,
             timeout=self.remaining_timeout(),
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             container_name=container_name,
+            attempt_clock=self.current_attempt_clock(),
         )
         result.session_id = self._session_id(agent_id)
         result.session_file = self._session_path(agent_id)
@@ -296,6 +388,48 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         except (OSError, subprocess.TimeoutExpired):
             return
 
+    def collect_usage(self, workspace, artifact_dir: Path) -> dict:
+        """Copy and normalize Nanobot's own per-run token accounting."""
+        sessions = artifact_dir / "sessions"
+        sessions.mkdir(parents=True, exist_ok=True)
+        usage_path = sessions / "usage.json"
+        usage_path.unlink(missing_ok=True)
+
+        if not workspace.copy_from_container(NANOBOT_USAGE_PATH, str(usage_path)):
+            report = {
+                "schema_version": 1,
+                "source": "nanobot-agent-run-result",
+                "capture_status": "missing",
+                "usage": {},
+            }
+            usage_path.write_text(
+                json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+            )
+            return {}
+
+        try:
+            report = json.loads(usage_path.read_text(errors="replace"))
+            if not isinstance(report, dict):
+                raise TypeError("usage report is not a JSON object")
+            raw_usage = report.get("raw_usage", {})
+            usage = _normalize_nanobot_usage(raw_usage)
+            report["measurement"] = _nanobot_usage_measurement(raw_usage)
+            report["usage"] = usage
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            report = {
+                "schema_version": 1,
+                "source": "nanobot-agent-run-result",
+                "capture_status": "error",
+                "error": str(exc),
+                "usage": {},
+            }
+            usage = {}
+
+        usage_path.write_text(
+            json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+        )
+        return usage
+
     @staticmethod
     def _artifact_sessions(artifact_dir: Path) -> list[Path]:
         return sorted((artifact_dir / "sessions").glob("*.jsonl"))
@@ -319,3 +453,60 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         session_file: str | None = None,
     ) -> Iterable[dict]:
         return tool_records(jsonl_steps(self._artifact_sessions(artifact_dir)))
+
+
+def _normalize_nanobot_usage(raw_usage: object) -> dict:
+    """Map Nanobot/OpenAI token fields to the benchmark's usage vocabulary.
+
+    OpenAI-compatible ``prompt_tokens`` includes cached prompt tokens, whereas
+    the benchmark's ``input`` field represents non-cached input.  The raw
+    provider values remain available in ``sessions/usage.json``.
+    """
+    if not isinstance(raw_usage, dict):
+        return {}
+
+    def token(name: str) -> int:
+        try:
+            return max(0, int(raw_usage.get(name, 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    prompt = token("prompt_tokens")
+    output = token("completion_tokens")
+    cache_read = min(prompt, token("cached_tokens"))
+    total = token("total_tokens") or prompt + output
+    if not any((prompt, output, cache_read, total)):
+        return {}
+    return {
+        "input": prompt - cache_read,
+        "output": output,
+        "cacheRead": cache_read,
+        "cacheWrite": 0,
+        "total": total,
+        "providerTokens": token("provider_tokens"),
+        "estimatedTokens": token("estimated_tokens"),
+    }
+
+
+def _nanobot_usage_measurement(raw_usage: object) -> str:
+    """Describe whether Nanobot used provider usage, estimates, or both."""
+    if not isinstance(raw_usage, dict):
+        return "unavailable"
+
+    def positive(name: str) -> bool:
+        try:
+            return int(raw_usage.get(name, 0) or 0) > 0
+        except (TypeError, ValueError):
+            return False
+
+    provider = positive("provider_tokens")
+    estimated = positive("estimated_tokens")
+    if provider and estimated:
+        return "mixed"
+    if provider:
+        return "provider-reported"
+    if estimated:
+        return "nanobot-estimated"
+    if _normalize_nanobot_usage(raw_usage):
+        return "unclassified"
+    return "unavailable"

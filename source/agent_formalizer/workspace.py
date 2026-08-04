@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import shlex
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +38,7 @@ from agent_formalizer.config import (
     MODEL_GATEWAY_PORT,
     MODEL_GATEWAY_SCRIPT,
     PROBLEM_OUTPUT_NAME,
+    related_docker_resource_name,
     WEB_GATEWAY_CONTAINER_PATH,
     WEB_GATEWAY_HOST,
     WEB_GATEWAY_PORT,
@@ -64,15 +67,32 @@ class AgentWorkspace:
         self.adapter = adapter
         self.image_name = image or BASE_IMAGE
         self.container_name = container_name
-        self.network_name = f"{container_name[:100]}-net"
-        self.gateway_name = f"{container_name[:94]}-model-gateway"
-        self.web_gateway_name = f"{container_name[:96]}-web-gateway"
-        self.solver_gateway_name = f"{container_name[:94]}-solver-gateway"
+        # Hash the complete parent name into every related resource.  Prefix
+        # slicing used to discard the per-problem/attempt suffix and made
+        # concurrent sweeps remove one another's containers.
+        self.network_name = related_docker_resource_name(container_name, "net")
+        self.gateway_name = related_docker_resource_name(
+            container_name, "model-gateway"
+        )
+        self.web_gateway_name = related_docker_resource_name(
+            container_name, "web-gateway"
+        )
+        self.solver_gateway_name = related_docker_resource_name(
+            container_name, "solver-gateway"
+        )
         self._started = False
         self._network_created = False
         self._gateway_started = False
         self._web_gateway_started = False
         self._solver_gateway_started = False
+        self._gateway_secret_dir: Path | None = None
+        self._gateway_control_dir: Path | None = None
+        self._gateway_control_path: Path | None = None
+        self._gateway_monitor_stop: threading.Event | None = None
+        self._gateway_monitor_thread: threading.Thread | None = None
+        self._gateway_terminal_error: dict | None = None
+        self._gateway_monitor_error: str | None = None
+        self._gateway_action_step_limit_reached = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -85,7 +105,7 @@ class AgentWorkspace:
         self._start_model_gateway()
         if self.adapter.network_mode == "controlled_web":
             self._start_web_gateway()
-        tool_specs = resolve_agent_tools(self.adapter.agent_tools())
+        tool_specs = resolve_agent_tools(self.adapter.runtime_tools())
         for spec in tool_specs:
             self._start_tool_gateway(spec)
 
@@ -146,6 +166,7 @@ class AgentWorkspace:
 
     def cleanup(self) -> None:
         """Force-remove the container (best effort)."""
+        self.stop_model_gateway_monitor()
         subprocess.run(
             ["docker", "rm", "-f", self.container_name],
             capture_output=True,
@@ -164,6 +185,8 @@ class AgentWorkspace:
             ["docker", "network", "rm", self.network_name],
             capture_output=True,
         )
+        self._cleanup_gateway_secret()
+        self._cleanup_gateway_control()
         self._started = False
         self._gateway_started = False
         self._web_gateway_started = False
@@ -205,6 +228,8 @@ class AgentWorkspace:
                 logger.error("Timed out killing agent container at deadline")
 
     def _remove_stale_resources(self) -> None:
+        self._cleanup_gateway_secret()
+        self._cleanup_gateway_control()
         for name in (
             self.container_name,
             self.gateway_name,
@@ -227,10 +252,177 @@ class AgentWorkspace:
             raise RuntimeError(f"Failed to create benchmark network: {result.stderr.strip()}")
         self._network_created = True
 
+    def _stage_gateway_secret(self, secret: str) -> Path:
+        """Materialize one gateway-only secret without putting it in argv."""
+        directory = Path(tempfile.mkdtemp(prefix="pddl-model-gateway-secret-"))
+        directory.chmod(0o700)
+        path = directory / "api-key"
+        path.write_text(secret)
+        path.chmod(0o600)
+        self._gateway_secret_dir = directory
+        return path
+
+    def _cleanup_gateway_secret(self) -> None:
+        if self._gateway_secret_dir is not None:
+            shutil.rmtree(self._gateway_secret_dir, ignore_errors=True)
+            self._gateway_secret_dir = None
+
+    def _stage_gateway_control(self) -> Path:
+        """Create a secret-free host/sidecar control channel for pause events."""
+        directory = Path(tempfile.mkdtemp(prefix="pddl-model-gateway-control-"))
+        directory.chmod(0o700)
+        self._gateway_control_dir = directory
+        self._gateway_control_path = directory / "state.json"
+        return self._gateway_control_path
+
+    def _cleanup_gateway_control(self) -> None:
+        if self._gateway_control_dir is not None:
+            shutil.rmtree(self._gateway_control_dir, ignore_errors=True)
+        self._gateway_control_dir = None
+        self._gateway_control_path = None
+
+    def _read_gateway_control(self) -> dict | None:
+        path = self._gateway_control_path
+        if path is None:
+            return None
+        try:
+            value = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def start_model_gateway_monitor(self, attempt_clock) -> None:
+        """Pause the agent container and active clock during transparent retry."""
+        if self._gateway_monitor_thread is not None:
+            raise RuntimeError("model gateway monitor is already running")
+        stop = threading.Event()
+        self._gateway_monitor_stop = stop
+        self._gateway_terminal_error = None
+        self._gateway_monitor_error = None
+        self._gateway_action_step_limit_reached = False
+
+        def monitor() -> None:
+            paused = False
+            try:
+                while not stop.is_set():
+                    control = self._read_gateway_control()
+                    if control is None:
+                        stop.wait(0.05)
+                        continue
+                    terminal = control.get("terminal_infra_error")
+                    action_limit_reached = bool(
+                        control.get("action_step_limit_reached")
+                    )
+                    pause_requested = bool(control.get("pause_requested"))
+                    if pause_requested and not paused:
+                        pause_started = control.get("pause_started_unix")
+                        retroactive = (
+                            max(0.0, time.time() - float(pause_started))
+                            if isinstance(pause_started, (int, float))
+                            else 0.0
+                        )
+                        attempt_clock.pause(retroactive_seconds=retroactive)
+                        result = subprocess.run(
+                            ["docker", "pause", self.container_name],
+                            capture_output=True,
+                        )
+                        if result.returncode != 0:
+                            attempt_clock.resume()
+                            self._gateway_monitor_error = "gateway_pause_failed"
+                            subprocess.run(
+                                ["docker", "kill", self.container_name],
+                                capture_output=True,
+                            )
+                            return
+                        paused = True
+                    elif not pause_requested and paused:
+                        subprocess.run(
+                            ["docker", "unpause", self.container_name],
+                            capture_output=True,
+                        )
+                        attempt_clock.resume()
+                        paused = False
+
+                    if isinstance(terminal, dict):
+                        self._gateway_terminal_error = dict(terminal)
+                        # The container remains unable to observe the synthetic
+                        # terminal response: freeze it before ending execution.
+                        if not paused:
+                            attempt_clock.pause()
+                            subprocess.run(
+                                ["docker", "pause", self.container_name],
+                                capture_output=True,
+                            )
+                            paused = True
+                        subprocess.run(
+                            ["docker", "kill", self.container_name],
+                            capture_output=True,
+                        )
+                        return
+                    if action_limit_reached:
+                        self._gateway_action_step_limit_reached = True
+                        subprocess.run(
+                            ["docker", "kill", self.container_name],
+                            capture_output=True,
+                        )
+                        return
+                    stop.wait(0.05)
+            finally:
+                if paused:
+                    subprocess.run(
+                        ["docker", "unpause", self.container_name],
+                        capture_output=True,
+                    )
+                    attempt_clock.resume()
+
+        thread = threading.Thread(
+            target=monitor,
+            name=f"gateway-monitor-{self.container_name[:40]}",
+            daemon=True,
+        )
+        self._gateway_monitor_thread = thread
+        thread.start()
+
+    def stop_model_gateway_monitor(self) -> None:
+        stop = self._gateway_monitor_stop
+        thread = self._gateway_monitor_thread
+        if stop is not None:
+            stop.set()
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=10)
+        self._gateway_monitor_stop = None
+        self._gateway_monitor_thread = None
+
+    def gateway_terminal_infra_error(self) -> dict | None:
+        if self._gateway_terminal_error is None:
+            control = self._read_gateway_control()
+            terminal = control.get("terminal_infra_error") if control else None
+            if isinstance(terminal, dict):
+                self._gateway_terminal_error = dict(terminal)
+        return (
+            dict(self._gateway_terminal_error)
+            if self._gateway_terminal_error is not None
+            else None
+        )
+
+    def gateway_monitor_error(self) -> str | None:
+        return self._gateway_monitor_error
+
+    def gateway_action_step_limit_reached(self) -> bool:
+        if not self._gateway_action_step_limit_reached:
+            control = self._read_gateway_control()
+            self._gateway_action_step_limit_reached = bool(
+                control and control.get("action_step_limit_reached")
+            )
+        return self._gateway_action_step_limit_reached
+
     def _start_model_gateway(self) -> None:
         if not MODEL_GATEWAY_SCRIPT.is_file():
             raise RuntimeError(f"Model gateway script missing: {MODEL_GATEWAY_SCRIPT}")
         gateway = self.adapter.model_gateway()
+        control_path = self._stage_gateway_control()
+        container_control_dir = "/run/benchmark-control"
+        container_control_path = f"{container_control_dir}/state.json"
         cmd = [
             "docker", "run", "-d", "--pull", "never",
             "--name", self.gateway_name,
@@ -239,6 +431,7 @@ class AgentWorkspace:
             "--add-host", "host.docker.internal:host-gateway",
             "-e", f"PDDL_GATEWAY_UPSTREAM_ORIGIN={gateway['upstream_origin']}",
             "-e", f"PDDL_GATEWAY_MAX_MODEL_CALLS={gateway['max_model_calls']}",
+            "-e", f"PDDL_GATEWAY_MAX_ACTION_STEPS={gateway['max_action_steps']}",
             "-e", f"PDDL_GATEWAY_AUTH_MODE={gateway['auth_mode']}",
             "-e", "PDDL_GATEWAY_ALLOWED_MODELS=" + json.dumps(gateway["allowed_models"]),
             "-e", (
@@ -246,11 +439,48 @@ class AgentWorkspace:
                 + json.dumps(gateway["allowed_path_prefixes"])
             ),
             "-e", f"PDDL_GATEWAY_PORT={MODEL_GATEWAY_PORT}",
+            "-e", (
+                "PDDL_GATEWAY_MAX_TRANSIENT_RETRIES="
+                + str(gateway["transient_error_policy"]["max_retries"])
+            ),
+            "-e", (
+                "PDDL_GATEWAY_TRANSIENT_BACKOFF_SECONDS="
+                + json.dumps(gateway["transient_error_policy"]["backoff_seconds"])
+            ),
+            "-e", (
+                "PDDL_GATEWAY_MAX_RETRY_AFTER_SECONDS="
+                + str(gateway["transient_error_policy"]["max_retry_after_seconds"])
+            ),
+            "-e", (
+                "PDDL_GATEWAY_RETRYABLE_HTTP_STATUSES="
+                + json.dumps(
+                    gateway["transient_error_policy"]["retryable_http_statuses"]
+                )
+            ),
+            "-e", (
+                "PDDL_GATEWAY_REQUEST_OVERRIDES="
+                + json.dumps(gateway.get("request_overrides", {}), sort_keys=True)
+            ),
+            "-e", f"PDDL_GATEWAY_CONTROL_FILE={container_control_path}",
+            "--mount",
+            (
+                f"type=bind,source={control_path.parent},"
+                f"target={container_control_dir}"
+            ),
             "-v", f"{MODEL_GATEWAY_SCRIPT}:{MODEL_GATEWAY_CONTAINER_PATH}:ro",
         ]
         secret = self.adapter.model_gateway_secret()
         if secret:
-            cmd.extend(["-e", f"PDDL_GATEWAY_API_KEY={secret}"])
+            secret_path = self._stage_gateway_secret(secret)
+            container_secret_path = "/run/secrets/pddl-model-api-key"
+            cmd.extend([
+                "-e", f"PDDL_GATEWAY_API_KEY_FILE={container_secret_path}",
+                "--mount",
+                (
+                    f"type=bind,source={secret_path},"
+                    f"target={container_secret_path},readonly"
+                ),
+            ])
         cmd.extend([self.image_name, "python3", MODEL_GATEWAY_CONTAINER_PATH])
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -467,7 +697,7 @@ class AgentWorkspace:
             timeout=10,
         )
         tests["model_gateway_reachable"] = health.exit_code == 0
-        for spec in resolve_agent_tools(self.adapter.agent_tools()):
+        for spec in resolve_agent_tools(self.adapter.runtime_tools()):
             solver_health = self.run_in_container(
                 "python3 -c "
                 + shlex.quote(
@@ -575,7 +805,7 @@ class AgentWorkspace:
         else:
             expected = f"http://{WEB_GATEWAY_HOST}:{WEB_GATEWAY_PORT}"
             no_proxy = ["model-gateway", "web-gateway"]
-            for spec in resolve_agent_tools(self.adapter.agent_tools()):
+            for spec in resolve_agent_tools(self.adapter.runtime_tools()):
                 no_proxy.append(spec.gateway_host)
             no_proxy.extend(["127.0.0.1", "localhost"])
             tests["controlled_proxy_environment_exact"] = all(
@@ -591,16 +821,36 @@ class AgentWorkspace:
             "proxy_environment_names": present_proxy_names,
         }
 
-    def validate_model_call_guard(self) -> dict:
+    def validate_action_step_guard(self) -> dict:
         stats = self.model_gateway_stats()
-        expected = self.adapter.max_model_calls
-        passed = stats.get("max_model_calls") == expected
+        expected_model_calls = self.adapter.max_model_calls
+        expected_action_steps = self.adapter.max_action_steps
+        expected_routing = self.adapter.resolved_config.model_error_routing
+        reported_routing = stats.get("transient_policy", {})
+        expected_gateway_routing = {
+            "max_retries": expected_routing["max_retries"],
+            "backoff_seconds": expected_routing["backoff_seconds"],
+            "max_retry_after_seconds": expected_routing["max_retry_after_seconds"],
+            "retryable_http_statuses": expected_routing["retryable_http_statuses"],
+        }
+        passed = (
+            stats.get("max_model_calls") == expected_model_calls
+            and stats.get("max_action_steps") == expected_action_steps
+            and stats.get("model_calls") == 0
+            and stats.get("tool_calls") == 0
+            and stats.get("action_steps") == 0
+            and reported_routing == expected_gateway_routing
+        )
         return {
-            "preset": "model-call-guard",
+            "preset": "action-step-guard",
             "version": 1,
             "status": "pass" if passed else "fail",
-            "configured_limit": expected,
-            "gateway_reported_limit": stats.get("max_model_calls"),
+            "configured_model_call_limit": expected_model_calls,
+            "gateway_reported_model_call_limit": stats.get("max_model_calls"),
+            "configured_action_step_limit": expected_action_steps,
+            "gateway_reported_action_step_limit": stats.get("max_action_steps"),
+            "configured_transient_policy": expected_gateway_routing,
+            "gateway_reported_transient_policy": reported_routing,
         }
 
     # ------------------------------------------------------------------

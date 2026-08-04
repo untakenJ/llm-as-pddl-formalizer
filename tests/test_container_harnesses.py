@@ -30,7 +30,7 @@ class ContainerHarnessTests(unittest.TestCase):
     def test_deadline_cuts_model_route_and_stops_agent_tree(self):
         adapter = get_adapter(
             "hermes", model="openai/gpt-5.4-mini", timeout=120,
-            max_turns=17, max_model_calls=10, api_key="container-test-key",
+            max_action_steps=17, max_model_calls=10, api_key="container-test-key",
         )
         workspace = AgentWorkspace(
             "container-deadline-hermes", "pddl-harness-deadline-hermes", adapter
@@ -70,7 +70,7 @@ class ContainerHarnessTests(unittest.TestCase):
         adapters = [
             get_adapter(
                 name, model="openai/gpt-5.4-mini", timeout=120,
-                max_turns=17, max_model_calls=10, api_key="container-test-key",
+                max_action_steps=17, max_model_calls=10, api_key="container-test-key",
             )
             for name in ("hermes", "nanobot", "zeroclaw", "generic")
         ]
@@ -195,7 +195,7 @@ class ContainerHarnessTests(unittest.TestCase):
         self.addCleanup(Path(profile_file.name).unlink, missing_ok=True)
         adapter = get_adapter(
             "hermes", model="openai/gpt-5.4-mini", timeout=120,
-            max_turns=17, max_model_calls=10, api_key="container-test-key",
+            max_action_steps=17, max_model_calls=10, api_key="container-test-key",
             benchmark_profile=load_benchmark_profile(profile_file.name),
         )
         workspace = AgentWorkspace(
@@ -245,7 +245,7 @@ class ContainerHarnessTests(unittest.TestCase):
     def test_generic_delivery_copy_survives_temp_memory_overlays(self):
         adapter = get_adapter(
             "generic", model="openai/gpt-5.4-mini", timeout=120,
-            max_turns=17, max_model_calls=10, api_key="container-test-key",
+            max_action_steps=17, max_model_calls=10, api_key="container-test-key",
         )
         instance_id = "container-generic-copy"
         workspace = AgentWorkspace(

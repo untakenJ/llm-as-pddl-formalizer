@@ -39,6 +39,12 @@ GEMINI_BACKEND = "google-vertex-api-key"
 GEMINI_INTERACTIONS_BACKEND = "google-developer-api-key"
 GEMINI_API_KEY_ENV = "GOOGLE_CLOUD_API_KEY"
 
+# Application-level 429 / RESOURCE_EXHAUSTED retries for the non-agent API
+# pipelines (llm-as-formalizer-api / llm-as-planner-api). Three attempts total;
+# only raise after all three fail. Backoff is applied between attempts.
+RATE_LIMIT_MAX_ATTEMPTS = 3
+RATE_LIMIT_BACKOFF_SECONDS = (10.0, 30.0, 60.0)
+
 OPENAI_API_MODELS = [
     "gpt-3.5-turbo",
     "gpt-4o-mini",
@@ -244,6 +250,66 @@ def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def is_rate_limit_error(exc: BaseException) -> bool:
+    """True for HTTP 429 / RESOURCE_EXHAUSTED / quota-style rate limits."""
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    if code == 429:
+        return True
+    text = str(exc)
+    upper = text.upper()
+    return (
+        "429" in text
+        or "RESOURCE_EXHAUSTED" in upper
+        or "TOO_MANY_REQUESTS" in upper
+        or "RATE_LIMIT" in upper
+        or "QUOTA EXCEEDED" in upper
+    )
+
+
+def call_with_rate_limit_retry(
+    fn,
+    *,
+    tracer=None,
+    provider: str = "",
+    max_attempts: int = RATE_LIMIT_MAX_ATTEMPTS,
+    backoff_seconds: tuple[float, ...] = RATE_LIMIT_BACKOFF_SECONDS,
+):
+    """Call ``fn`` up to ``max_attempts`` times on rate-limit errors.
+
+    Non-rate-limit exceptions propagate immediately. After the final failed
+    rate-limit attempt the last exception is re-raised.
+    """
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be >= 1")
+    last_exc: BaseException | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return fn()
+        except Exception as e:
+            last_exc = e
+            if not is_rate_limit_error(e) or attempt >= max_attempts:
+                raise
+            delay = backoff_seconds[min(attempt - 1, len(backoff_seconds) - 1)]
+            print(
+                f"[{provider or 'api'}] rate limit (429); "
+                f"retry {attempt}/{max_attempts} after {delay:.0f}s: {e}",
+                flush=True,
+            )
+            if tracer:
+                tracer.emit(
+                    "rate_limit_retry",
+                    provider=provider,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    delay_s=delay,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                )
+            time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
 def _serialize_response(resp) -> dict:
     if hasattr(resp, "model_dump"):
         return resp.model_dump(mode="json", exclude_none=True)
@@ -307,7 +373,11 @@ def _respond_openai(client, model, input_items, text_format, tools=None, tool_ex
             tracer.emit("request", round=round_idx, provider="openai", kwargs=kwargs)
         t0 = time.monotonic()
         try:
-            resp = client.responses.create(**kwargs)
+            resp = call_with_rate_limit_retry(
+                lambda: client.responses.create(**kwargs),
+                tracer=tracer,
+                provider="openai",
+            )
         except Exception as e:
             if tracer:
                 tracer.emit("api_error", round=round_idx, provider="openai",
@@ -467,10 +537,14 @@ def generate_gemini_json(
 
     t0 = time.monotonic()
     try:
-        resp = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=config,
+        resp = call_with_rate_limit_retry(
+            lambda: client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=config,
+            ),
+            tracer=tracer,
+            provider=GEMINI_PROVIDER,
         )
     except Exception as e:
         if tracer:

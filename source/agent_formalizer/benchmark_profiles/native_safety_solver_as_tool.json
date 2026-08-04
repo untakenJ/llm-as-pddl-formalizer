@@ -1,12 +1,12 @@
 {
-  "schema_version": 2,
-  "profile_id": "pddl-native-safety-solver-as-tool-v1",
+  "schema_version": 3,
+  "profile_id": "pddl-native-safety-solver-as-tool-v4",
   "native_clean": {
     "id": "official-clean-v1",
     "mode": "official-init-or-version-bound-snapshot"
   },
   "benchmark_envelope": {
-    "id": "native-safety-v1",
+    "id": "native-safety-v4",
     "control_model": "google-vertex/gemini-3.1-flash-lite",
     "safety_guards": {
       "harness_execution_timeout_seconds": {
@@ -19,16 +19,23 @@
         "role": "safety_guard",
         "scope": "per_attempt"
       },
-      "native_iterations": {
+      "action_steps": {
         "limit": 200,
         "role": "safety_guard",
         "scope": "per_attempt",
-        "cross_harness_comparable": false
+        "cross_harness_comparable": true
       }
     },
     "network": {
       "mode": "model_only",
       "controlled_web_allowlist": []
+    },
+    "model_error_routing": {
+      "id": "external-transient-v2",
+      "max_retries": 5,
+      "backoff_seconds": [1, 2, 4, 8, 16],
+      "max_retry_after_seconds": 60,
+      "retryable_http_statuses": [408, 429, 502, 503, 504, 520, 521, 522, 523, 524, 525, 529]
     },
     "interaction": {
       "mode": "noninteractive"
@@ -75,7 +82,7 @@
         "required": true
       },
       {
-        "preset": "model-call-guard",
+        "preset": "action-step-guard",
         "version": 1,
         "required": true
       }
@@ -86,6 +93,7 @@
       "runtime_lock",
       "execution_timing",
       "model_gateway_summary",
+      "actions",
       "model_call_ledger",
       "generation_result",
       "completion_record"
@@ -112,6 +120,8 @@
       "runtime_lock_mismatch",
       "runner_internal_error",
       "required_evidence_failed",
+      "gateway_pause_failed",
+      "provider_transient_exhausted",
       "solver_gateway_start_failed"
     ]
   },
@@ -127,6 +137,7 @@
     "hermes": {},
     "nanobot": {},
     "zeroclaw": {},
-    "generic": {}
+    "generic": {},
+    "minimum": {}
   }
 }

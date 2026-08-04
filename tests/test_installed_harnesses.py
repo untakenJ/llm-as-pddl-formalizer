@@ -105,7 +105,9 @@ class InstalledHarnessTests(unittest.TestCase):
     def test_nanobot_accepts_generated_config(self):
         python = NANOBOT_ENV_PATH / "bin" / "python"
         require_path(python)
-        config = NanoBotAdapter("openai/gpt-5.4-mini", 120, 17)._benchmark_config()
+        config = NanoBotAdapter(
+            "openai/gpt-5.4-mini", 120, max_action_steps=200
+        )._benchmark_config()
         code = (
             "import sys; from nanobot.config.schema import Config; "
             "c=Config.model_validate_json(sys.stdin.read()); "
@@ -123,7 +125,9 @@ class InstalledHarnessTests(unittest.TestCase):
 
     def test_zeroclaw_accepts_generated_v3_config(self):
         require_path(ZEROCLAW_BIN)
-        adapter = ZeroClawAdapter("openai/gpt-5.4-mini", 120, 17)
+        adapter = ZeroClawAdapter(
+            "openai/gpt-5.4-mini", 120, max_action_steps=200
+        )
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp)
             (config_dir / "config.toml").write_text(adapter._benchmark_config_toml())

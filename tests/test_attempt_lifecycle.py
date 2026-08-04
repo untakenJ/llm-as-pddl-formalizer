@@ -45,6 +45,20 @@ def valid_result(*, generated: bool, payload: bytes = b""):
     )
 
 
+def minimal_evidence() -> dict:
+    return {
+        "evidence": "minimal",
+        "actions": {
+            "model_calls": 0,
+            "tool_calls": 0,
+            "action_steps": 0,
+            "max_model_calls": 50,
+            "max_action_steps": 200,
+            "action_step_limit_reached": False,
+        },
+    }
+
+
 class AttemptLifecycleTests(unittest.TestCase):
     def invoke(self, root: Path, fake, *, config=None):
         return _run_attempt(
@@ -72,7 +86,7 @@ class AttemptLifecycleTests(unittest.TestCase):
             calls.append(kwargs["execution_try"])
             if len(calls) == 1:
                 raise InfraInvalid("container_start_failed", "docker unavailable")
-            return valid_result(generated=False), {"evidence": "minimal"}
+            return valid_result(generated=False), minimal_evidence()
 
         with tempfile.TemporaryDirectory() as tmp, patch(
             "agent_formalizer.orchestrator._run_execution_try", side_effect=fake
@@ -92,7 +106,7 @@ class AttemptLifecycleTests(unittest.TestCase):
     def test_timeout_without_files_is_valid_and_not_retried(self):
         with tempfile.TemporaryDirectory() as tmp, patch(
             "agent_formalizer.orchestrator._run_execution_try",
-            return_value=(valid_result(generated=False), {"evidence": "minimal"}),
+            return_value=(valid_result(generated=False), minimal_evidence()),
         ) as run:
             result = self.invoke(Path(tmp), run)
 
@@ -107,7 +121,7 @@ class AttemptLifecycleTests(unittest.TestCase):
             "agent_formalizer.orchestrator._run_execution_try",
             return_value=(
                 valid_result(generated=True, payload=payload),
-                {"evidence": "minimal"},
+                minimal_evidence(),
             ),
         ):
             root = Path(tmp)
@@ -127,7 +141,7 @@ class AttemptLifecycleTests(unittest.TestCase):
             root = Path(tmp)
             with patch(
                 "agent_formalizer.orchestrator._run_execution_try",
-                return_value=(valid_result(generated=False), {"evidence": "minimal"}),
+                return_value=(valid_result(generated=False), minimal_evidence()),
             ):
                 first = self.invoke(root, None)
             with patch(
@@ -150,6 +164,56 @@ class AttemptLifecycleTests(unittest.TestCase):
         self.assertFalse(result.attempt_valid)
         self.assertEqual(result.status, "infra_invalid")
         self.assertIsNone(result.completion_path)
+
+    def test_provider_transient_exhaustion_is_invalid_without_auto_rerun(self):
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "agent_formalizer.orchestrator._run_execution_try",
+            side_effect=InfraInvalid(
+                "provider_transient_exhausted",
+                "provider unavailable",
+                retry_execution=False,
+            ),
+        ) as run:
+            root = Path(tmp)
+            result = self.invoke(root, run, config=adapter(max_tries=3))
+            invalid_path = result.completion_path
+            records = list(root.glob("**/invalid_attempt.json"))
+
+        self.assertEqual(run.call_count, 1)
+        self.assertFalse(result.attempt_valid)
+        self.assertEqual(result.status, "infra_invalid")
+        self.assertIsNone(invalid_path)
+        self.assertEqual(len(records), 1)
+
+    def test_manual_rerun_preserves_invalid_execution_and_uses_next_number(self):
+        calls = []
+
+        def fake(*args, **kwargs):
+            calls.append(kwargs["execution_try"])
+            if len(calls) == 1:
+                raise InfraInvalid(
+                    "provider_transient_exhausted",
+                    "provider unavailable",
+                    retry_execution=False,
+                )
+            return valid_result(generated=False), minimal_evidence()
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "agent_formalizer.orchestrator._run_execution_try", side_effect=fake
+        ):
+            root = Path(tmp)
+            first = self.invoke(root, fake)
+            second = self.invoke(root, fake)
+            completion = json.loads(second.completion_path.read_text())
+
+        self.assertFalse(first.attempt_valid)
+        self.assertTrue(second.attempt_valid)
+        self.assertEqual(calls, [1, 2])
+        self.assertEqual(completion["selected_execution_try"], 2)
+        self.assertEqual(
+            completion["invalid_executions"][0]["infra_invalidator"],
+            "provider_transient_exhausted",
+        )
 
 
 if __name__ == "__main__":

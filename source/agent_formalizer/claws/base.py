@@ -22,6 +22,7 @@ Hook call order for one problem (see orchestrator.run_one_problem):
 from __future__ import annotations
 
 import logging
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -30,6 +31,105 @@ from typing import Iterable
 from agent_formalizer.result_types import AgentResult
 
 logger = logging.getLogger(__name__)
+
+
+class AttemptClock:
+    """Thread-safe active-time clock that can exclude infrastructure pauses."""
+
+    def __init__(self, limit_seconds: float):
+        self.limit_seconds = float(limit_seconds)
+        self.started_monotonic = time.monotonic()
+        self._deadline = self.started_monotonic + self.limit_seconds
+        self._lock = threading.RLock()
+        self._pause_depth = 0
+        self._pause_started: float | None = None
+        self._paused_seconds = 0.0
+
+    def pause(self, *, retroactive_seconds: float = 0.0) -> None:
+        """Freeze active time, optionally crediting monitor-observation delay."""
+        with self._lock:
+            if self._pause_depth == 0:
+                credit = max(0.0, float(retroactive_seconds))
+                self._deadline += credit
+                self._paused_seconds += credit
+                self._pause_started = time.monotonic()
+            self._pause_depth += 1
+
+    def resume(self) -> None:
+        with self._lock:
+            if self._pause_depth <= 0:
+                return
+            self._pause_depth -= 1
+            if self._pause_depth == 0 and self._pause_started is not None:
+                duration = time.monotonic() - self._pause_started
+                self._deadline += duration
+                self._paused_seconds += duration
+                self._pause_started = None
+
+    def remaining(self) -> float:
+        with self._lock:
+            reference = (
+                self._pause_started
+                if self._pause_depth > 0 and self._pause_started is not None
+                else time.monotonic()
+            )
+            return max(0.0, self._deadline - reference)
+
+    def expired(self) -> bool:
+        return self.remaining() <= 0.0
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            now = time.monotonic()
+            live_pause = (
+                now - self._pause_started
+                if self._pause_depth > 0 and self._pause_started is not None
+                else 0.0
+            )
+            paused = self._paused_seconds + live_pause
+            wall = now - self.started_monotonic
+            return {
+                "limit_seconds": self.limit_seconds,
+                "wall_duration_seconds": round(wall, 6),
+                "infra_pause_seconds": round(paused, 6),
+                "active_duration_seconds": round(max(0.0, wall - paused), 6),
+                "paused": self._pause_depth > 0,
+                "deadline_exceeded": self.remaining() <= 0.0,
+            }
+
+
+def run_process_with_attempt_clock(
+    cmd: list[str],
+    *,
+    clock: AttemptClock,
+    capture_output: bool = True,
+    text: bool = True,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    """Run a process against active time rather than a fixed wall timeout."""
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE if capture_output else None,
+        stderr=subprocess.PIPE if capture_output else None,
+        text=text,
+        env=env,
+    )
+    while True:
+        remaining = clock.remaining()
+        if remaining <= 0:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            raise subprocess.TimeoutExpired(
+                cmd,
+                clock.limit_seconds,
+                output=stdout,
+                stderr=stderr,
+            )
+        try:
+            stdout, stderr = proc.communicate(timeout=min(0.25, remaining))
+            return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            continue
 
 
 class BaseClawAdapter:
@@ -42,7 +142,7 @@ class BaseClawAdapter:
         self,
         model: str,
         timeout: int,
-        max_turns: int | None = None,
+        max_action_steps: int = 200,
         *,
         max_model_calls: int = 50,
         allow_network: bool = False,
@@ -53,10 +153,14 @@ class BaseClawAdapter:
     ):
         self.model = model
         self.timeout = timeout
-        self.max_turns = max_turns
+        self.max_action_steps = max_action_steps
         self.max_model_calls = max_model_calls
-        if timeout <= 0 or max_model_calls <= 0 or (max_turns is not None and max_turns <= 0):
-            raise ValueError("timeout, max_turns, and max_model_calls must be positive")
+        if timeout <= 0 or max_model_calls <= 0 or max_action_steps <= 0:
+            raise ValueError(
+                "timeout, max_model_calls, and max_action_steps must be positive"
+            )
+        if max_model_calls > max_action_steps:
+            raise ValueError("max_model_calls cannot exceed max_action_steps")
         self.network_mode = network_mode or (
             "controlled_web" if allow_network else "model_only"
         )
@@ -73,27 +177,41 @@ class BaseClawAdapter:
             return []
         return list(self.resolved_config.agent_tools)
 
+    def runtime_tools(self) -> list[str]:
+        """Benchmark sidecars/CLIs needed by the harness execution.
+
+        Ordinary harnesses expose exactly the configured model-selectable
+        agent tools. A fixed-loop adapter may override this to use a
+        benchmark-controlled service without presenting it as a model tool.
+        """
+        return self.agent_tools()
+
     def pddl_solver_tool_enabled(self) -> bool:
         from agent_formalizer.tools.solver import TOOL_ID
 
         return TOOL_ID in self.agent_tools()
 
-    def begin_attempt_clock(self) -> None:
+    def begin_attempt_clock(self) -> AttemptClock:
         """Start the envelope deadline after infrastructure setup."""
-        self._attempt_clock.deadline = time.monotonic() + self.timeout
+        clock = AttemptClock(self.timeout)
+        self._attempt_clock.clock = clock
+        return clock
+
+    def current_attempt_clock(self) -> AttemptClock | None:
+        return getattr(self._attempt_clock, "clock", None)
 
     def remaining_timeout(self) -> float:
-        deadline = getattr(self._attempt_clock, "deadline", None)
-        if deadline is None:
+        clock = self.current_attempt_clock()
+        if clock is None:
             return self.timeout
-        return max(0.001, deadline - time.monotonic())
+        return max(0.001, clock.remaining())
 
     def deadline_exceeded(self) -> bool:
-        deadline = getattr(self._attempt_clock, "deadline", None)
-        return deadline is not None and time.monotonic() >= deadline
+        clock = self.current_attempt_clock()
+        return clock is not None and clock.expired()
 
     def end_attempt_clock(self) -> None:
-        self._attempt_clock.deadline = None
+        self._attempt_clock.clock = None
 
     # ------------------------------------------------------------------
     # Container integration
@@ -185,6 +303,26 @@ class BaseClawAdapter:
         """Yield per-step agent loop records (user/assistant/tool I/O)."""
         return []
 
+    def additional_action_metrics(self, artifact_dir: Path | None = None) -> dict:
+        """Adapter-specific counters that do not redefine public action steps."""
+        return {}
+
+    def build_task_prompt(
+        self, domain_description: str, problem_description: str
+    ) -> str:
+        """Render the exact task message transported to this harness."""
+        from agent_formalizer.prompt import build_prompt
+
+        contract = self.resolved_config.raw["resolved"]["artifact_contract"]
+        return build_prompt(
+            domain_description,
+            problem_description,
+            template_path=None,
+            domain_output_name=contract["workspace_domain_file"],
+            problem_output_name=contract["workspace_problem_file"],
+            agent_tools=self.resolved_config.agent_tools,
+        )
+
     def prompt_template(self) -> Path | None:
         """Prompt template override; None means prompts/default.txt."""
         return None
@@ -215,13 +353,33 @@ class BaseClawAdapter:
         from urllib.parse import urlsplit
 
         origin = urlsplit(self.upstream_api_base())
-        return {
+        value = {
             "upstream_origin": f"{origin.scheme}://{origin.netloc}",
             "max_model_calls": self.max_model_calls,
+            "max_action_steps": self.max_action_steps,
             "auth_mode": "bearer",
             "allowed_models": [self.model.split("/", 1)[-1]],
             "allowed_path_prefixes": [origin.path.rstrip("/") or "/v1"],
         }
+        if self.resolved_config is not None:
+            value["transient_error_policy"] = (
+                self.resolved_config.model_error_routing
+            )
+            value["request_overrides"] = (
+                self.resolved_config.generation_overrides
+            )
+        else:
+            value["transient_error_policy"] = {
+                "id": "external-transient-v2",
+                "max_retries": 5,
+                "backoff_seconds": [1, 2, 4, 8, 16],
+                "max_retry_after_seconds": 60,
+                "retryable_http_statuses": [
+                    408, 429, 502, 503, 504, 520, 521, 522, 523, 524, 525, 529
+                ],
+            }
+            value["request_overrides"] = {}
+        return value
 
     def model_gateway_secret(self) -> str | None:
         """Optional gateway-only credential; never written to metadata."""
@@ -240,13 +398,6 @@ class BaseClawAdapter:
 
     def translation_ledger(self) -> dict:
         """Map benchmark-owned rules without treating native differences as errors."""
-        iteration_surfaces = {
-            "openclaw": "no exact native turn flag; gateway request guard + outer deadline",
-            "hermes": "agent.max_turns and hermes chat --max-turns",
-            "nanobot": "agents.defaults.maxToolIterations",
-            "zeroclaw": "runtime_profiles.benchmark.max_tool_iterations",
-            "generic": "version-bound generated wrapper changes upstream max_turns literal",
-        }
         interaction_surfaces = {
             "openclaw": "local CLI agent run has no interactive approval channel",
             "hermes": "hermes chat --yolo --quiet",
@@ -290,21 +441,48 @@ class BaseClawAdapter:
                 "harness_execution_timeout_seconds": {
                     "resolved_value": self.timeout,
                     "implementation": (
-                        "runner monotonic deadline from native harness startup until native "
-                        "harness exit; complete container termination on deadline"
+                        "runner active-time deadline from native harness startup until native "
+                        "harness exit; benchmark-owned provider transient retry pauses the "
+                        "agent container and clock; complete container termination on deadline"
                     ),
                     "evidence": "execution_timing and deadline termination test",
                 },
                 "control_model_request_attempts": {
                     "resolved_value": self.max_model_calls,
-                    "implementation": "model gateway reserves one shared slot before forwarding",
-                    "evidence": "model-call-guard and model_call_ledger",
+                    "implementation": (
+                        "model gateway reserves one shared logical-call slot before forwarding; "
+                        "benchmark-owned physical transient retries do not reserve extra slots"
+                    ),
+                    "evidence": "action-step-guard and model_call_ledger",
                 },
-                "native_iterations": {
-                    "resolved_value": self.max_turns,
-                    "implementation": iteration_surfaces.get(self.name, "adapter-defined"),
-                    "cross_harness_comparable": False,
-                    "evidence": "materialized native config",
+                "action_steps": {
+                    "resolved_value": self.max_action_steps,
+                    "metric": "model_calls + tool_calls",
+                    "implementation": (
+                        "the shared model gateway reserves one step for every "
+                        "logical model request and one step for each structured "
+                        "tool invocation before delivering the response"
+                    ),
+                    "evidence": (
+                        "action-step-guard, model_gateway_summary, and "
+                        "model_call_ledger"
+                    ),
+                },
+                "model_error_routing": {
+                    "resolved_value": (
+                        self.resolved_config.model_error_routing
+                        if self.resolved_config is not None
+                        else None
+                    ),
+                    "implementation": (
+                        "fixed-route gateway classifies by source, HTTP status, structured "
+                        "provider error, and transport phase; safe external transients are "
+                        "hidden, request errors are returned to the native harness"
+                    ),
+                    "evidence": (
+                        "action-step-guard-v1, physical-attempt ledger, pause timing, and "
+                        "provider_infra_invalid record"
+                    ),
                 },
                 "network": {
                     "resolved_value": self.network_policy(),
@@ -358,6 +536,22 @@ class BaseClawAdapter:
                         else "resolved agent_tools empty"
                     ),
                 },
+                "generation": {
+                    "resolved_value": (
+                        self.resolved_config.generation_overrides
+                        if self.resolved_config is not None
+                        else {}
+                    ),
+                    "implementation": (
+                        "condition-level model-gateway request override; "
+                        "OpenAI-compatible payloads use top-level fields and "
+                        "native Gemini payloads use generationConfig"
+                    ),
+                    "evidence": (
+                        "resolved config, model gateway effective config, and "
+                        "per-request override ledger"
+                    ),
+                },
             },
         }
 
@@ -367,8 +561,8 @@ class BaseClawAdapter:
             "model": self.model,
             "budgets": {
                 "timeout_seconds": self.timeout,
-                "max_turns": self.max_turns,
                 "max_model_calls": self.max_model_calls,
+                "max_action_steps": self.max_action_steps,
             },
             "network": self.network_policy(),
             "model_route": self.model_auth(),

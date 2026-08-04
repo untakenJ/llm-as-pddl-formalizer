@@ -48,11 +48,12 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         self,
         model: str,
         timeout: int,
-        max_turns: int | None = None,
+        max_action_steps: int = 200,
         *,
         model_api_keys: dict[str, str] | None = None,
         api_key: str | None = None,
         api_key_name: str | None = None,
+        credential_metadata: dict | None = None,
         provider_options: dict | None = None,
         max_model_calls: int = 50,
         allow_network: bool = False,
@@ -64,10 +65,11 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         super().__init__(
             model,
             timeout,
-            max_turns,
+            max_action_steps,
             model_api_keys=model_api_keys,
             api_key=api_key,
             api_key_name=api_key_name,
+            credential_metadata=credential_metadata,
             provider_options=provider_options,
             max_model_calls=max_model_calls,
             allow_network=allow_network,
@@ -135,9 +137,6 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
                 (state / "memory").mkdir()
             (state / "config" / "mykey.py").write_text(self._mykey_source())
             self._copy_official_schemas(state / "config")
-            (state / "config" / "benchmark_agentmain.py").write_text(
-                self._agentmain_wrapper_source()
-            )
             self._instance_states[instance_id] = state
         return state
 
@@ -212,20 +211,6 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             "state_dir": str(GENERIC_BENCHMARK_STATE_DIR),
         }
 
-    def _agentmain_wrapper_source(self) -> str:
-        max_turns = int(self.max_turns or 200)
-        return (
-            "from pathlib import Path\n"
-            f"source_path = Path({str(self.runtime_repo / 'agentmain.py')!r})\n"
-            "source = source_path.read_text()\n"
-            "needle = 'max_turns=180'\n"
-            "if source.count(needle) != 1:\n"
-            "    raise RuntimeError('GenericAgent max-turn patch point changed')\n"
-            f"source = source.replace(needle, 'max_turns={max_turns}', 1)\n"
-            "scope = {'__name__': '__main__', '__file__': str(source_path)}\n"
-            "exec(compile(source, str(source_path), 'exec'), scope, scope)\n"
-        )
-
     def effective_config(self) -> dict:
         value = super().effective_config()
         value["harness_config"] = {
@@ -233,7 +218,6 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             "tool_schemas": "pinned-official-unmodified",
             "plugins": "pinned-official-repository",
             "memory": self.tool_policy()["memory"],
-            "max_turns_patch": int(self.max_turns or 200),
         }
         return value
 
@@ -290,6 +274,11 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             self.docker_exec_env_args(
                 {
                     "PYTHONPATH": f"{config_dir}:{self.runtime_repo}",
+                    # Usage is emitted by the pinned runtime with print().
+                    # The adapter may observe the native round-end sentinel
+                    # before block-buffered stdout is flushed, so make those
+                    # diagnostic lines durable without changing agent logic.
+                    "PYTHONUNBUFFERED": "1",
                     "GA_LANG": "en",
                     "HOME": "/tmp/genericagent-pddl-benchmark",
                     "NO_COLOR": "1",
@@ -300,7 +289,7 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             [
                 container_name,
                 str(self.runtime_python),
-                str(config_dir / "benchmark_agentmain.py"),
+                str(self.runtime_repo / "agentmain.py"),
                 "--task",
                 agent_id,
                 "--llm_no",
@@ -317,12 +306,16 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         output_path = host_task / "output.txt"
         sentinel_seen = False
         timed_out = False
-        attempt_deadline = getattr(self._attempt_clock, "deadline", None)
-        deadline = min(started + self.timeout, attempt_deadline or float("inf"))
+        clock = self.current_attempt_clock()
+        fallback_deadline = started + self.timeout
         with capture_stdout.open("w") as stdout_fp, capture_stderr.open("w") as stderr_fp:
             proc = subprocess.Popen(cmd, stdout=stdout_fp, stderr=stderr_fp, text=True)
             try:
-                while time.monotonic() < deadline:
+                while (
+                    not clock.expired()
+                    if clock is not None
+                    else time.monotonic() < fallback_deadline
+                ):
                     if output_path.is_file():
                         try:
                             if ROUND_END in output_path.read_text(errors="replace"):
@@ -473,8 +466,13 @@ def _parse_usage_text(text: str) -> dict:
     for match in OAI_INPUT_RE.finditer(text or ""):
         if any(start <= match.start() < end for start, end in anthropic_spans):
             continue
-        total["input"] += int(match.group(1))
-        total["cacheRead"] += int(match.group(2))
+        prompt = int(match.group(1))
+        cached = min(prompt, int(match.group(2)))
+        # OpenAI-compatible prompt/input tokens include the cached subset.
+        # Store disjoint buckets, matching OpenClaw/Hermes/Nanobot.
+        total["input"] += prompt - cached
+        total["cacheRead"] += cached
     for match in OAI_OUTPUT_RE.finditer(text or ""):
         total["output"] += int(match.group(1))
+    total["total"] = sum(total.values())
     return total

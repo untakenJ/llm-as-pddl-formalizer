@@ -85,12 +85,18 @@ def docker_image_info(image: str) -> dict[str, Any]:
     }
 
 
-def host_runtime_info() -> dict[str, Any]:
-    return {
+def host_runtime_info(*, include_docker: bool = True) -> dict[str, Any]:
+    value = {
         "python": sys.version.splitlines()[0],
         "platform": platform.platform(),
-        "docker": run_text(["docker", "version", "--format", "{{.Server.Version}}"]),
     }
+    if include_docker:
+        value["docker"] = run_text(
+            ["docker", "version", "--format", "{{.Server.Version}}"]
+        )
+    else:
+        value["docker_required"] = False
+    return value
 
 
 def fingerprint(value: Any) -> dict[str, Any]:

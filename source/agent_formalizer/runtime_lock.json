@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "lock_id": "agent-harness-runtime-2026-07-18",
+  "lock_id": "agent-harness-runtime-2026-08-04",
   "container": {
     "reference": "pddl-agent-base:latest",
     "image_id": "sha256:804a1c8db954455393fb44455c95a92cbda5247f9b7ad52f56f4af50ae550df1",
@@ -60,6 +60,12 @@
       "binary_sha256": "2ba3667e590068882a4958c6fb0b1a8fda162b32b67f44ca38841cc1c10074db",
       "source_commit": "85e0cfafbe677590e4fe5947f83673bb49ba0fc2",
       "cargo_lock_sha256": "11060e8c445e1ef8f64a37546fd987c34bcc4af06b88cffcba9a9dc591df916a",
+      "native_assets_manifest_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "native_assets_count": 0
+    },
+    "minimum": {
+      "runtime_kind": "benchmark-owned-python-stdlib",
+      "runtime_entrypoint_sha256": "9ef0e08cbf6bbf4e11076023b3a22e10ecc0fce4123e07dd67a40a5805bf1f78",
       "native_assets_manifest_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "native_assets_count": 0
     }

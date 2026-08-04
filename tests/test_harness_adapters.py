@@ -6,15 +6,19 @@ from copy import deepcopy
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 from agent_formalizer.claws import CLAWS, get_adapter
 from agent_formalizer.benchmark_profile import (
+    BENCHMARK_PROFILES_DIR,
     DEFAULT_BENCHMARK_PROFILE,
+    DEFAULT_PROFILE_PATH,
+    load_benchmark_profile,
     with_google_vertex_project,
 )
 from agent_formalizer.claws.common import (
@@ -28,8 +32,17 @@ from agent_formalizer.claws.generic import (
     _parse_usage_text,
 )
 from agent_formalizer.claws.hermes import HermesAdapter, _read_hermes_usage
-from agent_formalizer.claws.nanobot import NanoBotAdapter
-from agent_formalizer.claws.openclaw import OpenClawAdapter
+from agent_formalizer.claws.nanobot import (
+    NANOBOT_USAGE_CAPTURE_SOURCE,
+    NANOBOT_USAGE_PATH,
+    NanoBotAdapter,
+    _nanobot_usage_measurement,
+    _normalize_nanobot_usage,
+)
+from agent_formalizer.claws.openclaw import (
+    OpenClawAdapter,
+    _normalize_openclaw_usage,
+)
 from agent_formalizer.claws.zeroclaw import ZeroClawAdapter, _parse_costs
 from agent_formalizer.config import CLAW_DEFAULTS, agent_model_label
 from agent_formalizer.util import read_named_secret, read_named_setting
@@ -40,34 +53,104 @@ from sweep_agent_pipeline import (
     _resolve_model_label,
 )
 
+NATIVE_HARNESSES = {"openclaw", "hermes", "nanobot", "zeroclaw", "generic"}
+
 
 class AdapterRegistryTests(unittest.TestCase):
     def test_all_requested_harnesses_are_registered(self):
         self.assertEqual(
             set(CLAWS),
-            {"openclaw", "hermes", "nanobot", "zeroclaw", "generic"},
+            {*NATIVE_HARNESSES, "minimum"},
         )
 
     def test_defaults_construct(self):
-        for name in CLAWS:
+        for name in NATIVE_HARNESSES:
             with self.subTest(name=name):
                 adapter = get_adapter(name)
                 self.assertEqual(adapter.name, name)
                 self.assertEqual(adapter.model, "google-vertex/gemini-3.1-flash-lite")
                 self.assertEqual(adapter.timeout, 1800)
-                self.assertEqual(adapter.max_turns, 200)
                 self.assertEqual(adapter.max_model_calls, 50)
+                self.assertEqual(adapter.max_action_steps, 200)
                 self.assertFalse(adapter.allow_network)
+                self.assertEqual(
+                    adapter.resolved_config.model_error_routing,
+                    DEFAULT_BENCHMARK_PROFILE.raw["benchmark_envelope"]
+                    ["model_error_routing"],
+                )
 
     def test_versioned_profile_drives_every_default(self):
-        self.assertEqual(DEFAULT_BENCHMARK_PROFILE.schema_version, 2)
+        self.assertEqual(DEFAULT_BENCHMARK_PROFILE.schema_version, 3)
+        self.assertEqual(DEFAULT_PROFILE_PATH.parent, BENCHMARK_PROFILES_DIR)
+        self.assertEqual(DEFAULT_PROFILE_PATH.name, "native_safety_native_clean.json")
+        envelope = DEFAULT_BENCHMARK_PROFILE.raw["benchmark_envelope"]
+        self.assertEqual(envelope["id"], "native-safety-v4")
+        self.assertEqual(
+            set(envelope["safety_guards"]),
+            {
+                "harness_execution_timeout_seconds",
+                "control_model_request_attempts",
+                "action_steps",
+            },
+        )
+        self.assertIn("actions", envelope["required_evidence"])
+        self.assertEqual(
+            load_benchmark_profile(
+                BENCHMARK_PROFILES_DIR / "native_safety_solver_as_tool.json"
+            ).raw["condition_profile"]["id"],
+            "solver-as-tool",
+        )
+        temperature_profile = load_benchmark_profile(
+            BENCHMARK_PROFILES_DIR / "native_safety_temperature_0_1.json"
+        )
+        solver_temperature_profile = load_benchmark_profile(
+            BENCHMARK_PROFILES_DIR
+            / "native_safety_solver_as_tool_temperature_0_1.json"
+        )
+        for name in NATIVE_HARNESSES:
+            self.assertEqual(
+                temperature_profile.resolve(name).generation_overrides,
+                {"temperature": 0.1},
+            )
+            resolved = solver_temperature_profile.resolve(name)
+            self.assertEqual(
+                resolved.generation_overrides,
+                {"temperature": 0.1},
+            )
+            self.assertEqual(resolved.agent_tools, ["pddl_solver"])
         self.assertEqual(
             {value["model"] for value in CLAW_DEFAULTS.values()},
             {DEFAULT_BENCHMARK_PROFILE.default_model},
         )
 
+    def test_model_call_budget_cannot_exceed_action_step_budget(self):
+        raw = deepcopy(DEFAULT_BENCHMARK_PROFILE.raw)
+        raw["benchmark_envelope"]["safety_guards"]["action_steps"]["limit"] = 49
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "invalid-budget.json"
+            path.write_text(json.dumps(raw))
+            with self.assertRaisesRegex(
+                ValueError, "cannot exceed action_steps.limit"
+            ):
+                load_benchmark_profile(path)
+
+    def test_practical_unlimited_profile_uses_large_integer_budgets(self):
+        profile = load_benchmark_profile(
+            BENCHMARK_PROFILES_DIR / "native_clean_practical_unlimited.json"
+        )
+        for name in NATIVE_HARNESSES:
+            with self.subTest(name=name):
+                resolved = profile.resolve(name)
+                self.assertEqual(resolved.timeout, 2_147_483_647)
+                self.assertEqual(resolved.max_model_calls, 2_147_483_647)
+                self.assertEqual(resolved.max_action_steps, 2_147_483_647)
+                self.assertEqual(
+                    resolved.raw["condition_profile"]["id"],
+                    "practical-unlimited",
+                )
+
     def test_unrestricted_legacy_network_flag_is_rejected(self):
-        for name in CLAWS:
+        for name in NATIVE_HARNESSES:
             with self.subTest(name=name):
                 with self.assertRaises(ValueError):
                     get_adapter(name, allow_network=True)
@@ -86,7 +169,7 @@ class AdapterRegistryTests(unittest.TestCase):
             path.write_text(json.dumps(raw))
             from agent_formalizer.benchmark_profile import load_benchmark_profile
             profile = load_benchmark_profile(path)
-            for name in CLAWS:
+            for name in NATIVE_HARNESSES:
                 adapter = get_adapter(name, benchmark_profile=profile)
                 self.assertEqual(adapter.network_policy()["mode"], "controlled_web")
                 self.assertEqual(
@@ -116,7 +199,7 @@ class ProviderTests(unittest.TestCase):
             )
             self.assertNotIn("IGNORED", os.environ)
 
-    def test_materialized_vertex_project_participates_in_hash(self):
+    def test_legacy_benchmark_vertex_project_participates_in_hash(self):
         materialized = with_google_vertex_project(
             DEFAULT_BENCHMARK_PROFILE, "study-project"
         )
@@ -128,7 +211,7 @@ class ProviderTests(unittest.TestCase):
 
     def test_real_secret_is_gateway_only_for_all_harnesses(self):
         secret = "must-not-reach-agent"
-        for name in CLAWS:
+        for name in NATIVE_HARNESSES:
             with self.subTest(name=name):
                 adapter = get_adapter(
                     name,
@@ -220,7 +303,9 @@ class ProviderTests(unittest.TestCase):
             },
             clear=False,
         ):
-            adapter = OpenClawAdapter("openai/gpt-5.4-mini", 120, 17)
+            adapter = OpenClawAdapter(
+                "openai/gpt-5.4-mini", 120, max_action_steps=200
+            )
             env = adapter._openclaw_env()
             self.assertEqual(env["OPENCLAW_CONFIG_PATH"], str(adapter._config_path()))
             self.assertEqual(env["OPENCLAW_STATE_DIR"], str(adapter._state_dir))
@@ -287,15 +372,19 @@ class GeneratedConfigTests(unittest.TestCase):
         self.env.stop()
 
     def test_hermes_config_is_clean(self):
-        adapter = HermesAdapter("openai/gpt-5.4-mini", 120, 17)
+        adapter = HermesAdapter(
+            "openai/gpt-5.4-mini", 120, max_action_steps=200
+        )
         config = adapter._benchmark_config()
         self.assertEqual(config["model"]["provider"], "openai-api")
-        self.assertEqual(config["agent"]["max_turns"], 17)
+        self.assertNotIn("max_turns", config["agent"])
         self.assertEqual(config["plugins"]["enabled"], [])
         self.assertNotIn("test-secret", json.dumps(config))
 
     def test_nanobot_config_preserves_clean_native_tools(self):
-        adapter = NanoBotAdapter("openai/gpt-5.4-mini", 120, 17)
+        adapter = NanoBotAdapter(
+            "openai/gpt-5.4-mini", 120, max_action_steps=200
+        )
         config = adapter._benchmark_config()
         self.assertEqual(
             config["providers"]["openai"]["apiKey"],
@@ -307,13 +396,89 @@ class GeneratedConfigTests(unittest.TestCase):
         self.assertTrue(config["tools"]["cliApps"]["enable"])
         self.assertTrue(config["tools"]["my"]["enable"])
         self.assertEqual(config["agents"]["defaults"]["fallbackModels"], [])
+        self.assertNotIn("maxToolIterations", config["agents"]["defaults"])
         self.assertEqual(config["tools"]["mcpServers"], {})
 
+    def test_nanobot_usage_wrapper_is_valid_python(self):
+        compile(
+            NANOBOT_USAGE_CAPTURE_SOURCE,
+            "nanobot-benchmark-usage-wrapper.py",
+            "exec",
+        )
+
+    def test_nanobot_usage_wrapper_captures_aggregate_run_usage(self):
+        class FakeAgentHook:
+            def __init__(self):
+                pass
+
+        class FakeAgentLoop:
+            async def process_direct(self, *args, **kwargs):
+                context = SimpleNamespace(
+                    usage={
+                        "prompt_tokens": 36,
+                        "completion_tokens": 14,
+                        "total_tokens": 50,
+                        "provider_tokens": 45,
+                        "estimated_tokens": 5,
+                    },
+                    stop_reason="completed",
+                    error=None,
+                )
+                for hook in kwargs["hooks"]:
+                    await hook.after_run(context)
+
+        def fake_app():
+            import asyncio
+
+            asyncio.run(FakeAgentLoop().process_direct("task"))
+
+        modules = {
+            name: ModuleType(name)
+            for name in (
+                "nanobot",
+                "nanobot.agent",
+                "nanobot.agent.hook",
+                "nanobot.agent.loop",
+                "nanobot.cli",
+                "nanobot.cli.commands",
+            )
+        }
+        modules["nanobot.agent.hook"].AgentHook = FakeAgentHook
+        modules["nanobot.agent.loop"].AgentLoop = FakeAgentLoop
+        modules["nanobot.cli.commands"].app = fake_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            usage_path = Path(tmp) / "usage.json"
+            source = NANOBOT_USAGE_CAPTURE_SOURCE.replace(
+                repr(NANOBOT_USAGE_PATH),
+                repr(str(usage_path)),
+                1,
+            )
+            with patch.dict(sys.modules, modules):
+                exec(compile(source, "nanobot-usage-test.py", "exec"), {})
+            report = json.loads(usage_path.read_text())
+
+        self.assertEqual(report["capture_status"], "complete")
+        self.assertEqual(report["raw_usage"]["total_tokens"], 50)
+        self.assertEqual(report["raw_usage"]["provider_tokens"], 45)
+        self.assertEqual(report["raw_usage"]["estimated_tokens"], 5)
+
+    def test_nanobot_session_path_matches_pinned_session_manager(self):
+        self.assertEqual(
+            NanoBotAdapter._session_path("pddl-blocksworld-p01-model"),
+            (
+                "/workspace/sessions/"
+                "benchmark_pddl-blocksworld-p01-model.jsonl"
+            ),
+        )
+
     def test_zeroclaw_v3_config_has_no_persisted_key(self):
-        adapter = ZeroClawAdapter("openai/gpt-5.4-mini", 120, 17)
+        adapter = ZeroClawAdapter(
+            "openai/gpt-5.4-mini", 120, max_action_steps=200
+        )
         config = adapter._benchmark_config_toml()
         self.assertIn("schema_version = 3", config)
-        self.assertIn("max_tool_iterations = 17", config)
+        self.assertNotIn("max_tool_iterations", config)
         self.assertIn('auto_approve = ["shell", "file_read"', config)
         self.assertIn("allowed_tools = []", config)
         self.assertNotIn("native_tools = true", config)
@@ -331,7 +496,7 @@ class GeneratedConfigTests(unittest.TestCase):
         adapter = ZeroClawAdapter(
             "google-vertex/gemini-3.1-flash-lite",
             120,
-            17,
+            max_action_steps=200,
             provider_options=options,
         )
         config = adapter._benchmark_config_toml()
@@ -419,11 +584,13 @@ class GeneratedConfigTests(unittest.TestCase):
         ) + generic_key
         self.assertNotIn("ignored-host", serialized)
 
-    def test_generic_max_turns_is_patched_without_editing_runtime(self):
+    def test_generic_uses_unmodified_native_entrypoint(self):
         adapter = GenericAgentAdapter("openai/gpt-5.4-mini", 120, 200)
-        wrapper = adapter._agentmain_wrapper_source()
-        self.assertIn("max_turns=200", wrapper)
-        self.assertIn("max_turns=180", wrapper)
+        self.assertFalse(hasattr(adapter, "_agentmain_wrapper_source"))
+        self.assertNotIn(
+            "max_turns_patch",
+            adapter.effective_config()["harness_config"],
+        )
 
     def test_generic_container_args_avoid_nested_schema_file_mounts(self):
         adapter = GenericAgentAdapter("openai/gpt-5.4-mini", 120, api_key="test-key")
@@ -493,7 +660,9 @@ class ArtifactParsingTests(unittest.TestCase):
         )
 
     def test_hermes_collect_usage_writes_problem_owned_artifacts(self):
-        adapter = HermesAdapter("openai/gpt-5.4-mini", 120, 17)
+        adapter = HermesAdapter(
+            "openai/gpt-5.4-mini", 120, max_action_steps=200
+        )
         instance_id = "blocksworld-dataset-p01"
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -540,7 +709,9 @@ class ArtifactParsingTests(unittest.TestCase):
         self.assertEqual(usage["total"], 210)
 
     def test_hermes_snapshot_command_includes_committed_wal_rows(self):
-        adapter = HermesAdapter("openai/gpt-5.4-mini", 120, 17)
+        adapter = HermesAdapter(
+            "openai/gpt-5.4-mini", 120, max_action_steps=200
+        )
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "live.db"
             snapshot = Path(tmp) / "snapshot.db"
@@ -569,7 +740,9 @@ class ArtifactParsingTests(unittest.TestCase):
                 connection.close()
 
     def test_hermes_collection_error_is_diagnostic_not_an_exception(self):
-        adapter = HermesAdapter("openai/gpt-5.4-mini", 120, 17)
+        adapter = HermesAdapter(
+            "openai/gpt-5.4-mini", 120, max_action_steps=200
+        )
 
         class MissingStateWorkspace:
             instance_id = "domain-dataset-p03"
@@ -635,6 +808,141 @@ class ArtifactParsingTests(unittest.TestCase):
         self.assertEqual(tools[0]["name"], "write_file")
         self.assertEqual(tools[0]["arguments"], {"path": "x"})
 
+    def test_openclaw_uses_aggregate_usage_and_recomputes_total(self):
+        usage = _normalize_openclaw_usage(
+            {
+                "usage": {
+                    "input": 57_678,
+                    "output": 2_237,
+                    "cacheRead": 127_945,
+                    # OpenClaw currently exposes the last-call total here.
+                    "total": 17_879,
+                },
+                "lastCallUsage": {
+                    "input": 305,
+                    "output": 48,
+                    "cacheRead": 17_526,
+                    "total": 17_879,
+                },
+            }
+        )
+        self.assertEqual(
+            usage,
+            {
+                "input": 57_678,
+                "output": 2_237,
+                "cacheRead": 127_945,
+                "cacheWrite": 0,
+                "total": 187_860,
+            },
+        )
+
+    def test_nanobot_usage_normalizes_cached_prompt_tokens(self):
+        raw = {
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+            "cached_tokens": 30,
+            "provider_tokens": 120,
+        }
+        self.assertEqual(
+            _normalize_nanobot_usage(raw),
+            {
+                "input": 70,
+                "output": 20,
+                "cacheRead": 30,
+                "cacheWrite": 0,
+                "total": 120,
+                "providerTokens": 120,
+                "estimatedTokens": 0,
+            },
+        )
+        self.assertEqual(
+            _nanobot_usage_measurement(raw),
+            "provider-reported",
+        )
+
+    def test_nanobot_usage_marks_estimated_and_mixed_measurements(self):
+        estimated = {
+            "prompt_tokens": 11,
+            "completion_tokens": 4,
+            "total_tokens": 15,
+            "estimated_tokens": 15,
+        }
+        mixed = {
+            **estimated,
+            "provider_tokens": 8,
+        }
+        self.assertEqual(
+            _nanobot_usage_measurement(estimated),
+            "nanobot-estimated",
+        )
+        self.assertEqual(_nanobot_usage_measurement(mixed), "mixed")
+
+    def test_nanobot_collect_usage_preserves_raw_report(self):
+        raw = {
+            "prompt_tokens": 50,
+            "completion_tokens": 7,
+            "total_tokens": 57,
+            "provider_tokens": 57,
+        }
+
+        class FakeWorkspace:
+            def __init__(self):
+                self.sources = []
+
+            def copy_from_container(self, source, destination):
+                self.sources.append(source)
+                Path(destination).write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "source": "nanobot-agent-run-result",
+                            "capture_status": "complete",
+                            "raw_usage": raw,
+                        }
+                    )
+                )
+                return True
+
+        adapter = NanoBotAdapter(
+            "openai/gpt-5.4-mini", 120, max_action_steps=200
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp) / "p01"
+            workspace = FakeWorkspace()
+            usage = adapter.collect_usage(workspace, artifact_dir)
+            report = json.loads(
+                (artifact_dir / "sessions" / "usage.json").read_text()
+            )
+
+        self.assertEqual(workspace.sources, [NANOBOT_USAGE_PATH])
+        self.assertEqual(report["raw_usage"], raw)
+        self.assertEqual(report["measurement"], "provider-reported")
+        self.assertEqual(report["usage"], usage)
+        self.assertEqual(usage["input"], 50)
+        self.assertEqual(usage["output"], 7)
+        self.assertEqual(usage["total"], 57)
+
+    def test_nanobot_missing_usage_is_diagnostic(self):
+        class MissingWorkspace:
+            @staticmethod
+            def copy_from_container(source, destination):
+                return False
+
+        adapter = NanoBotAdapter(
+            "openai/gpt-5.4-mini", 120, max_action_steps=200
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp) / "p02"
+            usage = adapter.collect_usage(MissingWorkspace(), artifact_dir)
+            report = json.loads(
+                (artifact_dir / "sessions" / "usage.json").read_text()
+            )
+
+        self.assertEqual(usage, {})
+        self.assertEqual(report["capture_status"], "missing")
+
     def test_generic_usage(self):
         usage = _parse_usage_text(
             "[Cache] input=10 cached=3\n[Output] tokens=4\n"
@@ -642,23 +950,53 @@ class ArtifactParsingTests(unittest.TestCase):
         )
         self.assertEqual(
             usage,
-            {"input": 30, "output": 11, "cacheRead": 9, "cacheWrite": 5},
+            {
+                "input": 27,
+                "output": 11,
+                "cacheRead": 9,
+                "cacheWrite": 5,
+                "total": 52,
+            },
         )
 
     def test_zeroclaw_costs(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "costs.jsonl"
             path.write_text(
-                json.dumps({"usage": {"input_tokens": 10, "output_tokens": 2}})
+                json.dumps(
+                    {
+                        "usage": {
+                            "input_tokens": 10,
+                            "output_tokens": 2,
+                            "cached_input_tokens": 4,
+                        }
+                    }
+                )
                 + "\n"
-                + json.dumps({"usage": {"prompt_tokens": 3, "completion_tokens": 4}})
+                + json.dumps(
+                    {
+                        "usage": {
+                            "prompt_tokens": 3,
+                            "completion_tokens": 4,
+                            "cached_tokens": 1,
+                        }
+                    }
+                )
                 + "\n"
             )
             usage = _parse_costs(path)
-        self.assertEqual(usage["turns"], 2)
-        self.assertEqual(usage["input_tokens"], 13)
-        self.assertEqual(usage["output_tokens"], 6)
-        self.assertEqual(usage["total_tokens"], 19)
+        self.assertEqual(
+            usage,
+            {
+                "input": 8,
+                "output": 6,
+                "cacheRead": 5,
+                "cacheWrite": 0,
+                "reasoning": 0,
+                "total": 19,
+            },
+        )
+        self.assertNotIn("turns", usage)
 
 
 if __name__ == "__main__":

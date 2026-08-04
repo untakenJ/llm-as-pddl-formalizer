@@ -19,9 +19,10 @@ from agent_formalizer.config import (
     agent_model_label,
     container_name as make_container_name,
     domain_dir,
+    new_runtime_id,
     problem_output_dir,
 )
-from agent_formalizer.prompt import build_prompt, extract_pddl_from_text
+from agent_formalizer.prompt import extract_pddl_from_text
 from agent_formalizer.provenance import (
     docker_image_info,
     file_manifest,
@@ -34,6 +35,7 @@ from agent_formalizer.result_types import AgentResult, FormalizerResult
 from agent_formalizer.runtime_lock import RuntimeLockMismatch, validate_runtime_lock
 from agent_formalizer.util import Tracer, format_problem_name, now_iso, run_parallel
 from agent_formalizer.workspace import AgentWorkspace
+from agent_formalizer.minimum_workspace import MinimumHostWorkspace
 
 
 logger = logging.getLogger(__name__)
@@ -42,9 +44,16 @@ LEASE_NAME = ".attempt.lease"
 
 
 class InfraInvalid(RuntimeError):
-    def __init__(self, reason: str, message: str):
+    def __init__(
+        self,
+        reason: str,
+        message: str,
+        *,
+        retry_execution: bool = True,
+    ):
         super().__init__(message)
         self.reason = reason
+        self.retry_execution = retry_execution
 
 
 def _config_qualified_label(adapter, label: str | None) -> str:
@@ -62,15 +71,7 @@ def _read_descriptions(domain: str, data: str, problem: str) -> tuple[str, str]:
 
 
 def _build_canonical_prompt(adapter, domain_description: str, problem_description: str) -> str:
-    contract = adapter.resolved_config.raw["resolved"]["artifact_contract"]
-    return build_prompt(
-        domain_description,
-        problem_description,
-        template_path=None,
-        domain_output_name=contract["workspace_domain_file"],
-        problem_output_name=contract["workspace_problem_file"],
-        agent_tools=adapter.resolved_config.agent_tools,
-    )
+    return adapter.build_task_prompt(domain_description, problem_description)
 
 
 def _atomic_json(path: Path, value: dict) -> None:
@@ -96,6 +97,15 @@ def _freeze_image_reference(image: str | None) -> tuple[str, str]:
     return requested, inspected.stdout.strip()
 
 
+def _freeze_execution_reference(adapter, image: str | None) -> tuple[str | None, str | None]:
+    """Freeze Docker only for native harnesses; minimum is host-only."""
+    if adapter.name == "minimum":
+        if image is not None:
+            raise ValueError("--image is not applicable to the minimum host runtime")
+        return None, None
+    return _freeze_image_reference(image)
+
+
 def _adapter_code_sha256() -> str:
     package = Path(__file__).resolve().parent
     paths = [
@@ -104,6 +114,10 @@ def _adapter_code_sha256() -> str:
         if path.is_file()
         and "__pycache__" not in path.parts
         and path.suffix in {".py", ".json", ".txt", ".sh"}
+        # Credential registries are operational inputs with their own redacted
+        # provenance hash.  Adding/rotating a named profile must not alter the
+        # experiment/runtime identity used for labels and resume.
+        and path.name != "credential_profiles.json"
     ]
     return canonical_sha256(file_manifest(paths, root=package))
 
@@ -127,7 +141,9 @@ def _task_identity(
     return {"sha256": canonical_sha256(raw), "raw": raw}
 
 
-def _provenance(adapter, prompt: str, image: str, runtime_lock: dict) -> dict:
+def _provenance(
+    adapter, prompt: str, image: str | None, runtime_lock: dict
+) -> dict:
     effective = adapter.effective_config()
     skills = adapter.skills_info()
     materialized_sha256 = canonical_sha256(effective)
@@ -148,8 +164,16 @@ def _provenance(adapter, prompt: str, image: str, runtime_lock: dict) -> dict:
         "skills_sha256": canonical_sha256(skills),
         "runtime_lock": runtime_lock,
         "harness_runtime": adapter.runtime_info(),
-        "container_image": docker_image_info(image),
-        "host_runtime": host_runtime_info(),
+        "container_image": (
+            docker_image_info(image)
+            if image is not None
+            else {
+                "required": False,
+                "execution_backend": "host",
+                "reason": "minimum runtime has no native harness environment",
+            }
+        ),
+        "host_runtime": host_runtime_info(include_docker=adapter.name != "minimum"),
     }
 
 
@@ -180,7 +204,7 @@ def _record_optional_evidence(
         tracer.emit("optional_session_error", error_type=type(exc).__name__)
 
     steps_path = artifact_dir / f"{problem}_{model_label}_agent_steps.jsonl"
-    step_count = 0
+    trace_record_count = 0
     try:
         with steps_path.open("w", buffering=1) as stream:
             for record in adapter.iter_agent_steps(
@@ -190,11 +214,11 @@ def _record_optional_evidence(
                 session_file=session_file,
             ):
                 stream.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-                step_count += 1
+                trace_record_count += 1
     except Exception as exc:
         tracer.emit("optional_steps_error", error_type=type(exc).__name__)
 
-    tool_count = 0
+    traced_tool_call_count = 0
     try:
         for record in adapter.iter_tool_calls(
             session_agent_id,
@@ -203,10 +227,15 @@ def _record_optional_evidence(
             session_file=session_file,
         ):
             tracer.emit("tool_exec", provider=adapter.name, **record)
-            tool_count += 1
+            if record.get("kind", "call") == "call":
+                traced_tool_call_count += 1
     except Exception as exc:
         tracer.emit("optional_tool_trace_error", error_type=type(exc).__name__)
-    return tool_count, step_count, str(steps_path) if steps_path.exists() else None
+    return (
+        traced_tool_call_count,
+        trace_record_count,
+        str(steps_path) if steps_path.exists() else None,
+    )
 
 
 def _agent_error_result(message: str, started: float) -> AgentResult:
@@ -225,6 +254,23 @@ def _write_ledger(path: Path, ledger: list[dict]) -> None:
     with path.open("w") as stream:
         for row in ledger:
             stream.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+
+
+def _action_metrics(gateway_summary: dict, adapter, artifact_dir: Path | None = None) -> dict:
+    model_calls = int(gateway_summary.get("model_calls", 0) or 0)
+    tool_calls = int(gateway_summary.get("tool_calls", 0) or 0)
+    metrics = {
+        "model_calls": model_calls,
+        "tool_calls": tool_calls,
+        "action_steps": model_calls + tool_calls,
+        "max_model_calls": adapter.max_model_calls,
+        "max_action_steps": adapter.max_action_steps,
+        "action_step_limit_reached": bool(
+            gateway_summary.get("action_step_limit_reached")
+        ),
+    }
+    metrics.update(adapter.additional_action_metrics(artifact_dir))
+    return metrics
 
 
 def _run_execution_try(
@@ -254,12 +300,32 @@ def _run_execution_try(
         else None
     )
     tracer = Tracer(str(trace_path) if trace_path else None)
-    instance_id = f"{domain}-{data}-{problem}-a{attempt_index:03d}-e{execution_try:03d}"
+    runtime_id = new_runtime_id()
+    logical_instance_id = (
+        f"{domain}-{data}-{problem}-a{attempt_index:03d}-e{execution_try:03d}"
+    )
+    # The runtime suffix also isolates harness-owned host state (for example,
+    # GenericAgent's per-instance temp and memory directories) across sweeps.
+    instance_id = f"{logical_instance_id}-r{runtime_id}"
     agent_id = f"pddl-{instance_id}-{model_label}".replace(".", "-").replace("/", "-")
     container = make_container_name(
-        adapter.name, domain, data, model_label, f"{problem}-a{attempt_index}-e{execution_try}"
+        adapter.name,
+        domain,
+        data,
+        model_label,
+        f"{problem}-a{attempt_index}-e{execution_try}",
+        runtime_id=runtime_id,
     )
-    workspace = AgentWorkspace(instance_id, container, adapter, image=image)
+    workspace = (
+        MinimumHostWorkspace(
+            instance_id,
+            container,
+            adapter,
+            artifact_dir=execution_dir,
+        )
+        if adapter.name == "minimum"
+        else AgentWorkspace(instance_id, container, adapter, image=image)
+    )
     result = FormalizerResult(
         problem=problem,
         status="failed",
@@ -277,9 +343,15 @@ def _run_execution_try(
     validations: list[dict] = []
     artifacts: dict[str, bytes | None] = {"domain": None, "problem": None}
     harness_exception: str | None = None
-    watchdog: threading.Timer | None = None
+    watchdog_thread: threading.Thread | None = None
+    watchdog_stop = threading.Event()
     watchdog_fired = threading.Event()
-    optional = {"tool_call_count": 0, "step_count": 0, "agent_steps_path": None}
+    attempt_clock = None
+    optional = {
+        "traced_tool_call_count": 0,
+        "agent_trace_record_count": 0,
+        "agent_trace_path": None,
+    }
 
     try:
         try:
@@ -301,12 +373,12 @@ def _run_execution_try(
 
         network_validation = workspace.validate_network_policy()
         environment_validation = workspace.validate_environment_policy()
-        model_guard_validation = workspace.validate_model_call_guard()
+        action_guard_validation = workspace.validate_action_step_guard()
         validations.extend([
             runtime_lock,
             network_validation,
             environment_validation,
-            model_guard_validation,
+            action_guard_validation,
         ])
         configured_validations = {
             row["preset"]: row["required"]
@@ -336,14 +408,24 @@ def _run_execution_try(
         # Docker, sidecars, validation, and task seeding are infrastructure.
         # Native harness startup begins the measured envelope interval here.
         clock_started = time.monotonic()
-        adapter.begin_attempt_clock()
-        def enforce_deadline() -> None:
-            watchdog_fired.set()
-            workspace.enforce_agent_deadline()
+        attempt_clock = adapter.begin_attempt_clock()
+        workspace.start_model_gateway_monitor(attempt_clock)
 
-        watchdog = threading.Timer(adapter.remaining_timeout(), enforce_deadline)
-        watchdog.daemon = True
-        watchdog.start()
+        def enforce_deadline() -> None:
+            while not watchdog_stop.is_set():
+                remaining = attempt_clock.remaining()
+                if remaining <= 0:
+                    watchdog_fired.set()
+                    workspace.enforce_agent_deadline()
+                    return
+                watchdog_stop.wait(min(0.25, max(0.01, remaining)))
+
+        watchdog_thread = threading.Thread(
+            target=enforce_deadline,
+            name=f"attempt-watchdog-{instance_id}",
+            daemon=True,
+        )
+        watchdog_thread.start()
         try:
             adapter.create_agent(agent_id)
             if adapter.deadline_exceeded():
@@ -367,11 +449,54 @@ def _run_execution_try(
             harness_exception = str(exc)
         except Exception as exc:
             # A native harness crash is a measured agent outcome, not infra.
-            subprocess.run(
-                ["docker", "kill", container], capture_output=True
-            )
+            if adapter.name != "minimum":
+                subprocess.run(
+                    ["docker", "kill", container], capture_output=True
+                )
             harness_exception = f"{type(exc).__name__}: {exc}"
             agent_result = _agent_error_result(harness_exception, clock_started)
+
+        gateway_terminal = workspace.gateway_terminal_infra_error()
+        gateway_monitor_error = workspace.gateway_monitor_error()
+        action_step_limit_reached = (
+            workspace.gateway_action_step_limit_reached()
+        )
+        workspace.stop_model_gateway_monitor()
+        watchdog_stop.set()
+        if watchdog_thread is not None:
+            watchdog_thread.join(timeout=10)
+
+        if gateway_terminal is not None or gateway_monitor_error is not None:
+            clock_finished = time.monotonic()
+            clock_snapshot = attempt_clock.snapshot()
+            adapter.end_attempt_clock()
+            gateway_summary = workspace.model_gateway_stats()
+            ledger = workspace.model_gateway_ledger()
+            ledger_path = execution_dir / "model_call_ledger.jsonl"
+            _write_ledger(ledger_path, ledger)
+            reason = gateway_monitor_error or gateway_terminal.get(
+                "reason", "provider_transient_exhausted"
+            )
+            invalid_evidence = {
+                "schema_version": 1,
+                "attempt_valid": False,
+                "infra_invalidator": reason,
+                "terminal_infra_error": gateway_terminal,
+                "execution_timing": clock_snapshot,
+                "model_gateway_summary": gateway_summary,
+                "actions": _action_metrics(gateway_summary, adapter, execution_dir),
+                "model_call_ledger": {
+                    "path": str(ledger_path),
+                    "entries": len(ledger),
+                    "sha256": sha256_bytes(ledger_path.read_bytes()),
+                },
+            }
+            _atomic_json(execution_dir / "provider_infra_invalid.json", invalid_evidence)
+            raise InfraInvalid(
+                reason,
+                f"model provider infrastructure did not yield a valid response: {reason}",
+                retry_execution=False,
+            )
 
         if (
             watchdog_fired.is_set() or adapter.deadline_exceeded()
@@ -384,13 +509,19 @@ def _run_execution_try(
         if agent_result and agent_result.timeout:
             workspace.enforce_agent_deadline()
 
+        if action_step_limit_reached and agent_result is not None:
+            agent_result.success = False
+            agent_result.timeout = False
+            agent_result.finish_reason = "action_step_limit"
+
         # Stop the agent clock at native harness exit. Collection remains
         # operational work and cannot consume or extend the agent budget.
         clock_finished = time.monotonic()
-        if watchdog is not None:
-            watchdog.cancel()
+        clock_snapshot = attempt_clock.snapshot()
         adapter.end_attempt_clock()
-        harness_duration = round(clock_finished - clock_started, 6)
+        harness_duration = clock_snapshot["active_duration_seconds"]
+        if agent_result is not None:
+            agent_result.duration_seconds = harness_duration
 
         artifacts = workspace.freeze_pddl_outputs()
         artifact_sources = {
@@ -445,7 +576,7 @@ def _run_execution_try(
         gateway_summary = workspace.model_gateway_stats()
         ledger = workspace.model_gateway_ledger()
         _write_ledger(execution_dir / "model_call_ledger.jsonl", ledger)
-        tool_count, step_count, steps_path = _record_optional_evidence(
+        traced_tool_calls, trace_records, trace_path = _record_optional_evidence(
             adapter,
             agent_id,
             execution_dir,
@@ -456,10 +587,11 @@ def _run_execution_try(
             container,
         )
         optional = {
-            "tool_call_count": tool_count,
-            "step_count": step_count,
-            "agent_steps_path": steps_path,
+            "traced_tool_call_count": traced_tool_calls,
+            "agent_trace_record_count": trace_records,
+            "agent_trace_path": trace_path,
         }
+        actions = _action_metrics(gateway_summary, adapter, execution_dir)
 
         generated = artifacts["domain"] is not None and artifacts["problem"] is not None
         result.generation_success = generated
@@ -486,6 +618,8 @@ def _run_execution_try(
                 "scope": "native_harness_startup_through_native_harness_exit",
                 "timeout_seconds": adapter.timeout,
                 "duration_seconds": harness_duration,
+                "wall_duration_seconds": clock_snapshot["wall_duration_seconds"],
+                "infra_pause_seconds": clock_snapshot["infra_pause_seconds"],
                 "deadline_exceeded": bool(agent_result and agent_result.timeout),
             },
             "operational_timing": {
@@ -494,6 +628,7 @@ def _run_execution_try(
             },
             "validations": validations,
             "model_gateway_summary": gateway_summary,
+            "actions": actions,
             "frozen_workspace_artifacts": frozen_records,
             "model_call_ledger": {
                 "path": str(execution_dir / "model_call_ledger.jsonl"),
@@ -511,11 +646,14 @@ def _run_execution_try(
             generation_success=generated,
             status=result.status,
             error=result.error,
+            **actions,
         )
         return result, evidence
     finally:
-        if watchdog is not None:
-            watchdog.cancel()
+        watchdog_stop.set()
+        if watchdog_thread is not None and watchdog_thread is not threading.current_thread():
+            watchdog_thread.join(timeout=10)
+        workspace.stop_model_gateway_monitor()
         adapter.end_attempt_clock()
         try:
             workspace.cleanup()
@@ -646,9 +784,31 @@ def _run_attempt(
         "created_at": now_iso(),
     }
     lease = _acquire_lease(attempt_dir, identity)
+    execution_root = attempt_dir / "executions"
+    existing_indices: list[int] = []
     invalid_executions: list[dict] = []
+    if execution_root.is_dir():
+        for directory in sorted(execution_root.glob("execution-*")):
+            try:
+                existing_indices.append(int(directory.name.rsplit("-", 1)[-1]))
+            except ValueError:
+                continue
+            invalid_path = directory / "infra_invalid.json"
+            if invalid_path.is_file():
+                try:
+                    value = json.loads(invalid_path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if isinstance(value, dict):
+                    invalid_executions.append(value)
+    first_execution_try = max(existing_indices, default=0) + 1
+    last_execution_try = first_execution_try - 1
     try:
-        for execution_try in range(1, adapter.resolved_config.max_execution_tries + 1):
+        for execution_try in range(
+            first_execution_try,
+            first_execution_try + adapter.resolved_config.max_execution_tries,
+        ):
+            last_execution_try = execution_try
             try:
                 result, evidence = _run_execution_try(
                     adapter,
@@ -687,6 +847,31 @@ def _run_attempt(
                     / "infra_invalid.json",
                     invalid,
                 )
+                if not exc.retry_execution:
+                    attempt_invalid = {
+                        "schema_version": 1,
+                        "complete": False,
+                        "problem": problem,
+                        "model_label": model_label,
+                        "attempt_index": attempt_index,
+                        "attempt_valid": False,
+                        "current": True,
+                        "status": "infra_invalid",
+                        "invalid_executions": invalid_executions,
+                        "error": str(exc),
+                        "recorded_at": now_iso(),
+                    }
+                    _atomic_json(attempt_dir / "invalid_attempt.json", attempt_invalid)
+                    return FormalizerResult(
+                        problem=problem,
+                        status="infra_invalid",
+                        attempt_index=attempt_index,
+                        execution_try=execution_try,
+                        attempt_valid=False,
+                        generation_success=False,
+                        model_label=model_label,
+                        error=str(exc),
+                    )
                 continue
             except Exception as exc:
                 reason = "runner_internal_error"
@@ -757,6 +942,7 @@ def _run_attempt(
                 "attempt_index": attempt_index,
                 "attempt_valid": True,
                 "generation_success": result.generation_success,
+                "actions": evidence["actions"],
                 "selected_execution_try": execution_try,
                 "invalid_executions": invalid_executions,
                 "extraction_source": result.extraction_source,
@@ -779,6 +965,17 @@ def _run_attempt(
             }
             _atomic_json(attempt_dir / "metadata.json", completion)
             _atomic_json(completion_path, completion)
+            previous_invalid_path = attempt_dir / "invalid_attempt.json"
+            if previous_invalid_path.is_file():
+                try:
+                    previous_invalid = json.loads(previous_invalid_path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    previous_invalid = {}
+                if isinstance(previous_invalid, dict):
+                    previous_invalid["current"] = False
+                    previous_invalid["superseded_by_valid_execution_try"] = execution_try
+                    previous_invalid["superseded_at"] = now_iso()
+                    _atomic_json(previous_invalid_path, previous_invalid)
             result.completion_path = completion_path
             return result
 
@@ -786,7 +983,7 @@ def _run_attempt(
             problem=problem,
             status="infra_invalid",
             attempt_index=attempt_index,
-            execution_try=adapter.resolved_config.max_execution_tries,
+            execution_try=last_execution_try,
             attempt_valid=False,
             generation_success=False,
             model_label=model_label,
@@ -814,20 +1011,21 @@ def run_one_problem(
 ) -> FormalizerResult:
     """Run one fixed attempt (compatibility entry point used by tests/tools)."""
     adapter.validate_runtime()
-    _, frozen_image = _freeze_image_reference(image)
+    _, frozen_image = _freeze_execution_reference(adapter, image)
     try:
         runtime_lock = validate_runtime_lock(
             adapter, container_image_id=frozen_image
         )
     except RuntimeLockMismatch as exc:
         raise InfraInvalid("runtime_lock_mismatch", str(exc)) from exc
-    runtime_identity_sha256 = canonical_sha256(
-        {
-            "runtime_lock": runtime_lock,
-            "container_image_id": frozen_image,
-            "adapter_code_sha256": _adapter_code_sha256(),
-        }
-    )
+    runtime_identity = {
+        "runtime_lock": runtime_lock,
+        "container_image_id": frozen_image,
+        "adapter_code_sha256": _adapter_code_sha256(),
+    }
+    if adapter.name == "minimum":
+        runtime_identity["execution_backend"] = "host"
+    runtime_identity_sha256 = canonical_sha256(runtime_identity)
     domain_description, problem_description = _read_descriptions(domain, data, problem)
     prompt = _build_canonical_prompt(
         adapter, domain_description, problem_description
@@ -879,20 +1077,21 @@ def run_batch(
 ) -> list[FormalizerResult]:
     """Run every fixed case/attempt; outcomes never affect attempt count."""
     adapter.validate_runtime()
-    _, frozen_image = _freeze_image_reference(image)
+    _, frozen_image = _freeze_execution_reference(adapter, image)
     try:
         runtime_lock = validate_runtime_lock(
             adapter, container_image_id=frozen_image
         )
     except RuntimeLockMismatch as exc:
         raise InfraInvalid("runtime_lock_mismatch", str(exc)) from exc
-    runtime_identity_sha256 = canonical_sha256(
-        {
-            "runtime_lock": runtime_lock,
-            "container_image_id": frozen_image,
-            "adapter_code_sha256": _adapter_code_sha256(),
-        }
-    )
+    runtime_identity = {
+        "runtime_lock": runtime_lock,
+        "container_image_id": frozen_image,
+        "adapter_code_sha256": _adapter_code_sha256(),
+    }
+    if adapter.name == "minimum":
+        runtime_identity["execution_backend"] = "host"
+    runtime_identity_sha256 = canonical_sha256(runtime_identity)
     root = Path(out_dir_root) if out_dir_root else OUTPUT_DIR
     base_label = _config_qualified_label(adapter, model_label)
     attempts = adapter.resolved_config.attempts_per_case
@@ -961,7 +1160,9 @@ def run_batch(
                         "attempt_index": item.attempt_index,
                         "model_label": item.model_label,
                         "attempt_valid": item.attempt_valid,
+                        "status": item.status,
                         "generation_success": item.generation_success,
+                        "error": item.error,
                         "completion_path": (
                             str(item.completion_path) if item.completion_path else None
                         ),
