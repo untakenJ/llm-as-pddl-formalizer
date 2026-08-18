@@ -51,6 +51,8 @@ The default `native-safety-v4` envelope uses:
 - network: `model_only`;
 - interaction/state: noninteractive execution with per-attempt state and no
   personal or cross-attempt harness state;
+- state validation: every attempt inspects its live container mounts and fails
+  if any writable host bind is not exactly declared as attempt-private;
 - skills/bundles: pinned official clean baseline;
 - official-delivery-file success; final-message recovery disabled.
 
@@ -197,8 +199,10 @@ not change task, experiment, or resume identity.
 
 ## Native clean tools and skills
 
-- OpenClaw uses isolated state, its official clean `coding` profile and bundled
-  skill discovery; condition-level allow/deny fields are optional.
+- OpenClaw uses a fresh state root and workspace for every attempt. Only those
+  two directories are mounted; its session, memory, agent config, and `.Trash`
+  cannot be seen by another case. Teardown hard-deletes the complete attempt
+  root after OpenClaw's native recoverable deletion.
 - Hermes uses a fresh `HERMES_HOME`, official clean-home rules and native tool
   selection; no `--ignore-rules` rewrite is used.
 - NanoBot uses pinned official bootstrap/skills and its clean-install registry,
@@ -208,8 +212,14 @@ not change task, experiment, or resume identity.
 - ZeroClaw uses its native unfiltered registry with noninteractive approvals,
   an ephemeral clean workspace/state, and no adapter-level six-tool allowlist.
 - GenericAgent copies its official tool schemas unchanged, uses official
-  repository plugins and a clean copy of pinned memory. Its official
+  repository plugins and a per-attempt clean copy of pinned memory. Its temp
+  and memory mounts use collision-resistant full-instance hashes. Its official
   `--no-user-tools` switch implements the noninteractive envelope.
+
+Only fully isolated state is implemented by these profiles. A future
+controlled cross-case sharing experiment should add a separate profile-hashed
+condition and an explicit allowlist of shared content; it must not reuse an
+incidental cache, session directory, or recycle bin.
 
 Harness-native internal stopping counters remain part of each pinned
 `native_clean` baseline. They are not rewritten into a shared `turns` metric;

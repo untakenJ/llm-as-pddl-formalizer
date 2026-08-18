@@ -95,6 +95,14 @@ class ZeroClawAdapter(EnvConfiguredAdapter):
     def container_run_args(self, instance_id: str) -> list[str]:
         return ["-v", f"{ZEROCLAW_BIN}:/usr/local/bin/zeroclaw:ro"]
 
+    def state_isolation_spec(self, instance_id: str) -> dict:
+        spec = super().state_isolation_spec(instance_id)
+        spec["shared_readonly_bind_sources"] = [
+            *spec.get("shared_readonly_bind_sources", []),
+            str(ZEROCLAW_BIN),
+        ]
+        return spec
+
     def post_container_start(self, workspace) -> None:
         result = workspace.run_in_container(f"mkdir -p {ZEROCLAW_CONFIG_DIR}")
         if result.exit_code != 0:

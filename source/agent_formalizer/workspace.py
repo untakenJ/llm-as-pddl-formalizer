@@ -168,18 +168,18 @@ class AgentWorkspace:
         """Force-remove the container (best effort)."""
         self.stop_model_gateway_monitor()
         subprocess.run(
-            ["docker", "rm", "-f", self.container_name],
+            ["docker", "rm", "-f", "-v", self.container_name],
             capture_output=True,
         )
         subprocess.run(
-            ["docker", "rm", "-f", self.gateway_name],
+            ["docker", "rm", "-f", "-v", self.gateway_name],
             capture_output=True,
         )
         subprocess.run(
-            ["docker", "rm", "-f", self.web_gateway_name], capture_output=True
+            ["docker", "rm", "-f", "-v", self.web_gateway_name], capture_output=True
         )
         subprocess.run(
-            ["docker", "rm", "-f", self.solver_gateway_name], capture_output=True
+            ["docker", "rm", "-f", "-v", self.solver_gateway_name], capture_output=True
         )
         subprocess.run(
             ["docker", "network", "rm", self.network_name],
@@ -236,7 +236,7 @@ class AgentWorkspace:
             self.web_gateway_name,
             self.solver_gateway_name,
         ):
-            subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+            subprocess.run(["docker", "rm", "-f", "-v", name], capture_output=True)
         subprocess.run(
             ["docker", "network", "rm", self.network_name], capture_output=True
         )
@@ -851,6 +851,130 @@ class AgentWorkspace:
             "gateway_reported_action_step_limit": stats.get("max_action_steps"),
             "configured_transient_policy": expected_gateway_routing,
             "gateway_reported_transient_policy": reported_routing,
+        }
+
+    def validate_state_isolation(self) -> dict:
+        """Verify every host mount is either attempt-private or immutable.
+
+        Read-only runtime, binary, and tool mounts are reproducible baselines;
+        writable container-layer state is discarded with the per-attempt
+        container. Any undeclared writable *or read-only* bind fails, since a
+        read-only mount of prior sessions would still leak cross-case data.
+        """
+        spec = self.adapter.state_isolation_spec(self.instance_id)
+        inspected = subprocess.run(
+            ["docker", "inspect", self.container_name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        mounts: list[dict] = []
+        inspect_ok = inspected.returncode == 0
+        if inspect_ok:
+            try:
+                payload = json.loads(inspected.stdout)
+                mounts = payload[0].get("Mounts", [])
+                inspect_ok = isinstance(mounts, list)
+            except (json.JSONDecodeError, IndexError, KeyError, TypeError):
+                inspect_ok = False
+
+        def resolved(path: str) -> str:
+            return str(Path(path).resolve())
+
+        writable_binds = sorted(
+            {
+                resolved(mount["Source"])
+                for mount in mounts
+                if isinstance(mount, dict)
+                and mount.get("Type") == "bind"
+                and mount.get("RW") is True
+                and isinstance(mount.get("Source"), str)
+            }
+        )
+        readonly_binds = sorted(
+            {
+                resolved(mount["Source"])
+                for mount in mounts
+                if isinstance(mount, dict)
+                and mount.get("Type") == "bind"
+                and mount.get("RW") is False
+                and isinstance(mount.get("Source"), str)
+            }
+        )
+        non_bind_mounts = [
+            mount for mount in mounts
+            if isinstance(mount, dict) and mount.get("Type") != "bind"
+        ]
+        expected_binds = sorted(
+            {resolved(path) for path in spec.get("writable_bind_sources", [])}
+        )
+        expected_private_readonly = sorted(
+            {
+                resolved(path)
+                for path in spec.get("private_readonly_bind_sources", [])
+            }
+        )
+        expected_shared_readonly = {
+            resolved(path)
+            for path in spec.get("shared_readonly_bind_sources", [])
+        }
+        expected_shared_readonly.update(
+            resolved(tool_spec.cli_host_path)
+            for tool_spec in resolve_agent_tools(self.adapter.runtime_tools())
+        )
+        expected_readonly = sorted(
+            {*expected_private_readonly, *expected_shared_readonly}
+        )
+        attempt_root_value = spec.get("attempt_root")
+        attempt_root = (
+            Path(attempt_root_value).resolve() if attempt_root_value else None
+        )
+        expected_under_attempt_root = True
+        if attempt_root is not None:
+            for source in [*expected_binds, *expected_private_readonly]:
+                try:
+                    Path(source).relative_to(attempt_root)
+                except ValueError:
+                    expected_under_attempt_root = False
+                    break
+
+        adapter_tests = dict(spec.get("tests", {}))
+        tests = {
+            "container_inspect_succeeded": inspect_ok,
+            "isolation_mode_is_explicit": spec.get("mode") == "isolated",
+            "scope_is_per_attempt": spec.get("scope") == "per_attempt",
+            "personal_harness_state_excluded": (
+                spec.get("personal_harness_state") == "excluded"
+            ),
+            "cross_attempt_reuse_disabled": (
+                spec.get("cross_attempt_reuse") is False
+            ),
+            "writable_bind_mounts_exact": writable_binds == expected_binds,
+            "readonly_bind_mounts_exact": readonly_binds == expected_readonly,
+            "undeclared_volume_or_other_mounts_absent": not non_bind_mounts,
+            "declared_bind_mounts_exist": all(
+                Path(path).exists()
+                for path in [*expected_binds, *expected_readonly]
+            ),
+            "declared_bind_mounts_under_attempt_root": (
+                expected_under_attempt_root
+            ),
+            **adapter_tests,
+        }
+        return {
+            "preset": "state-isolation",
+            "version": 1,
+            "status": "pass" if all(tests.values()) else "fail",
+            "implementation": (
+                "per-attempt container plus exact private/immutable bind allowlists"
+            ),
+            "mode": spec.get("mode"),
+            "attempt_root": str(attempt_root) if attempt_root else None,
+            "expected_writable_bind_sources": expected_binds,
+            "observed_writable_bind_sources": writable_binds,
+            "expected_readonly_bind_sources": expected_readonly,
+            "observed_readonly_bind_sources": readonly_binds,
+            "tests": tests,
         }
 
     # ------------------------------------------------------------------

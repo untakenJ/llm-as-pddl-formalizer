@@ -392,6 +392,9 @@ class MinimumHostWorkspaceTests(unittest.TestCase):
                     self.assertEqual(
                         workspace.validate_action_step_guard()["status"], "pass"
                     )
+                    self.assertEqual(
+                        workspace.validate_state_isolation()["status"], "pass"
+                    )
                     clock = adapter.begin_attempt_clock()
                     workspace.start_model_gateway_monitor(clock)
                     result = adapter.send_task(

@@ -24,6 +24,7 @@ from agent_formalizer.benchmark_profile import (
 from agent_formalizer.claws.common import (
     google_vertex_openai_base,
     jsonl_steps,
+    safe_component,
     split_model_id,
     tool_records,
 )
@@ -45,6 +46,7 @@ from agent_formalizer.claws.openclaw import (
 )
 from agent_formalizer.claws.zeroclaw import ZeroClawAdapter, _parse_costs
 from agent_formalizer.config import CLAW_DEFAULTS, agent_model_label
+from agent_formalizer.workspace import AgentWorkspace
 from agent_formalizer.util import read_named_secret, read_named_setting
 from sweep_agent_pipeline import (
     _formalize_indices_for_resume,
@@ -94,6 +96,10 @@ class AdapterRegistryTests(unittest.TestCase):
             },
         )
         self.assertIn("actions", envelope["required_evidence"])
+        self.assertIn(
+            "state-isolation",
+            {row["preset"] for row in envelope["validations"]},
+        )
         self.assertEqual(
             load_benchmark_profile(
                 BENCHMARK_PROFILES_DIR / "native_safety_solver_as_tool.json"
@@ -316,6 +322,53 @@ class ProviderTests(unittest.TestCase):
             self.assertNotIn("test-key", json.dumps(env))
             adapter._cleanup_run_state()
 
+    def test_safe_component_retains_full_identity_in_hash(self):
+        shared = "case-" + ("x" * 240)
+        first = safe_component(shared + "-runtime-one")
+        second = safe_component(shared + "-runtime-two")
+        self.assertNotEqual(first, second)
+        self.assertLessEqual(len(first), 160)
+        self.assertLessEqual(len(second), 160)
+
+    def test_openclaw_attempt_mounts_and_trash_are_not_shared(self):
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "agent_formalizer.claws.openclaw.OPENCLAW_BENCHMARK_STATE_DIR",
+            Path(tmp),
+        ):
+            adapter = OpenClawAdapter(
+                "openai/gpt-5.4-mini", 120, api_key="test-key"
+            )
+            try:
+                first_args = adapter.container_run_args("case-one")
+                first = adapter._attempt_for_instance("case-one")
+                (first.state_dir / ".Trash" / "prior-case").mkdir(parents=True)
+                (first.state_dir / ".Trash" / "prior-case" / "domain.pddl").write_text(
+                    "private"
+                )
+
+                second_args = adapter.container_run_args("case-two")
+                second = adapter._attempt_for_instance("case-two")
+                self.assertNotEqual(first.root, second.root)
+                self.assertNotIn(str(first.root), " ".join(second_args))
+                self.assertNotIn(str(second.root), " ".join(first_args))
+                self.assertNotIn(
+                    str(adapter._attempts_root) + ":/root/.openclaw",
+                    " ".join(second_args),
+                )
+                self.assertFalse((second.state_dir / ".Trash").exists())
+                self.assertEqual(
+                    set(adapter.state_isolation_spec("case-two")["writable_bind_sources"]),
+                    {str(second.state_dir), str(second.workspace_dir)},
+                )
+
+                first_root = first.root
+                second_root = second.root
+                adapter.delete_agent("unused", instance_id="case-one")
+                self.assertFalse(first_root.exists())
+                self.assertTrue(second_root.exists())
+            finally:
+                adapter._cleanup_run_state()
+
     def test_sweep_resume_uses_valid_completion_not_outcome(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -364,6 +417,53 @@ class ProviderTests(unittest.TestCase):
 
 
 class GeneratedConfigTests(unittest.TestCase):
+    def test_state_validation_rejects_undeclared_writable_bind(self):
+        adapter = SimpleNamespace(
+            runtime_tools=lambda: [],
+            state_isolation_spec=lambda instance_id: {
+                "mode": "isolated",
+                "scope": "per_attempt",
+                "personal_harness_state": "excluded",
+                "cross_attempt_reuse": False,
+                "attempt_root": None,
+                "writable_bind_sources": [],
+                "tests": {},
+            }
+        )
+        workspace = AgentWorkspace("case", "container", adapter)
+        inspected = subprocess.CompletedProcess(
+            ["docker", "inspect", "container"],
+            0,
+            stdout=json.dumps(
+                [
+                    {
+                        "Mounts": [
+                            {
+                                "Type": "bind",
+                                "Source": "/shared/cross-case-state",
+                                "Destination": "/state",
+                                "RW": True,
+                            },
+                            {
+                                "Type": "bind",
+                                "Source": "/shared/read-only-history",
+                                "Destination": "/history",
+                                "RW": False,
+                            }
+                        ]
+                    }
+                ]
+            ),
+            stderr="",
+        )
+        with patch(
+            "agent_formalizer.workspace.subprocess.run", return_value=inspected
+        ):
+            report = workspace.validate_state_isolation()
+        self.assertEqual(report["status"], "fail")
+        self.assertFalse(report["tests"]["writable_bind_mounts_exact"])
+        self.assertFalse(report["tests"]["readonly_bind_mounts_exact"])
+
     def setUp(self):
         self.env = patch.dict(os.environ, {"OPENAI_API_KEY": "test-secret"}, clear=False)
         self.env.start()
@@ -606,6 +706,30 @@ class GeneratedConfigTests(unittest.TestCase):
             state = adapter._instance_states.pop("generic-mount-regression", None)
             if state and state.exists():
                 shutil.rmtree(state)
+
+    def test_generic_long_instance_ids_get_distinct_private_state(self):
+        adapter = GenericAgentAdapter(
+            "openai/gpt-5.4-mini", 120, api_key="test-key"
+        )
+        shared = "logistics-dataset-" + ("same-prefix-" * 30)
+        first_id = shared + "runtime-one"
+        second_id = shared + "runtime-two"
+        first = None
+        second = None
+        try:
+            adapter.container_run_args(first_id)
+            adapter.container_run_args(second_id)
+            first = adapter._instance_states[first_id]
+            second = adapter._instance_states[second_id]
+            self.assertNotEqual(first, second)
+            self.assertEqual(first.parent, second.parent)
+            self.assertNotEqual(
+                set(adapter.state_isolation_spec(first_id)["writable_bind_sources"]),
+                set(adapter.state_isolation_spec(second_id)["writable_bind_sources"]),
+            )
+        finally:
+            adapter.delete_agent("unused-first", instance_id=first_id)
+            adapter.delete_agent("unused-second", instance_id=second_id)
 
 
 class ArtifactParsingTests(unittest.TestCase):

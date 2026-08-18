@@ -7,16 +7,17 @@ sessions/usage/tool-traces are collected) lives behind this interface.
 
 Hook call order for one problem (see orchestrator.run_one_problem):
 
-    create_agent(agent_id)                  # optional isolation setup
     container_run_args(instance_id)         # extra `docker run` args (mounts, env)
     post_container_start(workspace)         # provision config inside container
+    create_agent(agent_id, instance_id=...) # optional isolation setup
     send_task(prompt, ...)                  # run the agent, return AgentResult
     collect_usage(workspace, artifact_dir)  # claw-specific usage, container alive
     iter_tool_calls(agent_id, artifact_dir) # yield normalized tool-call records
     iter_agent_steps(agent_id, artifact_dir) # yield per-step agent loop records
     backup_session(agent_id, artifact_dir)  # save raw session logs
+    prepare_agent_cleanup(...)              # restore access to private mounts
     workspace.cleanup()                     # unmount runtime/state paths
-    delete_agent(agent_id)                  # teardown (always called)
+    delete_agent(agent_id, instance_id=...) # teardown (always called)
 """
 
 from __future__ import annotations
@@ -233,11 +234,106 @@ class BaseClawAdapter:
     # Agent lifecycle (no-ops for stateless claws)
     # ------------------------------------------------------------------
 
-    def create_agent(self, agent_id: str) -> None:
+    def create_agent(
+        self, agent_id: str, *, instance_id: str | None = None
+    ) -> None:
         pass
 
-    def delete_agent(self, agent_id: str) -> None:
+    def delete_agent(
+        self, agent_id: str, *, instance_id: str | None = None
+    ) -> None:
         pass
+
+    def prepare_agent_cleanup(
+        self,
+        agent_id: str,
+        *,
+        instance_id: str | None = None,
+        container_name: str | None = None,
+    ) -> None:
+        """Prepare attempt-private host mounts for teardown while container lives."""
+        pass
+
+    @staticmethod
+    def _run_container_cleanup_command(
+        container_name: str, command: list[str]
+    ) -> subprocess.CompletedProcess:
+        """Run a teardown command even when the attempt container was stopped.
+
+        Deadline enforcement kills the container before evidence collection.
+        Restarting its inert top-level ``tail`` process after the measured run
+        lets teardown fix ownership on exact private bind mounts; the container
+        is force-removed immediately afterward.
+        """
+        inspected = subprocess.run(
+            [
+                "docker", "inspect", "--format",
+                "{{.State.Running}} {{.State.Paused}}",
+                container_name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if inspected.returncode != 0:
+            return inspected
+        state = inspected.stdout.strip().split()
+        running = state[:1] == ["true"]
+        paused = state[1:2] == ["true"]
+        if paused:
+            unpaused = subprocess.run(
+                ["docker", "unpause", container_name],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if unpaused.returncode != 0:
+                return unpaused
+            running = True
+        if not running:
+            started = subprocess.run(
+                ["docker", "start", container_name],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if started.returncode != 0:
+                return started
+        return subprocess.run(
+            ["docker", "exec", container_name, *command],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def state_isolation_spec(self, instance_id: str) -> dict:
+        """Declare per-attempt writable host surfaces for runtime validation.
+
+        The current benchmark implements only isolated state. A future
+        controlled-sharing condition should override this through a new,
+        profile-hashed policy rather than making a shared cache or recycle bin
+        incidentally visible.
+        """
+        configured = (
+            self.resolved_config.raw["resolved"]["state_isolation"]
+            if self.resolved_config is not None
+            else {
+                "scope": "per_attempt",
+                "personal_harness_state": "excluded",
+                "cross_attempt_reuse": False,
+            }
+        )
+        return {
+            "mode": "isolated",
+            "scope": configured["scope"],
+            "personal_harness_state": configured["personal_harness_state"],
+            "cross_attempt_reuse": configured["cross_attempt_reuse"],
+            "attempt_root": None,
+            "writable_bind_sources": [],
+            "private_readonly_bind_sources": [],
+            "shared_readonly_bind_sources": [],
+            "tests": {},
+        }
 
     def backup_session(
         self,
@@ -406,7 +502,7 @@ class BaseClawAdapter:
             "generic": "official --no-user-tools flag removes ask_user and long-term-update tools",
         }
         state_surfaces = {
-            "openclaw": "per-run state plus per-attempt agent workspace/session/memory",
+            "openclaw": "per-attempt state, workspace, session, memory, and Trash",
             "hermes": "per-attempt HERMES_HOME and SQLite/session state",
             "nanobot": "throwaway container workspace, config, session, and memory",
             "zeroclaw": "throwaway container config directory, workspace, and state",

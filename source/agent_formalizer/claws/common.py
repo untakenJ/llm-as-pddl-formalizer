@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -111,9 +112,17 @@ def google_vertex_openai_base(provider_options: dict | None = None) -> str:
 
 
 def safe_component(value: str) -> str:
-    """Return a conservative filesystem component."""
+    """Return a conservative, collision-resistant filesystem component.
+
+    Runtime ids occur near the end of long benchmark instance ids. Truncating
+    only the readable prefix could therefore map concurrent executions to the
+    same host state directory. Preserve a readable prefix and always retain a
+    digest of the complete value.
+    """
     cleaned = "".join(c if c.isalnum() or c in "._-" else "-" for c in value)
-    return cleaned[:160] or "run"
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    prefix = (cleaned or "run")[:143].rstrip(".-") or "run"
+    return f"{prefix}-{digest}"
 
 
 class EnvConfiguredAdapter(BaseClawAdapter):
@@ -299,24 +308,40 @@ class PythonRuntimeMixin:
 
     def python_runtime_mount_args(self) -> list[str]:
         self.validate_python_runtime()
+        sources = self.python_runtime_mount_sources()
         resolved_python = self.runtime_python.resolve()
-        source_home = resolved_python.parent.parent
         if self.runtime_python.is_symlink():
             link_target = Path(os.readlink(self.runtime_python))
             if not link_target.is_absolute():
                 link_target = self.runtime_python.parent / link_target
             target_home = link_target.parent.parent
         else:
-            target_home = source_home
-        mounts = ["-v", f"{self.runtime_env}:{self.runtime_env}:ro"]
-        try:
-            resolved_python.relative_to(self.runtime_env)
-        except ValueError:
+            target_home = sources[0]
+        mounts = ["-v", f"{sources[0]}:{self.runtime_env}:ro"]
+        if len(sources) > 1:
             # uv's venv symlink normally points through an unversioned Python
             # home symlink. Docker resolves mount sources, so explicitly mount
             # the resolved source at the exact path embedded in the venv link.
-            mounts.extend(["-v", f"{source_home}:{target_home}:ro"])
+            mounts.extend(["-v", f"{sources[1]}:{target_home}:ro"])
         return mounts
+
+    def python_runtime_mount_sources(self) -> list[Path]:
+        self.validate_python_runtime()
+        resolved_python = self.runtime_python.resolve()
+        sources = [self.runtime_env]
+        try:
+            resolved_python.relative_to(self.runtime_env)
+        except ValueError:
+            sources.append(resolved_python.parent.parent)
+        return sources
+
+    def state_isolation_spec(self, instance_id: str) -> dict:
+        spec = super().state_isolation_spec(instance_id)
+        spec["shared_readonly_bind_sources"] = [
+            *spec.get("shared_readonly_bind_sources", []),
+            *(str(path) for path in self.python_runtime_mount_sources()),
+        ]
+        return spec
 
     def python_runtime_info(self, distribution: str | None = None) -> dict:
         from agent_formalizer.provenance import run_text

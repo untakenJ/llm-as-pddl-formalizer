@@ -69,7 +69,8 @@
       {"preset": "runtime-lock", "version": 1, "required": true},
       {"preset": "network-model-only", "version": 2, "required": true},
       {"preset": "environment-isolation", "version": 1, "required": true},
-      {"preset": "action-step-guard", "version": 1, "required": true}
+      {"preset": "action-step-guard", "version": 1, "required": true},
+      {"preset": "state-isolation", "version": 1, "required": true}
     ],
     "required_evidence": [
       "resolved_config_sha256",

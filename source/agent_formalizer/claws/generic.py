@@ -1,4 +1,4 @@
-"""GenericAgent adapter with per-run memory, temp files, tools, and model config."""
+"""GenericAgent adapter with per-attempt memory, temp files, and model config."""
 
 from __future__ import annotations
 
@@ -29,6 +29,8 @@ from agent_formalizer.result_types import AgentResult
 logger = logging.getLogger(__name__)
 
 ROUND_END = "[ROUND END]"
+GENERIC_CONTAINER_HOME = "/tmp/genericagent-pddl-benchmark"
+GENERIC_CONTAINER_CONFIG = f"{GENERIC_CONTAINER_HOME}/config"
 ANTHROPIC_USAGE_RE = re.compile(
     r"\[Cache\]\s*input=(\d+)\s*creation=(\d+)\s*read=(\d+)"
 )
@@ -114,7 +116,7 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
                 "-v", f"{self.runtime_repo}:{self.runtime_repo}:ro",
                 "-v", f"{state / 'temp'}:{self.runtime_repo / 'temp'}:rw",
                 "-v", f"{state / 'memory'}:{self.runtime_repo / 'memory'}:rw",
-                "-v", f"{config_dir}:{config_dir}:ro",
+                "-v", f"{config_dir}:{GENERIC_CONTAINER_CONFIG}:ro",
             ]
         )
         return args
@@ -125,20 +127,68 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         # mount. GenericAgent does not ship this runtime directory, so create
         # the empty mountpoint once in the repository-local harness cache.
         (self.runtime_repo / "temp").mkdir(exist_ok=True)
-        state = GENERIC_BENCHMARK_STATE_DIR / safe_component(instance_id)
+        state = GENERIC_BENCHMARK_STATE_DIR / f"attempt-{safe_component(instance_id)}"
         with self._state_lock:
+            existing = self._instance_states.get(instance_id)
+            if existing is not None:
+                return existing
             if state.exists():
-                shutil.rmtree(state)
-            (state / "temp").mkdir(parents=True)
-            (state / "config").mkdir()
-            if self.skills_mode == "official":
-                shutil.copytree(self.runtime_repo / "memory", state / "memory")
-            else:
-                (state / "memory").mkdir()
-            (state / "config" / "mykey.py").write_text(self._mykey_source())
-            self._copy_official_schemas(state / "config")
+                raise RuntimeError(
+                    "Refusing to reuse pre-existing GenericAgent attempt state: "
+                    f"{state}"
+                )
+            try:
+                (state / "temp").mkdir(parents=True)
+                (state / "config").mkdir()
+                if self.skills_mode == "official":
+                    shutil.copytree(self.runtime_repo / "memory", state / "memory")
+                else:
+                    (state / "memory").mkdir()
+                (state / "config" / "mykey.py").write_text(self._mykey_source())
+                self._copy_official_schemas(state / "config")
+            except Exception:
+                shutil.rmtree(state, ignore_errors=True)
+                raise
             self._instance_states[instance_id] = state
         return state
+
+    def state_isolation_spec(self, instance_id: str) -> dict:
+        spec = super().state_isolation_spec(instance_id)
+        with self._state_lock:
+            state = self._instance_states.get(instance_id)
+            other_states = {
+                path for key, path in self._instance_states.items()
+                if key != instance_id
+            }
+        if state is None:
+            spec["tests"] = {"attempt_state_prepared": False}
+            return spec
+        spec.update(
+            {
+                "attempt_root": str(state),
+                "writable_bind_sources": [
+                    str(state / "temp"),
+                    str(state / "memory"),
+                ],
+                "private_readonly_bind_sources": [str(state / "config")],
+                "shared_readonly_bind_sources": [
+                    *spec.get("shared_readonly_bind_sources", []),
+                    str(self.runtime_repo),
+                ],
+                "tests": {
+                    "attempt_state_prepared": state.is_dir(),
+                    "attempt_root_not_shared": state not in other_states,
+                    "attempt_root_under_benchmark_cache": (
+                        state.resolve().parent
+                        == GENERIC_BENCHMARK_STATE_DIR.resolve()
+                    ),
+                    "config_is_attempt_private": (state / "config").is_dir(),
+                    "memory_is_attempt_private": (state / "memory").is_dir(),
+                    "temp_is_attempt_private": (state / "temp").is_dir(),
+                },
+            }
+        )
+        return spec
 
     def _mykey_source(self) -> str:
         variable = (
@@ -206,9 +256,13 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             "plugins": "pinned-official-repository",
             "user_tools": False,
             "memory": (
-                "per-run-official-clean-copy" if self.skills_mode == "official" else "empty"
+                "per-attempt-official-clean-copy"
+                if self.skills_mode == "official"
+                else "per-attempt-empty"
             ),
-            "state_dir": str(GENERIC_BENCHMARK_STATE_DIR),
+            "state_dir": "<benchmark-attempt-isolated-state>",
+            "state_scope": "per_attempt",
+            "cross_attempt_reuse": False,
         }
 
     def effective_config(self) -> dict:
@@ -268,19 +322,18 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         stdout_path = artifact_dir / "agent_stdout.log" if artifact_dir else None
         stderr_path = artifact_dir / "agent_stderr.log" if artifact_dir else None
 
-        config_dir = state / "config"
         cmd = ["docker", "exec", "-w", CONTAINER_WORKSPACE]
         cmd.extend(
             self.docker_exec_env_args(
                 {
-                    "PYTHONPATH": f"{config_dir}:{self.runtime_repo}",
+                    "PYTHONPATH": f"{GENERIC_CONTAINER_CONFIG}:{self.runtime_repo}",
                     # Usage is emitted by the pinned runtime with print().
                     # The adapter may observe the native round-end sentinel
                     # before block-buffered stdout is flushed, so make those
                     # diagnostic lines durable without changing agent logic.
                     "PYTHONUNBUFFERED": "1",
                     "GA_LANG": "en",
-                    "HOME": "/tmp/genericagent-pddl-benchmark",
+                    "HOME": GENERIC_CONTAINER_HOME,
                     "NO_COLOR": "1",
                 }
             )
@@ -372,22 +425,34 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
     def _make_state_host_writable(self, container_name: str) -> None:
         """Restore host cleanup access to files created by container root."""
         try:
-            subprocess.run(
+            result = self._run_container_cleanup_command(
+                container_name,
                 [
-                    "docker",
-                    "exec",
-                    container_name,
                     "chmod",
                     "-R",
                     "a+rwX",
                     str(self.runtime_repo / "temp"),
                     str(self.runtime_repo / "memory"),
                 ],
-                capture_output=True,
-                timeout=30,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.warning("Could not prepare GenericAgent state cleanup: %s", exc)
+            return
+        if result.returncode != 0:
+            logger.warning(
+                "Could not prepare GenericAgent state cleanup: %s",
+                (result.stderr or result.stdout or f"exit {result.returncode}").strip(),
+            )
+
+    def prepare_agent_cleanup(
+        self,
+        agent_id: str,
+        *,
+        instance_id: str | None = None,
+        container_name: str | None = None,
+    ) -> None:
+        if container_name:
+            self._make_state_host_writable(container_name)
 
     def backup_session(
         self,
@@ -434,18 +499,20 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             }
         ]
 
-    def delete_agent(self, agent_id: str) -> None:
+    def delete_agent(
+        self, agent_id: str, *, instance_id: str | None = None
+    ) -> None:
         with self._state_lock:
             state = self._agent_states.pop(agent_id, None)
-            if state is None:
-                for instance_id, candidate in self._instance_states.items():
-                    if agent_id.startswith(f"pddl-{instance_id}-"):
-                        state = candidate
-                        break
+            if state is None and instance_id is not None:
+                state = self._instance_states.get(instance_id)
             if state:
                 for key, value in list(self._instance_states.items()):
                     if value == state:
                         self._instance_states.pop(key, None)
+                for key, value in list(self._agent_states.items()):
+                    if value == state:
+                        self._agent_states.pop(key, None)
                 if state.exists():
                     try:
                         shutil.rmtree(state)

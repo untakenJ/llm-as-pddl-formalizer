@@ -1,20 +1,24 @@
 """OpenClaw CLI adapter for the agentic PDDL formalizer.
 
 Wraps ``openclaw agent`` CLI calls with structured result handling, timeout
-management, and per-problem agent isolation. Ported from ``claw-swe-bench``
+management, and per-attempt agent isolation. Ported from ``claw-swe-bench``
 (``claw_swebench/claws/openclaw.py``) and adapted for PDDL formalization: the
 agent authors its PDDL files under ``CONTAINER_WORKSPACE`` instead of patching
 ``/testbed``, and ``iter_tool_calls`` exposes the session transcript so the
 orchestrator can fold tool calls into the unified trace.
 
-Isolation strategy: each problem gets a temporary OpenClaw agent
-(via ``openclaw agents add`` / ``openclaw agents delete``), ensuring a fully
-independent workspace, session store, and memory.
+Isolation strategy: each execution attempt gets a temporary OpenClaw state
+directory and workspace. Only those two attempt-owned directories are mounted
+into its container. OpenClaw's recoverable ``agents delete`` operation may move
+files to ``.Trash`` inside that state, after which the complete attempt root is
+hard-deleted. No state directory is mounted into a later attempt.
 
 Container integration: the host's Node.js binary, the OpenClaw module
 directory, and a **benchmark-isolated** OpenClaw state dir (not the
-operator's ``~/.openclaw``) are bind-mounted into the container. The per-problem
-workspace root (``/tmp/openclaw-pddl-workspaces``) is also mounted.
+operator's ``~/.openclaw``) are bind-mounted into the container. The current
+attempt workspace is mounted both at its registered absolute path and at the
+official ``/workspace`` path, so relative OpenClaw writes and official artifact
+writes address the same files.
 ``openclaw agent --local`` runs *inside* the container so it can edit
 ``/workspace`` without contacting the host Gateway (which is loopback-only and
 unreachable from Docker).
@@ -33,6 +37,7 @@ import subprocess
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -60,12 +65,24 @@ logger = logging.getLogger(__name__)
 AGENT_ADMIN_TIMEOUT = 120
 AGENT_ADD_ATTEMPTS = 3
 
-# Base path for temporary agent workspaces on the host (bind-mounted into
-# containers at the same path so OpenClaw sees the workspace created by
-# ``openclaw agents add`` on the host).
-TEMP_WORKSPACE_ROOT = Path("/tmp/openclaw-pddl-workspaces")
+# Only fully isolated state is implemented. A future controlled-sharing study
+# must add an explicit, profile-hashed policy rather than reusing Trash or other
+# incidental harness state.
+OPENCLAW_STATE_SHARING_MODE = "isolated"
+
+
+@dataclass
+class _OpenClawAttemptState:
+    instance_id: str
+    root: Path
+    state_dir: Path
+    workspace_dir: Path
+    requested_agent_id: str | None = None
+    registered_agent_id: str | None = None
 
 GOOGLE_VERTEX_PROVIDER = "google-vertex"
+
+
 class OpenClawAdapter(BaseClawAdapter):
     """Drives the OpenClaw agent via CLI and returns structured results.
 
@@ -116,22 +133,85 @@ class OpenClawAdapter(BaseClawAdapter):
         self._api_key_name = api_key_name
         self.credential_metadata = dict(credential_metadata or {})
         self.provider_options = dict(provider_options or {})
-        self._config_lock = threading.Lock()
+        self._config_lock = threading.RLock()
+        self._state_lock = threading.RLock()
+        self._attempt_states: dict[str, _OpenClawAttemptState] = {}
+        self._agent_attempts: dict[str, str] = {}
         OPENCLAW_BENCHMARK_STATE_DIR.mkdir(parents=True, exist_ok=True)
         self._run_state_dir = (
             OPENCLAW_BENCHMARK_STATE_DIR
             / f"run-{os.getpid()}-{uuid.uuid4().hex[:12]}"
         )
+        self._run_state_dir.mkdir(mode=0o700)
+        self._control_state_dir = self._run_state_dir / "control"
+        self._attempts_root = self._run_state_dir / "attempts"
+        self._attempts_root.mkdir(mode=0o700)
         atexit.register(self._cleanup_run_state)
-        self._ensure_benchmark_state()
+        self._ensure_benchmark_state(self._control_state_dir)
 
     @property
     def _state_dir(self) -> Path:
-        """Isolated OpenClaw state used for benchmark runs (not ~/.openclaw)."""
-        return self._run_state_dir
+        """Adapter-control state, never mounted into an attempt container."""
+        return self._control_state_dir
 
     def _cleanup_run_state(self) -> None:
-        shutil.rmtree(self._run_state_dir, ignore_errors=True)
+        with self._state_lock:
+            self._attempt_states.clear()
+            self._agent_attempts.clear()
+        try:
+            shutil.rmtree(self._run_state_dir)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning(
+                "Could not remove OpenClaw benchmark run state %s: %s",
+                self._run_state_dir,
+                exc,
+            )
+
+    def _prepare_attempt_state(self, instance_id: str) -> _OpenClawAttemptState:
+        """Create or return the state mounted exclusively into one attempt."""
+        with self._state_lock:
+            existing = self._attempt_states.get(instance_id)
+            if existing is not None:
+                return existing
+            digest = hashlib.sha256(instance_id.encode()).hexdigest()[:20]
+            root = self._attempts_root / f"attempt-{digest}-{uuid.uuid4().hex[:8]}"
+            root.mkdir(mode=0o700)
+            state_dir = root / "state"
+            workspace_dir = root / "workspace"
+            state_dir.mkdir(mode=0o700)
+            workspace_dir.mkdir(mode=0o700)
+            attempt = _OpenClawAttemptState(
+                instance_id=instance_id,
+                root=root,
+                state_dir=state_dir,
+                workspace_dir=workspace_dir,
+            )
+            self._attempt_states[instance_id] = attempt
+        try:
+            self._ensure_benchmark_state(state_dir)
+        except Exception:
+            with self._state_lock:
+                self._attempt_states.pop(instance_id, None)
+            shutil.rmtree(root, ignore_errors=True)
+            raise
+        return attempt
+
+    def _attempt_for_instance(self, instance_id: str) -> _OpenClawAttemptState:
+        with self._state_lock:
+            attempt = self._attempt_states.get(instance_id)
+        if attempt is None:
+            raise RuntimeError(f"OpenClaw attempt state is not prepared: {instance_id}")
+        return attempt
+
+    def _attempt_for_agent(self, agent_id: str) -> _OpenClawAttemptState:
+        with self._state_lock:
+            instance_id = self._agent_attempts.get(agent_id)
+            attempt = self._attempt_states.get(instance_id) if instance_id else None
+        if attempt is None:
+            raise RuntimeError(f"OpenClaw agent has no isolated attempt state: {agent_id}")
+        return attempt
 
     # ------------------------------------------------------------------
     # Model authentication (env-only; no host credential store)
@@ -186,7 +266,10 @@ class OpenClawAdapter(BaseClawAdapter):
     def tool_policy(self) -> dict:
         """Effective tool policy for this benchmark run (recorded in trace)."""
         policy = {
-            "state_dir": "<benchmark-process-isolated-state>",
+            "state_dir": "<benchmark-attempt-isolated-state>",
+            "state_scope": "per_attempt",
+            "cross_attempt_reuse": False,
+            "state_sharing_mode": OPENCLAW_STATE_SHARING_MODE,
             "profile": self.tools_profile,
         }
         if self.tools_allow:
@@ -259,7 +342,7 @@ class OpenClawAdapter(BaseClawAdapter):
     def model_gateway_secret(self) -> str | None:
         return self._resolved_api_key()
 
-    def _openclaw_env(self) -> dict[str, str]:
+    def _openclaw_env(self, state_dir: Path | None = None) -> dict[str, str]:
         """Hermetic environment for host-side ``openclaw`` subprocesses.
 
         Keep ordinary process settings such as ``PATH`` and the selected model
@@ -267,15 +350,16 @@ class OpenClawAdapter(BaseClawAdapter):
         particular, an ambient profile/config path must not redirect benchmark
         administration commands back to a personal state directory.
         """
+        resolved_state = state_dir or self._state_dir
         env = {
             "PATH": "/usr/local/bin:/usr/bin:/bin",
-            "HOME": str(self._state_dir),
+            "HOME": str(resolved_state),
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
             "TZ": "UTC",
             "NO_COLOR": "1",
-            "OPENCLAW_STATE_DIR": str(self._state_dir),
-            "OPENCLAW_CONFIG_PATH": str(self._config_path()),
+            "OPENCLAW_STATE_DIR": str(resolved_state),
+            "OPENCLAW_CONFIG_PATH": str(self._config_path(resolved_state)),
             "OPENCLAW_NO_AUTO_UPDATE": "1",
         }
         value = "benchmark-gateway-placeholder"
@@ -292,30 +376,26 @@ class OpenClawAdapter(BaseClawAdapter):
             *args,
         ]
 
-    def _config_path(self) -> Path:
-        return self._state_dir / "openclaw.json"
+    def _config_path(self, state_dir: Path | None = None) -> Path:
+        return (state_dir or self._state_dir) / "openclaw.json"
 
-    def _ensure_benchmark_state(self) -> None:
+    def _ensure_benchmark_state(self, state_dir: Path | None = None) -> None:
         """Create the isolated state dir and pin benchmark tool policy."""
-        self._state_dir.mkdir(parents=True, exist_ok=True)
-        self._sync_benchmark_openclaw_json()
+        resolved_state = state_dir or self._state_dir
+        resolved_state.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._sync_benchmark_openclaw_json(resolved_state)
 
-    def _sync_benchmark_openclaw_json(self) -> None:
+    def _sync_benchmark_openclaw_json(
+        self, state_dir: Path | None = None
+    ) -> None:
         """Write benchmark-owned ``openclaw.json`` (tools/model/auth/plugins)."""
-        config_path = self._config_path()
-        previous: dict = {}
-        if config_path.is_file():
-            try:
-                previous = json.loads(config_path.read_text())
-            except json.JSONDecodeError:
-                logger.warning("Resetting invalid benchmark openclaw.json")
+        resolved_state = state_dir or self._state_dir
+        config_path = self._config_path(resolved_state)
 
-        # Rebuild all benchmark-owned top-level configuration. Preserve only
-        # agent registrations created by this adapter; no arbitrary host/user
-        # settings survive into a run.
-        previous_agents = previous.get("agents", {}).get("list", [])
+        # Every attempt starts from an empty registration list. Controlled
+        # cross-attempt state sharing is deliberately not implemented here.
         data: dict = {
-            "agents": {"defaults": {}, "list": previous_agents},
+            "agents": {"defaults": {}, "list": []},
             "models": {
                 "mode": "merge",
                 "providers": {self.provider: self._gateway_provider_config()},
@@ -401,17 +481,20 @@ class OpenClawAdapter(BaseClawAdapter):
     # ------------------------------------------------------------------
 
     def container_run_args(self, instance_id: str) -> list[str]:
-        TEMP_WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+        attempt = self._prepare_attempt_state(instance_id)
         args = [
             "-v", f"{OPENCLAW_NODE_BIN}:/usr/bin/node:ro",
             "-v", f"{OPENCLAW_MODULE_DIR}:/usr/lib/node_modules/openclaw:ro",
-            "-v", f"{self._state_dir}:/root/.openclaw",
+            "-v", f"{attempt.state_dir}:/root/.openclaw:rw",
             "-e", "OPENCLAW_STATE_DIR=/root/.openclaw",
             "-e", "OPENCLAW_CONFIG_PATH=/root/.openclaw/openclaw.json",
             "-e", "OPENCLAW_NO_AUTO_UPDATE=1",
-            # Per-problem agent workspaces live here on the host; the in-container
-            # ``openclaw agent`` must see the same paths (otherwise WorkspaceVanishedError).
-            "-v", f"{TEMP_WORKSPACE_ROOT}:{TEMP_WORKSPACE_ROOT}",
+            # OpenClaw stores the host absolute workspace path in openclaw.json,
+            # so make precisely this attempt's path available at the same path.
+            # Mount the same directory at /workspace to make the prompt, relative
+            # tool writes, and official artifact contract describe one workspace.
+            "-v", f"{attempt.workspace_dir}:{attempt.workspace_dir}:rw",
+            "-v", f"{attempt.workspace_dir}:/workspace:rw",
         ]
         exported_envs: set[str] = set()
         # OpenClaw sees only a syntactically valid placeholder. Authentication
@@ -424,6 +507,45 @@ class OpenClawAdapter(BaseClawAdapter):
         if self.provider == GOOGLE_VERTEX_PROVIDER:
             self._append_google_vertex_env(args, exported_envs)
         return args
+
+    def state_isolation_spec(self, instance_id: str) -> dict:
+        spec = super().state_isolation_spec(instance_id)
+        attempt = self._attempt_for_instance(instance_id)
+        with self._state_lock:
+            other_roots = {
+                item.root for key, item in self._attempt_states.items()
+                if key != instance_id
+            }
+        spec.update(
+            {
+                "attempt_root": str(attempt.root),
+                "writable_bind_sources": [
+                    str(attempt.state_dir),
+                    str(attempt.workspace_dir),
+                ],
+                "shared_readonly_bind_sources": [
+                    str(OPENCLAW_NODE_BIN),
+                    str(OPENCLAW_MODULE_DIR),
+                ],
+                "tests": {
+                    "attempt_root_exists": attempt.root.is_dir(),
+                    "attempt_root_not_shared": attempt.root not in other_roots,
+                    "attempt_root_under_run_attempts": (
+                        attempt.root.resolve().parent
+                        == self._attempts_root.resolve()
+                    ),
+                    "control_state_outside_attempt": (
+                        self._control_state_dir.resolve()
+                        != attempt.state_dir.resolve()
+                    ),
+                    "fresh_state_has_no_trash": not (
+                        attempt.state_dir / ".Trash"
+                    ).exists(),
+                    "workspace_is_attempt_private": attempt.workspace_dir.is_dir(),
+                },
+            }
+        )
+        return spec
 
     def _append_google_vertex_env(self, args: list[str], exported_envs: set[str]) -> None:
         """Pass only non-secret, resolved Vertex routing values."""
@@ -451,28 +573,28 @@ class OpenClawAdapter(BaseClawAdapter):
     # Agent lifecycle (isolation)
     # ------------------------------------------------------------------
 
-    def create_agent(self, agent_id: str) -> None:
-        """Create a temporary isolated OpenClaw agent.
-
-        Each agent has its own workspace, session store, and memory.
-        Thread-safe: openclaw.json writes are protected by _config_lock.
-        """
-        self._force_delete_agent(agent_id)
-
-        workspace = TEMP_WORKSPACE_ROOT / agent_id
-        workspace.mkdir(parents=True, exist_ok=True)
+    def create_agent(
+        self, agent_id: str, *, instance_id: str | None = None
+    ) -> None:
+        """Create an agent inside a fresh, attempt-owned state directory."""
+        if instance_id is None:
+            raise ValueError("OpenClaw requires an instance_id for state isolation")
+        attempt_state = self._attempt_for_instance(instance_id)
+        attempt_state.requested_agent_id = agent_id
 
         with self._config_lock:
-            self._sync_benchmark_openclaw_json()
+            # Reset only this fresh attempt's config. No registration or state is
+            # copied from the adapter control state or another attempt.
+            self._sync_benchmark_openclaw_json(attempt_state.state_dir)
             command = self._openclaw_command(
                 "agents", "add", agent_id,
                 "--non-interactive",
-                "--workspace", str(workspace),
+                "--workspace", str(attempt_state.workspace_dir),
                 "--model", self.model,
                 "--json",
             )
             last_error = ""
-            for attempt in range(1, AGENT_ADD_ATTEMPTS + 1):
+            for add_attempt in range(1, AGENT_ADD_ATTEMPTS + 1):
                 if self.deadline_exceeded():
                     raise TimeoutError("OpenClaw startup reached benchmark deadline")
                 try:
@@ -481,76 +603,183 @@ class OpenClawAdapter(BaseClawAdapter):
                         capture_output=True,
                         text=True,
                         timeout=min(AGENT_ADMIN_TIMEOUT, self.remaining_timeout()),
-                        env=self._openclaw_env(),
+                        env=self._openclaw_env(attempt_state.state_dir),
                     )
                 except subprocess.TimeoutExpired:
                     last_error = (
                         f"timed out after {AGENT_ADMIN_TIMEOUT}s "
-                        f"(attempt {attempt}/{AGENT_ADD_ATTEMPTS})"
+                        f"(attempt {add_attempt}/{AGENT_ADD_ATTEMPTS})"
                     )
                 else:
-                    combined = f"{result.stdout}\n{result.stderr}".lower()
-                    if result.returncode == 0 or "already exists" in combined:
+                    registered = self._registered_agent_for_workspace(attempt_state)
+                    if registered is not None:
                         break
                     last_error = (
                         f"returncode={result.returncode}: "
-                        f"{result.stderr.strip() or result.stdout.strip()}"
+                        f"{result.stderr.strip() or result.stdout.strip() or 'no registration'}"
                     )
-                if attempt < AGENT_ADD_ATTEMPTS and not self.deadline_exceeded():
-                    time.sleep(attempt)
+                if add_attempt < AGENT_ADD_ATTEMPTS and not self.deadline_exceeded():
+                    time.sleep(add_attempt)
             else:
                 raise RuntimeError(f"Failed to create agent {agent_id}: {last_error}")
 
-            self._set_agent_tools_policy(agent_id)
+            registered = self._registered_agent_for_workspace(attempt_state)
+            if registered is None:
+                raise RuntimeError(
+                    "OpenClaw created no registration for the isolated workspace "
+                    f"{attempt_state.workspace_dir}"
+                )
+            attempt_state.registered_agent_id = registered
+            with self._state_lock:
+                self._agent_attempts[agent_id] = instance_id
+                self._agent_attempts[registered] = instance_id
+            self._set_agent_tools_policy(attempt_state, registered)
 
-        logger.info("Created isolated agent: %s (workspace=%s)", agent_id, workspace)
+        logger.info(
+            "Created isolated agent: requested=%s registered=%s state=%s workspace=%s",
+            agent_id,
+            registered,
+            attempt_state.state_dir,
+            attempt_state.workspace_dir,
+        )
 
-    def delete_agent(self, agent_id: str) -> None:
-        if not agent_id:
-            return
-        self._force_delete_agent(agent_id)
-
-    def _force_delete_agent(self, agent_id: str) -> None:
-        """Force delete an agent, its workspace, and state directories."""
-        with self._config_lock:
+    def delete_agent(
+        self, agent_id: str, *, instance_id: str | None = None
+    ) -> None:
+        """Delete all state for one attempt, including OpenClaw Trash."""
+        attempt_state = None
+        if instance_id is not None:
+            with self._state_lock:
+                attempt_state = self._attempt_states.get(instance_id)
+        if attempt_state is None and agent_id:
             try:
-                subprocess.run(
+                attempt_state = self._attempt_for_agent(agent_id)
+            except RuntimeError:
+                return
+        if attempt_state is None:
+            return
+
+        registered = attempt_state.registered_agent_id
+        if registered:
+            try:
+                result = subprocess.run(
                     self._openclaw_command(
-                        "agents", "delete", agent_id, "--force"
+                        "agents", "delete", registered, "--force"
                     ),
                     capture_output=True,
                     text=True,
-                    timeout=min(AGENT_ADMIN_TIMEOUT, self.remaining_timeout()),
-                    env=self._openclaw_env(),
+                    timeout=AGENT_ADMIN_TIMEOUT,
+                    env=self._openclaw_env(attempt_state.state_dir),
                 )
+                if result.returncode != 0:
+                    logger.warning(
+                        "OpenClaw native delete failed for %s; hard-deleting its "
+                        "attempt root: %s",
+                        registered,
+                        result.stderr.strip() or result.stdout.strip(),
+                    )
             except subprocess.TimeoutExpired:
-                logger.warning("Timed out deleting OpenClaw agent %s", agent_id)
-        workspace = TEMP_WORKSPACE_ROOT / agent_id
-        if workspace.exists():
-            shutil.rmtree(workspace, ignore_errors=True)
-        # OpenClaw intentionally refuses to reseed a recently attested
-        # workspace after it disappears. Benchmark workspaces are disposable
-        # and deliberately reused on retries, so remove only this workspace's
-        # attestation (the filename is sha256 of the absolute path).
-        attestation = (
-            self._state_dir
-            / "workspace-attestations"
-            / f"{hashlib.sha256(str(workspace).encode()).hexdigest()}.attested"
-        )
-        try:
-            attestation.unlink(missing_ok=True)
-        except OSError as exc:
-            logger.warning("Could not remove workspace attestation %s: %s", attestation, exc)
-        agent_state = self._resolve_agent_state_dir(agent_id) or (
-            self._state_dir / "agents" / agent_id
-        )
-        if agent_state.exists():
-            shutil.rmtree(agent_state, ignore_errors=True)
-        logger.debug("Force-deleted agent %s (workspace + state)", agent_id)
+                logger.warning(
+                    "Timed out natively deleting OpenClaw agent %s; hard-deleting "
+                    "its attempt root",
+                    registered,
+                )
 
-    def _set_agent_tools_policy(self, agent_id: str) -> None:
+        self._hard_delete_attempt(attempt_state)
+        with self._state_lock:
+            self._attempt_states.pop(attempt_state.instance_id, None)
+            for key, value in list(self._agent_attempts.items()):
+                if value == attempt_state.instance_id:
+                    self._agent_attempts.pop(key, None)
+        logger.debug("Hard-deleted isolated OpenClaw attempt %s", attempt_state.instance_id)
+
+    def prepare_agent_cleanup(
+        self,
+        agent_id: str,
+        *,
+        instance_id: str | None = None,
+        container_name: str | None = None,
+    ) -> None:
+        """Restore host teardown access only for this attempt's two mounts."""
+        if not container_name:
+            return
+        attempt_state = None
+        if instance_id is not None:
+            with self._state_lock:
+                attempt_state = self._attempt_states.get(instance_id)
+        if attempt_state is None:
+            try:
+                attempt_state = self._attempt_for_agent(agent_id)
+            except RuntimeError:
+                return
+        try:
+            result = self._run_container_cleanup_command(
+                container_name,
+                ["chmod", "-R", "a+rwX", "/root/.openclaw", "/workspace"],
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning(
+                "Could not prepare isolated OpenClaw state cleanup for %s: %s",
+                attempt_state.instance_id,
+                exc,
+            )
+            return
+        if result.returncode != 0:
+            logger.warning(
+                "Could not prepare isolated OpenClaw state cleanup for %s: %s",
+                attempt_state.instance_id,
+                (result.stderr or result.stdout or f"exit {result.returncode}").strip(),
+            )
+
+    def _hard_delete_attempt(self, attempt_state: _OpenClawAttemptState) -> None:
+        root = attempt_state.root
+        attempts_root = self._attempts_root.resolve()
+        if root.is_symlink() or root.resolve().parent != attempts_root:
+            raise RuntimeError(f"Refusing to delete unexpected OpenClaw state path: {root}")
+        try:
+            shutil.rmtree(root)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not remove isolated OpenClaw attempt state {root}: {exc}"
+            ) from exc
+        if root.exists():
+            raise RuntimeError(f"OpenClaw attempt state still exists after cleanup: {root}")
+
+    def _registered_agent_for_workspace(
+        self, attempt_state: _OpenClawAttemptState
+    ) -> str | None:
+        config_path = self._config_path(attempt_state.state_dir)
+        if not config_path.is_file():
+            return None
+        try:
+            data = json.loads(config_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        workspace = attempt_state.workspace_dir.resolve()
+        matches = []
+        for entry in data.get("agents", {}).get("list", []):
+            configured = entry.get("workspace")
+            if not isinstance(configured, str):
+                continue
+            try:
+                same_workspace = Path(configured).resolve() == workspace
+            except OSError:
+                same_workspace = False
+            if same_workspace and isinstance(entry.get("id"), str):
+                matches.append(entry["id"])
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"Multiple OpenClaw registrations share isolated workspace {workspace}"
+            )
+        return matches[0] if matches else None
+
+    def _set_agent_tools_policy(
+        self, attempt_state: _OpenClawAttemptState, agent_id: str
+    ) -> None:
         """Pin per-agent tool policy in the benchmark ``openclaw.json``."""
-        config_path = self._config_path()
+        config_path = self._config_path(attempt_state.state_dir)
         with open(config_path) as f:
             data = json.load(f)
 
@@ -564,6 +793,8 @@ class OpenClawAdapter(BaseClawAdapter):
             if agent.get("id") == agent_id:
                 agent["tools"] = agent_tools
                 break
+        else:
+            raise RuntimeError(f"OpenClaw registration disappeared: {agent_id}")
 
         with open(config_path, "w") as f:
             json.dump(data, f, indent=2)
@@ -583,6 +814,10 @@ class OpenClawAdapter(BaseClawAdapter):
         instance_id: str | None = None,
     ) -> AgentResult:
         """Send a task to the specified agent running inside a container."""
+        attempt_state = self._attempt_for_agent(agent_id)
+        registered_agent_id = attempt_state.registered_agent_id
+        if not registered_agent_id:
+            raise RuntimeError(f"OpenClaw agent is not registered: {agent_id}")
         if artifact_dir:
             artifact_dir.mkdir(parents=True, exist_ok=True)
 
@@ -599,7 +834,7 @@ class OpenClawAdapter(BaseClawAdapter):
             # injected provider env var (see container_run_args) and uses the
             # bind-mounted benchmark state + workspace mount above.
             "--local",
-            "--agent", agent_id,
+            "--agent", registered_agent_id,
             "--message", prompt,
             "--timeout", str(self.timeout),
             "--json",
@@ -691,10 +926,13 @@ class OpenClawAdapter(BaseClawAdapter):
             stderr_path=stderr_path,
             session_id=agent_meta.get("sessionId"),
             session_file=_container_path_to_host(
-                agent_meta.get("sessionFile"), self._state_dir
+                agent_meta.get("sessionFile"), attempt_state.state_dir
             ),
-            openclaw_agent_id=_openclaw_agent_id_from_session_file(
-                agent_meta.get("sessionFile"), self._state_dir
+            openclaw_agent_id=(
+                _openclaw_agent_id_from_session_file(
+                    agent_meta.get("sessionFile"), attempt_state.state_dir
+                )
+                or registered_agent_id
             ),
             duration_seconds=round(duration, 1),
             usage=_normalize_openclaw_usage(agent_meta),
@@ -711,42 +949,38 @@ class OpenClawAdapter(BaseClawAdapter):
         *,
         session_file: str | Path | None = None,
     ) -> Path | None:
-        """Locate the OpenClaw agent state dir on the host.
-
-        OpenClaw normalizes/truncates agent ids when registering agents, so the
-        directory name under ``~/.openclaw/agents/`` often differs from the id
-        we pass to ``openclaw agents add``.
-        """
-        if session_file:
-            host = Path(_container_path_to_host(str(session_file), self._state_dir))
-            if host.is_file():
-                return host.parent.parent
-            if host.parent.name == "sessions" and host.parent.parent.exists():
-                return host.parent.parent
-
-        agents_root = self._state_dir / "agents"
-        if not agents_root.is_dir():
+        """Locate this agent's exact state dir within its own attempt root."""
+        try:
+            attempt_state = self._attempt_for_agent(agent_id)
+        except RuntimeError:
             return None
+        registered_agent_id = attempt_state.registered_agent_id
+        if not registered_agent_id:
+            return None
+        exact = attempt_state.state_dir / "agents" / registered_agent_id
 
-        exact = agents_root / agent_id
-        if exact.is_dir():
-            return exact
+        if session_file:
+            host = self._isolated_session_path(attempt_state, session_file)
+            if host is None or host.parent.name != "sessions":
+                return None
+            if host.parent.parent.resolve() != exact.resolve():
+                return None
+        return exact if exact.is_dir() else None
 
-        needle = agent_id.lower()
-        matches = [
-            d for d in agents_root.iterdir()
-            if d.is_dir() and (
-                d.name == needle
-                or d.name.startswith(needle[:40])
-                or needle.startswith(d.name)
-            )
-        ]
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            matches.sort(key=lambda p: len(p.name), reverse=True)
-            return matches[0]
-        return None
+    @staticmethod
+    def _isolated_session_path(
+        attempt_state: _OpenClawAttemptState,
+        session_file: str | Path,
+    ) -> Path | None:
+        """Map a session path only when it remains inside this attempt state."""
+        mapped = Path(
+            _container_path_to_host(str(session_file), attempt_state.state_dir)
+        )
+        try:
+            mapped.resolve().relative_to(attempt_state.state_dir.resolve())
+        except (OSError, ValueError):
+            return None
+        return mapped
 
     def _sessions_dir(
         self,
@@ -793,13 +1027,18 @@ class OpenClawAdapter(BaseClawAdapter):
             return candidates
 
         if session_file:
-            host = Path(_container_path_to_host(str(session_file), self._state_dir))
-            if host.is_file():
+            try:
+                attempt_state = self._attempt_for_agent(agent_id)
+            except RuntimeError:
+                return []
+            host = self._isolated_session_path(attempt_state, session_file)
+            if host is not None and host.is_file():
                 return [host]
         return []
 
     def _make_sessions_readable(
         self,
+        agent_id: str,
         container_name: str,
         sessions_dir: Path,
     ) -> None:
@@ -810,23 +1049,31 @@ class OpenClawAdapter(BaseClawAdapter):
         benchmark state dir can otherwise be unreadable or impossible to clean
         up from the unprivileged host process after backup.
         """
-        if not _host_path_to_container(sessions_dir, self._state_dir):
+        try:
+            attempt_state = self._attempt_for_agent(agent_id)
+        except RuntimeError:
+            return
+        container_sessions = _host_path_to_container(
+            sessions_dir, attempt_state.state_dir
+        )
+        if container_sessions is None:
             return
         try:
-            subprocess.run(
-                [
-                    "docker", "exec", container_name,
-                    "bash", "-c",
-                    "chmod -R a+rwX /root/.openclaw",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
+            result = self._run_container_cleanup_command(
+                container_name,
+                ["chmod", "-R", "a+rwX", container_sessions],
             )
         except (subprocess.TimeoutExpired, OSError) as e:
             logger.debug(
                 "Could not chmod session dir in container %s: %s",
                 container_name, e,
+            )
+            return
+        if result.returncode != 0:
+            logger.debug(
+                "Could not chmod session dir in container %s: %s",
+                container_name,
+                (result.stderr or result.stdout or f"exit {result.returncode}").strip(),
             )
 
     def backup_session(
@@ -844,7 +1091,7 @@ class OpenClawAdapter(BaseClawAdapter):
         out.mkdir(parents=True, exist_ok=True)
 
         if container_name and sessions_dir and sessions_dir.is_dir():
-            self._make_sessions_readable(container_name, sessions_dir)
+            self._make_sessions_readable(agent_id, container_name, sessions_dir)
 
         copied = 0
         if sessions_dir and sessions_dir.is_dir():
@@ -856,8 +1103,12 @@ class OpenClawAdapter(BaseClawAdapter):
                     logger.warning("Could not copy session file %s: %s", f, e)
 
         if session_file and copied == 0:
-            host = Path(_container_path_to_host(session_file, self._state_dir))
-            if host.is_file():
+            try:
+                attempt_state = self._attempt_for_agent(agent_id)
+            except RuntimeError:
+                return
+            host = self._isolated_session_path(attempt_state, session_file)
+            if host is not None and host.is_file():
                 try:
                     shutil.copy2(host, out / host.name)
                 except OSError as e:

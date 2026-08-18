@@ -102,6 +102,48 @@ class InstalledHarnessTests(unittest.TestCase):
         finally:
             adapter._cleanup_run_state()
 
+    def test_openclaw_registration_and_delete_are_attempt_local(self):
+        require_path(Path(OPENCLAW_NODE_BIN))
+        require_path(Path(OPENCLAW_MODULE_DIR) / "openclaw.mjs")
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "agent_formalizer.claws.openclaw.OPENCLAW_BENCHMARK_STATE_DIR",
+            Path(tmp),
+        ):
+            adapter = OpenClawAdapter(
+                "openai/gpt-5.4-mini",
+                120,
+                max_action_steps=200,
+                api_key="integration-test-key",
+            )
+            try:
+                adapter.container_run_args("installed-openclaw-one")
+                adapter.create_agent(
+                    "a-very-long-openclaw-agent-id-for-isolation-testing",
+                    instance_id="installed-openclaw-one",
+                )
+                attempt = adapter._attempt_for_instance("installed-openclaw-one")
+                self.assertIsNotNone(attempt.registered_agent_id)
+                config = json.loads(
+                    adapter._config_path(attempt.state_dir).read_text()
+                )
+                workspace_entries = [
+                    entry for entry in config["agents"]["list"]
+                    if isinstance(entry.get("workspace"), str)
+                ]
+                self.assertEqual(len(workspace_entries), 1)
+                self.assertEqual(
+                    Path(workspace_entries[0]["workspace"]).resolve(),
+                    attempt.workspace_dir.resolve(),
+                )
+                root = attempt.root
+                adapter.delete_agent(
+                    "a-very-long-openclaw-agent-id-for-isolation-testing",
+                    instance_id="installed-openclaw-one",
+                )
+                self.assertFalse(root.exists())
+            finally:
+                adapter._cleanup_run_state()
+
     def test_nanobot_accepts_generated_config(self):
         python = NANOBOT_ENV_PATH / "bin" / "python"
         require_path(python)

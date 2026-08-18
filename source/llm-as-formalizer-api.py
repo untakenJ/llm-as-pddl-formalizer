@@ -58,6 +58,8 @@ Parser.add_argument("--trace", action=argparse.BooleanOptionalAction, default=Tr
                     help="Record per-problem JSONL trace next to the .pddl outputs (default on; pass --no-trace to disable)")
 Parser.add_argument("--workers", type=int, default=1,
                     help="parallel worker threads for independent problems (default 1 = sequential)")
+Parser.add_argument("--resume", action="store_true",
+                    help="skip a problem when both generated PDDL files already exist")
 
 
 PDDL_OUTPUT_SCHEMA = {
@@ -153,9 +155,17 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
 
 
 def run_gpt_batch(provider, client, domain, model, data, problem_numbers, tools=None,
-                  tool_executors=None, record_trace=True, out_dir_root=None, workers=1):
+                  tool_executors=None, record_trace=True, out_dir_root=None, workers=1,
+                  resume=False):
     def _run_one(problem_number):
         problem_name = format_problem_name(problem_number)
+        out_root = out_dir_root or f'{ROOT_DIR}/output'
+        problem_dir = f'{out_root}/llm-as-formalizer-api/{domain}/{data}/{model}/{problem_name}'
+        df_path = f'{problem_dir}/{problem_name}_{model}_df.pddl'
+        pf_path = f'{problem_dir}/{problem_name}_{model}_pf.pddl'
+        if resume and os.path.isfile(df_path) and os.path.isfile(pf_path):
+            print(f"Skipping {problem_name} (complete PDDL pair exists)", flush=True)
+            return
         print(f"Running {problem_name}", flush=True)
         run_formalizer_gpt(
             provider=provider,
@@ -190,6 +200,7 @@ if __name__ == "__main__":
     RECORD_TRACE = args.trace
     OUT_DIR_ROOT = args.out_dir
     WORKERS = args.workers
+    RESUME = args.resume
 
     provider, client = build_provider_client(MODEL)
     tools, tool_executors = default_tools_for_model(MODEL)
@@ -206,4 +217,5 @@ if __name__ == "__main__":
         record_trace=RECORD_TRACE,
         out_dir_root=OUT_DIR_ROOT,
         workers=WORKERS,
+        resume=RESUME,
     )

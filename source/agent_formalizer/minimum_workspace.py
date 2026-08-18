@@ -220,6 +220,12 @@ class MinimumHostWorkspace:
         if self.adapter.network_mode != "model_only":
             raise RuntimeError("minimum host runtime supports only model_only mode")
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
+        if self.workspace_dir.exists():
+            if self.workspace_dir.resolve().parent != self.artifact_dir.resolve():
+                raise RuntimeError(
+                    f"Refusing to reset unexpected minimum workspace: {self.workspace_dir}"
+                )
+            shutil.rmtree(self.workspace_dir)
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self._start_model_gateway()
         if self.adapter.minimum_config["solver_feedback"]["enabled"]:
@@ -422,6 +428,54 @@ class MinimumHostWorkspace:
             "gateway_reported_action_step_limit": stats.get("max_action_steps"),
             "configured_transient_policy": expected_gateway_routing,
             "gateway_reported_transient_policy": stats.get("transient_policy", {}),
+        }
+
+    def validate_state_isolation(self) -> dict:
+        spec = self.adapter.state_isolation_spec(self.instance_id)
+        host_binding = getattr(self.adapter._host_execution, "value", None)
+        tests = {
+            "isolation_mode_is_explicit": spec.get("mode") == "isolated",
+            "scope_is_per_attempt": spec.get("scope") == "per_attempt",
+            "personal_harness_state_excluded": (
+                spec.get("personal_harness_state") == "excluded"
+            ),
+            "cross_attempt_reuse_disabled": (
+                spec.get("cross_attempt_reuse") is False
+            ),
+            "workspace_is_attempt_private": (
+                self.workspace_dir.resolve().parent == self.artifact_dir.resolve()
+            ),
+            "workspace_exists": self.workspace_dir.is_dir(),
+            "thread_local_binding_matches_attempt": (
+                isinstance(host_binding, dict)
+                and Path(host_binding.get("workspace_dir", "")).resolve()
+                == self.workspace_dir.resolve()
+            ),
+            "model_gateway_is_loopback_only": (
+                urlsplit(self.model_gateway_origin).hostname == "127.0.0.1"
+            ),
+            "model_has_no_filesystem_or_memory_tools": (
+                self.adapter.agent_tools() == []
+                and not self.adapter.tool_policy().get(
+                    "workspace_visible_to_model", True
+                )
+            ),
+        }
+        return {
+            "preset": "state-isolation",
+            "version": 1,
+            "status": "pass" if all(tests.values()) else "fail",
+            "implementation": (
+                "per-attempt host workspace and thread-local loopback services; "
+                "no model filesystem, memory, or shell surface"
+            ),
+            "mode": spec.get("mode"),
+            "attempt_root": str(self.workspace_dir),
+            "expected_writable_bind_sources": [],
+            "observed_writable_bind_sources": [],
+            "expected_readonly_bind_sources": [],
+            "observed_readonly_bind_sources": [],
+            "tests": tests,
         }
 
     def freeze_pddl_outputs(self) -> dict[str, bytes | None]:

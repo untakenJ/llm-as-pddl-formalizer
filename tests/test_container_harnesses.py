@@ -13,11 +13,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from agent_formalizer.claws.generic import GenericAgentAdapter
+from agent_formalizer.claws.generic import (
+    GENERIC_CONTAINER_CONFIG,
+    GenericAgentAdapter,
+)
 from agent_formalizer.claws import get_adapter
 from agent_formalizer.benchmark_profile import DEFAULT_BENCHMARK_PROFILE, load_benchmark_profile
 from agent_formalizer.claws.hermes import HermesAdapter
 from agent_formalizer.claws.nanobot import NanoBotAdapter
+from agent_formalizer.claws.openclaw import OpenClawAdapter
 from agent_formalizer.claws.zeroclaw import ZEROCLAW_CONFIG_DIR, ZeroClawAdapter
 from agent_formalizer.workspace import AgentWorkspace
 
@@ -27,6 +31,70 @@ from agent_formalizer.workspace import AgentWorkspace
     "set RUN_HARNESS_CONTAINER_TESTS=1 to exercise Docker mounts",
 )
 class ContainerHarnessTests(unittest.TestCase):
+    def test_openclaw_mount_exposes_only_current_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "agent_formalizer.claws.openclaw.OPENCLAW_BENCHMARK_STATE_DIR",
+            Path(tmp),
+        ):
+            adapter = get_adapter(
+                "openclaw",
+                model="openai/gpt-5.4-mini",
+                timeout=120,
+                max_action_steps=17,
+                max_model_calls=10,
+                api_key="container-test-key",
+            )
+            first_id = "container-openclaw-first"
+            second_id = "container-openclaw-second"
+            workspace = AgentWorkspace(
+                first_id, "pddl-harness-openclaw-isolation", adapter
+            )
+            first_root = None
+            second_root = None
+            try:
+                workspace.start()
+                first = adapter._attempt_for_instance(first_id)
+                first_root = first.root
+                adapter.container_run_args(second_id)
+                second = adapter._attempt_for_instance(second_id)
+                second_root = second.root
+                (second.workspace_dir / "other-case-canary").write_text("private")
+
+                self.assertEqual(
+                    workspace.validate_state_isolation()["status"], "pass"
+                )
+                hidden = workspace.run_in_container(
+                    f"test ! -e {shlex.quote(str(second.workspace_dir))}"
+                )
+                self.assertEqual(hidden.exit_code, 0, hidden.stderr)
+                self.assertFalse((first.state_dir / ".Trash").exists())
+
+                alias = workspace.run_in_container(
+                    "printf current-attempt > /workspace/alias-canary"
+                )
+                self.assertEqual(alias.exit_code, 0, alias.stderr)
+                self.assertEqual(
+                    (first.workspace_dir / "alias-canary").read_text(),
+                    "current-attempt",
+                )
+                adapter.create_agent("openclaw-isolation-agent", instance_id=first_id)
+            finally:
+                adapter.prepare_agent_cleanup(
+                    "openclaw-isolation-agent",
+                    instance_id=first_id,
+                    container_name=workspace.container_name,
+                )
+                workspace.cleanup()
+                adapter.delete_agent(
+                    "openclaw-isolation-agent", instance_id=first_id
+                )
+                adapter.delete_agent("unused", instance_id=second_id)
+                if first_root is not None:
+                    self.assertFalse(first_root.exists())
+                if second_root is not None:
+                    self.assertFalse(second_root.exists())
+                adapter._cleanup_run_state()
+
     def test_deadline_cuts_model_route_and_stops_agent_tree(self):
         adapter = get_adapter(
             "hermes", model="openai/gpt-5.4-mini", timeout=120,
@@ -126,6 +194,9 @@ class ContainerHarnessTests(unittest.TestCase):
             self.assertEqual(
                 workspace.validate_environment_policy()["status"], "pass"
             )
+            self.assertEqual(
+                workspace.validate_state_isolation()["status"], "pass"
+            )
             if isinstance(adapter, HermesAdapter):
                 command = (
                     f"{shlex.quote(str(adapter.runtime_python))} -c "
@@ -144,7 +215,6 @@ class ContainerHarnessTests(unittest.TestCase):
                 )
             else:
                 state = adapter._instance_states[instance_id]
-                config_dir = state / "config"
                 code = (
                     "import json; "
                     f"p={str(adapter.runtime_repo / 'assets' / 'tools_schema.json')!r}; "
@@ -153,7 +223,7 @@ class ContainerHarnessTests(unittest.TestCase):
                 )
                 command = (
                     f"PDDL_BENCHMARK_API_KEY=container-test-key "
-                    f"PYTHONPATH={shlex.quote(str(config_dir))}:"
+                    f"PYTHONPATH={shlex.quote(GENERIC_CONTAINER_CONFIG)}:"
                     f"{shlex.quote(str(adapter.runtime_repo))} "
                     f"{shlex.quote(str(adapter.runtime_python))} -c {shlex.quote(code)}"
                 )
@@ -161,8 +231,7 @@ class ContainerHarnessTests(unittest.TestCase):
             self.assertEqual(result.exit_code, 0, result.stderr)
         finally:
             workspace.cleanup()
-            if state and state.exists():
-                shutil.rmtree(state)
+            adapter.delete_agent("unused", instance_id=instance_id)
 
     def test_controlled_web_keeps_agent_internal(self):
         class Handler(BaseHTTPRequestHandler):

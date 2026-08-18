@@ -27,6 +27,7 @@ VALIDATION_PRESETS = {
     "network-model-only",
     "environment-isolation",
     "action-step-guard",
+    "state-isolation",
 }
 
 

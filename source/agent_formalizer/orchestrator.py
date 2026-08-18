@@ -374,11 +374,13 @@ def _run_execution_try(
         network_validation = workspace.validate_network_policy()
         environment_validation = workspace.validate_environment_policy()
         action_guard_validation = workspace.validate_action_step_guard()
+        state_isolation_validation = workspace.validate_state_isolation()
         validations.extend([
             runtime_lock,
             network_validation,
             environment_validation,
             action_guard_validation,
+            state_isolation_validation,
         ])
         configured_validations = {
             row["preset"]: row["required"]
@@ -427,7 +429,7 @@ def _run_execution_try(
         )
         watchdog_thread.start()
         try:
-            adapter.create_agent(agent_id)
+            adapter.create_agent(agent_id, instance_id=instance_id)
             if adapter.deadline_exceeded():
                 raise TimeoutError("harness deadline reached during startup")
             agent_result = adapter.send_task(
@@ -656,10 +658,22 @@ def _run_execution_try(
         workspace.stop_model_gateway_monitor()
         adapter.end_attempt_clock()
         try:
+            try:
+                adapter.prepare_agent_cleanup(
+                    agent_id,
+                    instance_id=instance_id,
+                    container_name=container,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Could not prepare private harness state cleanup for %s: %s",
+                    instance_id,
+                    exc,
+                )
             workspace.cleanup()
         finally:
             try:
-                adapter.delete_agent(agent_id)
+                adapter.delete_agent(agent_id, instance_id=instance_id)
             finally:
                 tracer.close()
 
