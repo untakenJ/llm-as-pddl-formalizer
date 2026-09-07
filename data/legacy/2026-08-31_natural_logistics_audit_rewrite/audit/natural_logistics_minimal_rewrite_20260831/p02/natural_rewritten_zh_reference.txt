@@ -1,0 +1,1 @@
+在这个物流场景中，我们从若干包裹、车辆和地点开始。这些包裹是：obj11、obj12 和 obj13，它们目前都位于 pos1；以及 obj21、obj22 和 obj23，它们目前都位于 pos2。有两辆卡车：tru1 位于 pos1，tru2 位于 pos2。我们还有两座城市：cit1 和 cit2，每座城市都包含一组地点。cit1 内有 pos1 和一座机场 apt1。同样，cit2 内有 pos2 和一座机场 apt2。一架飞机 apn1 停在机场 apt2。我们的目标是重新安排这些包裹，使 obj12 留在 pos1、obj23 也位于 pos1，obj11 被运到 apt1、obj22 也被移到 apt1，而 obj13 和 obj21 都应位于 pos2。

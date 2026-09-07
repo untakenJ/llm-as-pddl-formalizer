@@ -1,0 +1,69 @@
+{
+  "case": "p53",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 73,
+    "init": 146,
+    "goal": 28,
+    "semantic_items": 247
+  },
+  "before": {
+    "objects_covered": 71,
+    "init_covered": 102,
+    "goal_covered": 28,
+    "missing": 0,
+    "ambiguous": 46,
+    "contradictory": 0,
+    "over_generated": 63
+  },
+  "after": {
+    "objects_covered": 73,
+    "init_covered": 146,
+    "goal_covered": 28,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "Specifically, the packages are labeled from obj11 to obj103, the trucks from tru1 to tru10, the cities from cit1 to cit10, and the locations which include positional areas and airports from pos1 to pos10 and apt1 to apt10, respectively.",
+      "revised_text": "Specifically, for each index i from 1 through 10, the three package labels are formed by writing obj, then i, then 1, 2, or 3; the trucks are labeled from tru1 to tru10, the cities from cit1 to cit10, and the locations which include positional areas and airports from pos1 to pos10 and apt1 to apt10, respectively.",
+      "reason_en": "The original package pseudo-range over-generates 63 identifiers; the bounded construction yields exactly the 30 golden package labels.",
+      "reason_zh": "原包裹伪范围会多生成 63 个标识符；有限构造恰好产生 30 个黄金包裹标签。",
+      "golden_evidence": ["golden_problem.pddl:8-10,16-18,23-25,30-32,37-39,45-47,52-54,59-61,66-68,74-76: exact OBJ declarations", "golden_problem.pddl:79-108: (PACKAGE ...)"]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "Each city contains a position and an airport: pos1 and apt1 in cit1, pos2 and apt2 in cit2, and so forth up to pos10 and apt10 in cit10.",
+      "revised_text": "Each city contains a position and an airport: for every index i from 1 through 10, pos followed by i and apt followed by i are in cit followed by the same i.",
+      "reason_en": "The continuation phrase does not define the middle location-to-city mappings.",
+      "reason_zh": "延续性短语没有定义中间的地点到城市映射。",
+      "golden_evidence": ["golden_problem.pddl:205-224: all 20 (IN-CITY ...) atoms"]
+    },
+    {
+      "id": 3,
+      "category": "missing_rule",
+      "original_text": "For example, tru1 along with obj11, obj12, and obj13 is at pos1, tru2 with obj21, obj22, and obj23 is at pos2, and this pattern continues until tru10 at pos10 with obj101, obj102, and obj103.",
+      "revised_text": "For every index i from 1 through 10, tru followed by i and the three package labels formed by writing obj, then i, then 1, 2, or 3 are all at pos followed by the same i.",
+      "reason_en": "Examples and an undefined continuation do not uniquely state placements for indices 3 through 9.",
+      "reason_zh": "示例和未定义的延续不能唯一陈述索引 3 至 9 的位置。",
+      "golden_evidence": ["golden_problem.pddl:165-204: truck and package (AT ...) atoms"]
+    }
+  ],
+  "preserved": [
+    "Opening and first-person structure",
+    "Airplane identities and ordered initial airport mapping",
+    "All 28 explicit goal mappings and closing sentence"
+  ],
+  "verification": {
+    "ledger_rows": 247,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

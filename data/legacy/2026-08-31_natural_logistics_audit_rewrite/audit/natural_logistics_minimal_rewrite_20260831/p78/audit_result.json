@@ -1,0 +1,65 @@
+{
+  "case": "p78",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 15,
+    "init": 30,
+    "goal": 6,
+    "semantic_items": 51
+  },
+  "before": {
+    "objects_covered": 15,
+    "init_covered": 24,
+    "goal_covered": 6,
+    "missing": 0,
+    "ambiguous": 3,
+    "contradictory": 3,
+    "over_generated": 3
+  },
+  "after": {
+    "objects_covered": 15,
+    "init_covered": 30,
+    "goal_covered": 6,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "contradiction",
+      "original_text": "Truck tru1 is located at pos1 in cit1, carrying packages obj11, obj12, and obj13.",
+      "revised_text": "Truck tru1 is located at pos1 in cit1, and packages obj11, obj12, and obj13 are also at pos1.",
+      "reason_en": "Replaces “carrying” with explicit co-location; the golden init has AT facts and no IN facts for these packages.",
+      "reason_zh": "用明确的同地点表述替换“承载”；黄金初始状态含 AT 事实而不含这些包裹的 IN 事实。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 7-8: (AT TRU1 POS1) and package (AT ... POS1) atoms",
+        "golden_domain.pddl:line 14: (in ?obj ?obj) is the containment predicate"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "ambiguity",
+      "original_text": "Similarly, truck tru2 is located at pos2 in cit2 with packages obj21, obj22, and obj23.",
+      "revised_text": "Similarly, truck tru2 is located at pos2 in cit2, and packages obj21, obj22, and obj23 are also at pos2.",
+      "reason_en": "Makes the second truck/package relationship explicitly co-located rather than inheriting the preceding carrying interpretation.",
+      "reason_zh": "明确第二组卡车和包裹是同地点关系，避免继承前句的承载含义。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 8-9: (AT TRU2 POS2) and package (AT ... POS2) atoms"
+      ]
+    }
+  ],
+  "preserved": [
+    "All declarations and city structure",
+    "Correct airplane placement",
+    "Complete six-item goal sentence"
+  ],
+  "verification": {
+    "ledger_rows": 51,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

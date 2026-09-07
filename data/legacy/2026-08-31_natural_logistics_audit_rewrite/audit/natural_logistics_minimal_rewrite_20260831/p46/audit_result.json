@@ -1,0 +1,41 @@
+{
+  "case": "p46",
+  "status": "COMPLETE",
+  "decision": "NO REWRITE REQUIRED",
+  "counts": {
+    "objects": 58,
+    "init": 116,
+    "goal": 24,
+    "semantic_items": 198
+  },
+  "before": {
+    "objects_covered": 58,
+    "init_covered": 116,
+    "goal_covered": 24,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 58,
+    "init_covered": 116,
+    "goal_covered": 24,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [],
+  "preserved": [
+    "Exhaustive object and type inventory",
+    "All 50 initial position and city-membership mappings",
+    "Complete irregular 24-atom goal"
+  ],
+  "verification": {
+    "ledger_rows": 198,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

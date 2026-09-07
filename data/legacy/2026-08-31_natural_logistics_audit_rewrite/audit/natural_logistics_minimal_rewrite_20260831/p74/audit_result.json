@@ -1,0 +1,40 @@
+{
+  "case": "p74",
+  "status": "COMPLETE",
+  "decision": "NO REWRITE REQUIRED",
+  "counts": {
+    "objects": 95,
+    "init": 190,
+    "goal": 37,
+    "semantic_items": 322
+  },
+  "before": {
+    "objects_covered": 95,
+    "init_covered": 190,
+    "goal_covered": 37,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 95,
+    "init_covered": 190,
+    "goal_covered": 37,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [],
+  "preserved": [
+    "The complete original English description was preserved byte-for-byte because every object, init atom, and goal atom is explicit and correct."
+  ],
+  "verification": {
+    "ledger_rows": 322,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}
+

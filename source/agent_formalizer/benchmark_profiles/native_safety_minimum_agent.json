@@ -87,6 +87,7 @@
   "condition_profile": {
     "id": "minimum-agent-reflection-1-no-solver-host",
     "overrides": {
+      "solver_backend": "local",
       "skills_mode": "none",
       "minimum_agent": {
         "execution_backend": "host",

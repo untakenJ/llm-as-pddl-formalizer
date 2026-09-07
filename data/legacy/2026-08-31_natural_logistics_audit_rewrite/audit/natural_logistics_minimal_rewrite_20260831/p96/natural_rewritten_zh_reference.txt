@@ -1,0 +1,2 @@
+在此物流场景中，有多种包裹、城市、卡车、飞机和地点。初始有五个包裹 package1 至 package5。另有十座城市 city1 至 city10，每座城市有两个地点：一个普通地点和一个机场。运输工具包括十辆卡车 truck1 至 truck10 和四架飞机 plane1 至 plane4。初始时，package5 位于 city1 的机场，package4 位于 city7 的机场，package3 位于 city3 的机场，package2 位于 city10 的普通地点，package1 位于 city2 的机场。对于从 1 到 10 的每个整数 i，trucki 最初位于 cityi 的普通地点，其中每个 i 都替换为同一个整数。plane1 位于 city6 的机场，plane2 和 plane4 位于 city3 的机场，plane3 位于 city7 的机场。目标是把 package5 送到 city4 的机场、package4 送到 city6 的普通地点、package3 送到 city1 的普通地点、package2 送到 city9 的机场、package1 送到 city3 的普通地点。
+

@@ -36,6 +36,15 @@ from agent_formalizer.runtime_lock import RuntimeLockMismatch, validate_runtime_
 from agent_formalizer.util import Tracer, format_problem_name, now_iso, run_parallel
 from agent_formalizer.workspace import AgentWorkspace
 from agent_formalizer.minimum_workspace import MinimumHostWorkspace
+from agent_formalizer.optional_evidence import build_analysis_evidence_manifest
+from agent_formalizer.execution_validity import (
+    ExecutionValidityError,
+    refresh_cell_state,
+    selected_source_path,
+    repair_identity_migration_authorized,
+    split_attempt_model_label,
+    write_execution_result,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -113,7 +122,7 @@ def _adapter_code_sha256() -> str:
         for path in package.glob("**/*")
         if path.is_file()
         and "__pycache__" not in path.parts
-        and path.suffix in {".py", ".json", ".txt", ".sh"}
+        and path.suffix in {".py", ".json", ".txt", ".sh", ".c", ".js", ".cjs", ".mjs"}
         # Credential registries are operational inputs with their own redacted
         # provenance hash.  Adding/rotating a named profile must not alter the
         # experiment/runtime identity used for labels and resume.
@@ -186,14 +195,15 @@ def _record_optional_evidence(
     tracer: Tracer,
     agent_result: AgentResult | None,
     container_name: str,
-) -> tuple[int, int, str | None]:
+    usage_collection: dict,
+) -> dict:
     session_agent_id = (
         (agent_result.openclaw_agent_id if agent_result else None) or agent_id
     )
     session_id = agent_result.session_id if agent_result else None
     session_file = agent_result.session_file if agent_result else None
     try:
-        adapter.backup_session(
+        session_collection = adapter.backup_session(
             session_agent_id,
             artifact_dir,
             session_id=session_id,
@@ -202,9 +212,15 @@ def _record_optional_evidence(
         )
     except Exception as exc:
         tracer.emit("optional_session_error", error_type=type(exc).__name__)
+        session_collection = {
+            "status": "failed",
+            "error_type": type(exc).__name__,
+            "files_copied": 0,
+        }
 
     steps_path = artifact_dir / f"{problem}_{model_label}_agent_steps.jsonl"
     trace_record_count = 0
+    steps_error_type: str | None = None
     try:
         with steps_path.open("w", buffering=1) as stream:
             for record in adapter.iter_agent_steps(
@@ -216,9 +232,23 @@ def _record_optional_evidence(
                 stream.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
                 trace_record_count += 1
     except Exception as exc:
+        steps_error_type = type(exc).__name__
         tracer.emit("optional_steps_error", error_type=type(exc).__name__)
+    steps_collection = {
+        "status": (
+            "failed_partial"
+            if steps_error_type and trace_record_count
+            else "failed" if steps_error_type
+            else "persisted" if trace_record_count
+            else "empty"
+        ),
+        "path": steps_path.name if steps_path.exists() else None,
+        "records": trace_record_count,
+        "error_type": steps_error_type,
+    }
 
     traced_tool_call_count = 0
+    tool_error_type: str | None = None
     try:
         for record in adapter.iter_tool_calls(
             session_agent_id,
@@ -230,12 +260,146 @@ def _record_optional_evidence(
             if record.get("kind", "call") == "call":
                 traced_tool_call_count += 1
     except Exception as exc:
+        tool_error_type = type(exc).__name__
         tracer.emit("optional_tool_trace_error", error_type=type(exc).__name__)
-    return (
-        traced_tool_call_count,
-        trace_record_count,
-        str(steps_path) if steps_path.exists() else None,
-    )
+    if tool_error_type:
+        tool_status = "failed_partial" if traced_tool_call_count else "failed"
+    elif tracer.path:
+        tool_status = "persisted" if traced_tool_call_count else "empty"
+    else:
+        tool_status = (
+            "observed_not_persisted" if traced_tool_call_count else "disabled"
+        )
+    tool_collection = {
+        "status": tool_status,
+        "records": traced_tool_call_count,
+        "trace_path": (
+            Path(tracer.path).name if tracer.path else None
+        ),
+        "error_type": tool_error_type,
+    }
+
+    manifest_path = artifact_dir / "analysis_evidence_manifest.json"
+    try:
+        manifest = build_analysis_evidence_manifest(
+            adapter,
+            artifact_dir,
+            session_collection=session_collection,
+            usage_collection=usage_collection,
+            steps_collection=steps_collection,
+            tool_trace_collection=tool_collection,
+        )
+    except Exception as exc:
+        tracer.emit(
+            "optional_evidence_manifest_error", error_type=type(exc).__name__
+        )
+        manifest = {
+            "schema_version": 1,
+            "scope": "optional_harness_analysis_evidence",
+            "harness": getattr(adapter, "name", "unknown"),
+            "model": getattr(adapter, "model", "unknown"),
+            "manifest_status": "failed",
+            "error_type": type(exc).__name__,
+            "collection": {
+                "raw_session": session_collection,
+                "usage": usage_collection,
+                "normalized_agent_steps": steps_collection,
+                "normalized_tool_trace": tool_collection,
+            },
+        }
+    manifest_record: dict = {
+        "status": manifest.get("manifest_status", "unknown"),
+        "schema_version": manifest.get("schema_version"),
+        "path": None,
+        "sha256": None,
+    }
+    try:
+        _atomic_json(manifest_path, manifest)
+        manifest_record.update(
+            {
+                "path": str(manifest_path),
+                "sha256": sha256_bytes(manifest_path.read_bytes()),
+            }
+        )
+    except OSError as exc:
+        tracer.emit(
+            "optional_evidence_manifest_write_error", error_type=type(exc).__name__
+        )
+        manifest_record.update(
+            {"status": "write_failed", "error_type": type(exc).__name__}
+        )
+
+    return {
+        "traced_tool_call_count": traced_tool_call_count,
+        "agent_trace_record_count": trace_record_count,
+        "agent_trace_path": str(steps_path) if steps_path.exists() else None,
+        "collection": {
+            "raw_session": session_collection,
+            "usage": usage_collection,
+            "normalized_agent_steps": steps_collection,
+            "normalized_tool_trace": tool_collection,
+        },
+        "analysis_evidence_manifest": manifest_record,
+    }
+
+
+def _ensure_uncollected_analysis_manifest(
+    adapter, execution_dir: Path, *, reason: str
+) -> dict:
+    """Leave an explicit marker when execution ended before normal collection."""
+    path = execution_dir / "analysis_evidence_manifest.json"
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            existing = {}
+        return {
+            "status": existing.get("manifest_status", "unknown"),
+            "path": str(path),
+            "sha256": sha256_bytes(path.read_bytes()),
+        }
+    empty = {"status": "not_attempted", "reason": reason}
+    try:
+        manifest = build_analysis_evidence_manifest(
+            adapter,
+            execution_dir,
+            session_collection=empty,
+            usage_collection=empty,
+            steps_collection=empty,
+            tool_trace_collection=empty,
+        )
+        manifest.pop("content_free_manifest_sha256", None)
+        manifest.pop("content_free_manifest_sha256_scope", None)
+        manifest["manifest_status"] = "collection_not_reached"
+        manifest["collection_boundary_reason"] = reason
+        manifest["content_free_manifest_sha256"] = canonical_sha256(manifest)
+        manifest["content_free_manifest_sha256_scope"] = (
+            "canonical manifest before the hash and hash-scope fields are added"
+        )
+    except Exception as exc:
+        manifest = {
+            "schema_version": 1,
+            "scope": "optional_harness_analysis_evidence",
+            "harness": getattr(adapter, "name", "unknown"),
+            "model": getattr(adapter, "model", "unknown"),
+            "manifest_status": "failed",
+            "collection_boundary_reason": reason,
+            "error_type": type(exc).__name__,
+        }
+    try:
+        _atomic_json(path, manifest)
+        return {
+            "status": manifest["manifest_status"],
+            "path": str(path),
+            "sha256": sha256_bytes(path.read_bytes()),
+        }
+    except OSError as exc:
+        return {
+            "status": "write_failed",
+            "path": None,
+            "sha256": None,
+            "error_type": type(exc).__name__,
+        }
 
 
 def _agent_error_result(message: str, started: float) -> AgentResult:
@@ -268,6 +432,29 @@ def _action_metrics(gateway_summary: dict, adapter, artifact_dir: Path | None = 
         "action_step_limit_reached": bool(
             gateway_summary.get("action_step_limit_reached")
         ),
+        "action_step_admission_threshold": int(
+            gateway_summary.get("action_step_admission_threshold")
+            or adapter.max_action_steps
+        ),
+        "final_action_steps": int(
+            gateway_summary.get("final_action_steps")
+            or (model_calls + tool_calls)
+        ),
+        "action_step_overshoot": int(
+            gateway_summary.get("action_step_overshoot", 0) or 0
+        ),
+        "final_tool_batch_size": int(
+            gateway_summary.get("final_tool_batch_size", 0) or 0
+        ),
+        "max_tool_batch_size": int(
+            gateway_summary.get("max_tool_batch_size", 0) or 0
+        ),
+        "overshoot_causing_logical_call": gateway_summary.get(
+            "overshoot_causing_logical_call"
+        ),
+        "in_flight_at_threshold_crossing": gateway_summary.get(
+            "in_flight_at_threshold_crossing"
+        ),
     }
     metrics.update(adapter.additional_action_metrics(artifact_dir))
     return metrics
@@ -290,6 +477,8 @@ def _run_execution_try(
     runtime_lock: dict,
     record_trace: bool,
     image: str | None,
+    operational_config=None,
+    operational_run_id: str | None = None,
 ) -> tuple[FormalizerResult, dict]:
     operational_started = time.monotonic()
     execution_dir = attempt_dir / "executions" / f"execution-{execution_try:03d}"
@@ -316,15 +505,36 @@ def _run_execution_try(
         f"{problem}-a{attempt_index}-e{execution_try}",
         runtime_id=runtime_id,
     )
+    diagnostics_plan = None
+    if operational_config is not None:
+        diagnostics_plan = operational_config.execution_diagnostics_plan(
+            provider=adapter.model_gateway().get("provider", "unknown"),
+            run_id=operational_run_id or "standalone",
+            domain=domain,
+            data=data,
+            problem=problem,
+            model_label=model_label,
+            attempt_index=attempt_index,
+            execution_try=execution_try,
+            runtime_id=runtime_id,
+        )
     workspace = (
         MinimumHostWorkspace(
             instance_id,
             container,
             adapter,
             artifact_dir=execution_dir,
+            diagnostics_plan=diagnostics_plan,
         )
         if adapter.name == "minimum"
-        else AgentWorkspace(instance_id, container, adapter, image=image)
+        else AgentWorkspace(
+            instance_id,
+            container,
+            adapter,
+            image=image,
+            artifact_dir=execution_dir,
+            diagnostics_plan=diagnostics_plan,
+        )
     )
     result = FormalizerResult(
         problem=problem,
@@ -351,6 +561,10 @@ def _run_execution_try(
         "traced_tool_call_count": 0,
         "agent_trace_record_count": 0,
         "agent_trace_path": None,
+    }
+    usage_collection = {
+        "status": "not_attempted",
+        "reason": "native_harness_has_not_exited",
     }
 
     try:
@@ -383,12 +597,16 @@ def _run_execution_try(
             state_isolation_validation,
         ])
         configured_validations = {
-            row["preset"]: row["required"]
+            row["preset"]: row
             for row in adapter.resolved_config.raw["resolved"]["validations"]
         }
         if any(
-            row.get("status") != "pass"
-            and configured_validations.get(row.get("preset"), False)
+            configured_validations.get(row.get("preset"), {}).get("required", False)
+            and (
+                row.get("status") != "pass"
+                or row.get("version")
+                != configured_validations[row.get("preset")]["version"]
+            )
             for row in validations
         ):
             raise InfraInvalid("required_evidence_failed", "required validation failed")
@@ -479,6 +697,35 @@ def _run_execution_try(
             reason = gateway_monitor_error or gateway_terminal.get(
                 "reason", "provider_transient_exhausted"
             )
+            try:
+                usage = adapter.collect_usage(workspace, execution_dir) or {}
+                if agent_result and usage:
+                    agent_result.usage = {**agent_result.usage, **usage}
+                usage_collection = {
+                    "status": "completed",
+                    "values_present": bool(usage),
+                    "normalized_fields": (
+                        len(usage) if isinstance(usage, dict) else 0
+                    ),
+                }
+            except Exception as exc:
+                usage_collection = {
+                    "status": "failed",
+                    "error_type": type(exc).__name__,
+                    "values_present": False,
+                }
+                tracer.emit("optional_usage_error", error_type=type(exc).__name__)
+            optional = _record_optional_evidence(
+                adapter,
+                agent_id,
+                execution_dir,
+                problem,
+                model_label,
+                tracer,
+                agent_result,
+                container,
+                usage_collection,
+            )
             invalid_evidence = {
                 "schema_version": 1,
                 "attempt_valid": False,
@@ -492,12 +739,19 @@ def _run_execution_try(
                     "entries": len(ledger),
                     "sha256": sha256_bytes(ledger_path.read_bytes()),
                 },
+                "optional_evidence": optional,
             }
             _atomic_json(execution_dir / "provider_infra_invalid.json", invalid_evidence)
+            if gateway_terminal and gateway_terminal.get("source") == "external_calls":
+                _atomic_json(execution_dir / "external_call_infra_invalid.json", invalid_evidence)
             raise InfraInvalid(
                 reason,
-                f"model provider infrastructure did not yield a valid response: {reason}",
-                retry_execution=False,
+                f"external infrastructure did not yield a valid response: {reason}",
+                retry_execution=(
+                    adapter.resolved_config.model_response_delivery["mode"]
+                    == "native_streaming"
+                    and reason == "post_commit_stream_failure"
+                ),
             )
 
         if (
@@ -572,13 +826,23 @@ def _run_execution_try(
             usage = adapter.collect_usage(workspace, execution_dir) or {}
             if agent_result and usage:
                 agent_result.usage = {**agent_result.usage, **usage}
+            usage_collection = {
+                "status": "completed",
+                "values_present": bool(usage),
+                "normalized_fields": len(usage) if isinstance(usage, dict) else 0,
+            }
         except Exception as exc:
+            usage_collection = {
+                "status": "failed",
+                "error_type": type(exc).__name__,
+                "values_present": False,
+            }
             tracer.emit("optional_usage_error", error_type=type(exc).__name__)
 
         gateway_summary = workspace.model_gateway_stats()
         ledger = workspace.model_gateway_ledger()
         _write_ledger(execution_dir / "model_call_ledger.jsonl", ledger)
-        traced_tool_calls, trace_records, trace_path = _record_optional_evidence(
+        optional = _record_optional_evidence(
             adapter,
             agent_id,
             execution_dir,
@@ -587,12 +851,8 @@ def _run_execution_try(
             tracer,
             agent_result,
             container,
+            usage_collection,
         )
-        optional = {
-            "traced_tool_call_count": traced_tool_calls,
-            "agent_trace_record_count": trace_records,
-            "agent_trace_path": trace_path,
-        }
         actions = _action_metrics(gateway_summary, adapter, execution_dir)
 
         generated = artifacts["domain"] is not None and artifacts["problem"] is not None
@@ -696,8 +956,18 @@ def _completion_matches(
     )
 
 
+def _read_completion(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ExecutionValidityError(f"cannot read selected result {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ExecutionValidityError(f"selected result is not an object: {path}")
+    return value
+
+
 def _result_from_completion(path: Path) -> FormalizerResult:
-    value = json.loads(path.read_text())
+    value = _read_completion(path)
     return FormalizerResult(
         problem=value["problem"],
         status="ok" if value["generation_success"] else "failed",
@@ -770,24 +1040,67 @@ def _run_attempt(
     task_identity: dict,
     runtime_lock: dict,
     runtime_identity_sha256: str,
+    operational_config=None,
+    operational_run_id: str | None = None,
+    validity_cell_dir: Path | None = None,
+    attempts_per_case: int | None = None,
 ) -> FormalizerResult:
     attempt_dir = problem_output_dir(
         out_dir_root, domain, data, model_label, problem
     )
+    configured_attempts = int(
+        attempts_per_case or adapter.resolved_config.attempts_per_case
+    )
+    if validity_cell_dir is None:
+        base_label, _ = split_attempt_model_label(model_label)
+        validity_cell_dir = problem_output_dir(
+            out_dir_root, domain, data, base_label, problem
+        ).parent
     completion_path = attempt_dir / COMPLETION_NAME
-    if _completion_matches(
+    completion_identity_matches = _completion_matches(
         completion_path,
         adapter.resolved_config.sha256,
         task_identity["sha256"],
         runtime_identity_sha256,
+    )
+    root_completion_preexisting = completion_path.exists()
+    validity_state = refresh_cell_state(
+        validity_cell_dir,
+        expected_problems=[problem],
+        attempts_per_case=configured_attempts,
+        resolved_config_sha256=adapter.resolved_config.sha256,
+        runtime_identity_sha256=runtime_identity_sha256,
+    )
+    if (
+        completion_path.exists()
+        and not completion_identity_matches
+        and not repair_identity_migration_authorized(
+            validity_state,
+            problem,
+            attempt_index,
+            task_input_sha256=task_identity["sha256"],
+            runtime_identity_sha256=runtime_identity_sha256,
+        )
     ):
-        (attempt_dir / LEASE_NAME).unlink(missing_ok=True)
-        return _result_from_completion(completion_path)
-    if completion_path.exists():
         raise RuntimeError(
             f"existing completion identity differs; choose a new config/model label: "
             f"{completion_path}"
         )
+    effective_source = selected_source_path(
+        validity_cell_dir, validity_state, problem, attempt_index
+    )
+    if effective_source is not None:
+        value = _read_completion(effective_source)
+        if not (
+            value.get("resolved_config_sha256") == adapter.resolved_config.sha256
+            and value.get("task_input_sha256") == task_identity["sha256"]
+            and value.get("runtime_identity_sha256") == runtime_identity_sha256
+        ):
+            raise ExecutionValidityError(
+                f"selected execution identity differs from current attempt: {effective_source}"
+            )
+        (attempt_dir / LEASE_NAME).unlink(missing_ok=True)
+        return _result_from_completion(effective_source)
 
     identity = {
         "resolved_config_sha256": adapter.resolved_config.sha256,
@@ -799,7 +1112,15 @@ def _run_attempt(
     }
     lease = _acquire_lease(attempt_dir, identity)
     execution_root = attempt_dir / "executions"
-    existing_indices: list[int] = []
+    try:
+        existing_indices: list[int] = [
+            int(value)
+            for value in validity_state["problems"][problem]["attempts"][
+                str(attempt_index)
+            ]["executions"]
+        ]
+    except (KeyError, TypeError, ValueError):
+        existing_indices = []
     invalid_executions: list[dict] = []
     if execution_root.is_dir():
         for directory in sorted(execution_root.glob("execution-*")):
@@ -840,17 +1161,28 @@ def _run_attempt(
                     runtime_lock=runtime_lock,
                     record_trace=record_trace,
                     image=image,
+                    operational_config=operational_config,
+                    operational_run_id=operational_run_id,
                 )
             except InfraInvalid as exc:
                 if exc.reason not in adapter.resolved_config.raw["infra_retry"][
                     "invalidators"
                 ]:
                     raise
+                execution_dir = (
+                    attempt_dir
+                    / "executions"
+                    / f"execution-{execution_try:03d}"
+                )
+                analysis_manifest = _ensure_uncollected_analysis_manifest(
+                    adapter, execution_dir, reason=exc.reason
+                )
                 invalid = {
                     "execution_try": execution_try,
                     "attempt_valid": False,
                     "infra_invalidator": exc.reason,
                     "error": str(exc),
+                    "analysis_evidence_manifest": analysis_manifest,
                     "recorded_at": now_iso(),
                 }
                 invalid_executions.append(invalid)
@@ -861,6 +1193,13 @@ def _run_attempt(
                     / "infra_invalid.json",
                     invalid,
                 )
+                refresh_cell_state(
+                    validity_cell_dir,
+                    expected_problems=[problem],
+                    attempts_per_case=configured_attempts,
+                    resolved_config_sha256=adapter.resolved_config.sha256,
+                    runtime_identity_sha256=runtime_identity_sha256,
+                )
                 if not exc.retry_execution:
                     attempt_invalid = {
                         "schema_version": 1,
@@ -868,6 +1207,9 @@ def _run_attempt(
                         "problem": problem,
                         "model_label": model_label,
                         "attempt_index": attempt_index,
+                        "resolved_config_sha256": adapter.resolved_config.sha256,
+                        "task_input_sha256": task_identity["sha256"],
+                        "runtime_identity_sha256": runtime_identity_sha256,
                         "attempt_valid": False,
                         "current": True,
                         "status": "infra_invalid",
@@ -893,11 +1235,20 @@ def _run_attempt(
                     "invalidators"
                 ]:
                     raise
+                execution_dir = (
+                    attempt_dir
+                    / "executions"
+                    / f"execution-{execution_try:03d}"
+                )
+                analysis_manifest = _ensure_uncollected_analysis_manifest(
+                    adapter, execution_dir, reason=reason
+                )
                 invalid = {
                     "execution_try": execution_try,
                     "attempt_valid": False,
                     "infra_invalidator": reason,
                     "error": f"{type(exc).__name__}: {exc}",
+                    "analysis_evidence_manifest": analysis_manifest,
                     "recorded_at": now_iso(),
                 }
                 invalid_executions.append(invalid)
@@ -907,6 +1258,13 @@ def _run_attempt(
                     / f"execution-{execution_try:03d}"
                     / "infra_invalid.json",
                     invalid,
+                )
+                refresh_cell_state(
+                    validity_cell_dir,
+                    expected_problems=[problem],
+                    attempts_per_case=configured_attempts,
+                    resolved_config_sha256=adapter.resolved_config.sha256,
+                    runtime_identity_sha256=runtime_identity_sha256,
                 )
                 continue
 
@@ -933,15 +1291,21 @@ def _run_attempt(
                     # result string only when experimental parsing was enabled.
                     content = payloads[role]
                     destination = attempt_dir / output_names[role]
-                    destination.write_bytes(content)
                     digest = sha256_bytes(content)
-                    if sha256_bytes(destination.read_bytes()) != digest:
-                        raise InfraInvalid("required_evidence_failed", "artifact hash mismatch")
+                    if not root_completion_preexisting:
+                        destination.write_bytes(content)
+                        if sha256_bytes(destination.read_bytes()) != digest:
+                            raise InfraInvalid(
+                                "required_evidence_failed", "artifact hash mismatch"
+                            )
                     artifact_records[role] = {
                         "workspace_name": source_names[role],
                         "delivery_name": output_names[role],
                         "bytes": len(content),
                         "sha256": digest,
+                        "materialized_at_attempt_root": (
+                            not root_completion_preexisting
+                        ),
                     }
 
             completion = {
@@ -977,8 +1341,18 @@ def _run_attempt(
                 "evidence": evidence,
                 "completed_at": now_iso(),
             }
-            _atomic_json(attempt_dir / "metadata.json", completion)
-            _atomic_json(completion_path, completion)
+            execution_result_path = write_execution_result(
+                attempt_dir
+                / "executions"
+                / f"execution-{execution_try:03d}",
+                completion,
+            )
+            # ``completion.json`` is the immutable first automatically valid
+            # completion for compatibility.  Manual adjudication and repairs
+            # are represented only by the cell ledger and per-execution result.
+            if not completion_path.exists():
+                _atomic_json(attempt_dir / "metadata.json", completion)
+                _atomic_json(completion_path, completion)
             previous_invalid_path = attempt_dir / "invalid_attempt.json"
             if previous_invalid_path.is_file():
                 try:
@@ -990,12 +1364,64 @@ def _run_attempt(
                     previous_invalid["superseded_by_valid_execution_try"] = execution_try
                     previous_invalid["superseded_at"] = now_iso()
                     _atomic_json(previous_invalid_path, previous_invalid)
-            result.completion_path = completion_path
+            validity_state = refresh_cell_state(
+                validity_cell_dir,
+                expected_problems=[problem],
+                attempts_per_case=configured_attempts,
+                resolved_config_sha256=adapter.resolved_config.sha256,
+                runtime_identity_sha256=runtime_identity_sha256,
+            )
+            effective_source = selected_source_path(
+                validity_cell_dir, validity_state, problem, attempt_index
+            )
+            acceptable_sources = {execution_result_path.resolve()}
+            if not root_completion_preexisting:
+                acceptable_sources.add(completion_path.resolve())
+            if effective_source not in acceptable_sources:
+                raise ExecutionValidityError(
+                    "new valid execution was not selected by chronological policy"
+                )
+            result.completion_path = (
+                execution_result_path
+                if root_completion_preexisting
+                else completion_path
+            )
             return result
 
+        exhausted_status = (
+            "incomplete"
+            if adapter.resolved_config.model_response_delivery["mode"]
+            == "native_streaming"
+            else "infra_invalid"
+        )
+        _atomic_json(
+            attempt_dir / "invalid_attempt.json",
+            {
+                "schema_version": 1,
+                "complete": False,
+                "problem": problem,
+                "model_label": model_label,
+                "attempt_index": attempt_index,
+                "resolved_config_sha256": adapter.resolved_config.sha256,
+                "task_input_sha256": task_identity["sha256"],
+                "runtime_identity_sha256": runtime_identity_sha256,
+                "attempt_valid": False,
+                "current": True,
+                "status": exhausted_status,
+                "invalid_executions": invalid_executions,
+                "recorded_at": now_iso(),
+            },
+        )
+        refresh_cell_state(
+            validity_cell_dir,
+            expected_problems=[problem],
+            attempts_per_case=configured_attempts,
+            resolved_config_sha256=adapter.resolved_config.sha256,
+            runtime_identity_sha256=runtime_identity_sha256,
+        )
         return FormalizerResult(
             problem=problem,
-            status="infra_invalid",
+            status=exhausted_status,
             attempt_index=attempt_index,
             execution_try=last_execution_try,
             attempt_valid=False,
@@ -1022,6 +1448,8 @@ def run_one_problem(
     out_dir_root: Path | None = None,
     image: str | None = None,
     attempt_index: int = 1,
+    operational_config=None,
+    operational_run_id: str | None = None,
 ) -> FormalizerResult:
     """Run one fixed attempt (compatibility entry point used by tests/tools)."""
     adapter.validate_runtime()
@@ -1058,6 +1486,19 @@ def run_one_problem(
         base_label if total == 1 else f"{base_label}__attempt_{attempt_index:03d}"
     )
     root = Path(out_dir_root) if out_dir_root else OUTPUT_DIR
+    validity_cell_dir = problem_output_dir(
+        root, domain, data, base_label, problem
+    ).parent
+    refresh_cell_state(
+        validity_cell_dir,
+        expected_problems=[problem],
+        attempts_per_case=total,
+        resolved_config_sha256=adapter.resolved_config.sha256,
+        runtime_identity_sha256=runtime_identity_sha256,
+    )
+    resolved_operational_run_id = operational_run_id or (
+        f"formalizer-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+    )
     return _run_attempt(
         adapter,
         domain,
@@ -1074,6 +1515,10 @@ def run_one_problem(
         task_identity=task,
         runtime_lock=runtime_lock,
         runtime_identity_sha256=runtime_identity_sha256,
+        operational_config=operational_config,
+        operational_run_id=resolved_operational_run_id,
+        validity_cell_dir=validity_cell_dir,
+        attempts_per_case=total,
     )
 
 
@@ -1088,6 +1533,8 @@ def run_batch(
     out_dir_root: Path | None = None,
     image: str | None = None,
     workers: int = 1,
+    operational_config=None,
+    operational_run_id: str | None = None,
 ) -> list[FormalizerResult]:
     """Run every fixed case/attempt; outcomes never affect attempt count."""
     adapter.validate_runtime()
@@ -1109,6 +1556,21 @@ def run_batch(
     root = Path(out_dir_root) if out_dir_root else OUTPUT_DIR
     base_label = _config_qualified_label(adapter, model_label)
     attempts = adapter.resolved_config.attempts_per_case
+    resolved_operational_run_id = operational_run_id or (
+        f"formalizer-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+    )
+    problem_numbers = list(problem_numbers)
+    expected_problems = [format_problem_name(value) for value in problem_numbers]
+    validity_cell_dir = problem_output_dir(
+        root, domain, data, base_label, expected_problems[0] if expected_problems else "p00"
+    ).parent
+    refresh_cell_state(
+        validity_cell_dir,
+        expected_problems=expected_problems,
+        attempts_per_case=attempts,
+        resolved_config_sha256=adapter.resolved_config.sha256,
+        runtime_identity_sha256=runtime_identity_sha256,
+    )
     jobs = [
         (problem_number, attempt_index)
         for problem_number in problem_numbers
@@ -1152,6 +1614,10 @@ def run_batch(
             task_identity=task,
             runtime_lock=runtime_lock,
             runtime_identity_sha256=runtime_identity_sha256,
+            operational_config=operational_config,
+            operational_run_id=resolved_operational_run_id,
+            validity_cell_dir=validity_cell_dir,
+            attempts_per_case=attempts,
         )
 
     results = run_parallel(jobs, worker, workers=workers)

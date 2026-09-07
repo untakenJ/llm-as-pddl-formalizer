@@ -1,0 +1,104 @@
+{
+  "case": "p64",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 80,
+    "init": 160,
+    "goal": 33,
+    "semantic_items": 273
+  },
+  "before": {
+    "objects_covered": 80,
+    "init_covered": 106,
+    "goal_covered": 33,
+    "missing": 0,
+    "ambiguous": 51,
+    "contradictory": 7,
+    "over_generated": 73
+  },
+  "after": {
+    "objects_covered": 80,
+    "init_covered": 160,
+    "goal_covered": 33,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "Initially, we have packages labeled obj11 through obj113, a total of 33 packages.",
+      "revised_text": "Initially, for each integer i from 1 through 11, we have exactly three packages labeled by concatenating obj, the decimal representation of i, and one of 1, 2, or 3, for a total of 33 packages.",
+      "reason_en": "The bounded construction yields exactly the 33 golden package labels.",
+      "reason_zh": "有界构造恰好生成 33 个黄金包裹标签。",
+      "golden_evidence": ["golden_problem.pddl:8-10,15-17,23-25,30-32,37-39,44-46,52-54,59-61,66-68,73-75,81-83: package objects"]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "Each city has an airport location, apt1 through apt11, and contains one airplane: apn1 is at apt3, apn2 is at apt2, and apn3 is at apt11.",
+      "revised_text": "For each integer i from 1 through 11, the city labeled by concatenating cit and i contains the two locations labeled by concatenating pos and i and by concatenating apt and i, and the apt location is an airport; the three airplanes are apn1 at apt3, apn2 at apt2, and apn3 at apt11.",
+      "reason_en": "This states the complete same-index membership and airport rules and removes the one-airplane-per-city implication.",
+      "reason_zh": "该句完整陈述同索引隶属及机场规则，并删除每城一架飞机的暗示。",
+      "golden_evidence": ["golden_problem.pddl:141-179: location, airport, airplane, and airplane-location atoms", "golden_problem.pddl:224-245: (IN-CITY ...)"]
+    },
+    {
+      "id": 3,
+      "category": "ambiguity",
+      "original_text": "- In city cit1, located at pos1, we have truck tru1 with packages obj11, obj12, and obj13.",
+      "revised_text": "- In city cit1, truck tru1 and packages obj11, obj12, and obj13 are initially at pos1.",
+      "reason_en": "This directly states all four co-location atoms.",
+      "reason_zh": "该句直接陈述四个同地点原子。",
+      "golden_evidence": ["golden_problem.pddl:180-183: (AT TRU1/OBJ11/OBJ12/OBJ13 POS1)"]
+    },
+    {
+      "id": 4,
+      "category": "contradiction",
+      "original_text": "- In city cit2, at pos2, truck tru2 holds packages obj21, obj22, and obj23.",
+      "revised_text": "- In city cit2, truck tru2 and packages obj21, obj22, and obj23 are initially at pos2.",
+      "reason_en": "This replaces unsupported in-truck containment with the four golden at-location atoms.",
+      "reason_zh": "该句以四个黄金地点原子替换无支持的车内装载关系。",
+      "golden_evidence": ["golden_problem.pddl:184-187: (AT TRU2/OBJ21/OBJ22/OBJ23 POS2)", "golden_domain.pddl:13-14: distinct (at ...) and (in ...) predicates"]
+    },
+    {
+      "id": 5,
+      "category": "missing_rule",
+      "original_text": "- Similarly, the pattern continues across the cities up to city cit11 where truck tru11 is at pos11 with packages obj111, obj112, and obj113. Each city's airport is nearby, but initially, our focus is on the packages at different positions.",
+      "revised_text": "- For each integer i from 3 through 11, the truck labeled by concatenating tru and i and the three packages labeled by concatenating obj, i, and one of 1, 2, or 3 are initially at the position labeled by concatenating pos and i.",
+      "reason_en": "The finite rule expands to the exact remaining 36 placement atoms and removes an unsupported proximity relation.",
+      "reason_zh": "有限规则恰好展开为其余 36 个位置原子，并删除无支持的邻近关系。",
+      "golden_evidence": ["golden_problem.pddl:188-223: truck and package placements for indices 3-11"]
+    },
+    {
+      "id": 6,
+      "category": "contradiction",
+      "original_text": "obj83 should remain at pos3 along with obj33",
+      "revised_text": "obj83 should be at pos3 along with obj33",
+      "reason_en": "Obj83 starts at pos8, so remain incorrectly implies a non-golden initial fact.",
+      "reason_zh": "obj83 初始位于 pos8，因此 remain 错误暗示了非黄金初始事实。",
+      "golden_evidence": ["golden_problem.pddl:211: (AT OBJ83 POS8)", "golden_problem.pddl:267-268: (AT OBJ83 POS3), (AT OBJ33 POS3)"]
+    },
+    {
+      "id": 7,
+      "category": "contradiction",
+      "original_text": "obj82 should stay at apt4",
+      "revised_text": "obj82 should be at apt4",
+      "reason_en": "Obj82 starts at pos8, so stay incorrectly implies a non-golden initial fact.",
+      "reason_zh": "obj82 初始位于 pos8，因此 stay 错误暗示了非黄金初始事实。",
+      "golden_evidence": ["golden_problem.pddl:210: (AT OBJ82 POS8)", "golden_problem.pddl:275: (AT OBJ82 APT4)"]
+    }
+  ],
+  "preserved": [
+    "The first-person voice, paragraph and bullet organization, opening, and closing.",
+    "All 33 correct goal destinations, apart from replacing two false continuity words."
+  ],
+  "verification": {
+    "ledger_rows": 273,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

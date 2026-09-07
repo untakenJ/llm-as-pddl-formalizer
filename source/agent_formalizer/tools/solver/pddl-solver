@@ -2,7 +2,7 @@
 """Agent-facing PDDL solver CLI (mounted into every harness container).
 
 Talks only to the per-attempt solver gateway on the internal Docker network.
-The gateway itself calls the same planning.domains backend as ``run_solver.py``.
+The gateway calls the profile-selected public or local Planutils backend.
 
 Usage:
   pddl-solver [--domain PATH] [--problem PATH] [--solver NAME]
@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="pddl-solver",
         description=(
             "Solve workspace PDDL via the benchmark solver gateway "
-            "(same remote backend as run_solver.py)."
+            "(same selected backend as run_solver.py)."
         ),
     )
     parser.add_argument("--domain", default=DEFAULT_DOMAIN)

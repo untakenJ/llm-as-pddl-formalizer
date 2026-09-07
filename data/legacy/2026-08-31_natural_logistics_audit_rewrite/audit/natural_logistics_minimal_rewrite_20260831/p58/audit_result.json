@@ -1,0 +1,97 @@
+{
+  "case": "p58",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 73,
+    "init": 146,
+    "goal": 30,
+    "semantic_items": 249
+  },
+  "before": {
+    "objects_covered": 52,
+    "init_covered": 80,
+    "goal_covered": 7,
+    "missing": 23,
+    "ambiguous": 87,
+    "contradictory": 0,
+    "over_generated": 63
+  },
+  "after": {
+    "objects_covered": 73,
+    "init_covered": 146,
+    "goal_covered": 30,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "There are packages labeled from obj11 to obj103 and trucks labeled from tru1 to tru10.",
+      "revised_text": "For each integer i from 1 through 10, there are exactly three packages labeled by concatenating obj, the decimal representation of i, and one of 1, 2, or 3; for example, i=1 gives obj11, obj12, and obj13, while i=10 gives obj101, obj102, and obj103. The trucks are labeled from tru1 to tru10.",
+      "reason_en": "Replaces the package pseudo-range with exactly the 30 golden package identifiers.",
+      "reason_zh": "用恰好 30 个黄金包裹标识符替换包裹伪范围。",
+      "golden_evidence": [
+        "golden_problem.pddl:8-10,16-18,23-25,30-32,37-39,45-47,52-54,59-61,66-68,74-76: package objects",
+        "golden_problem.pddl:79-108: package type atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "Additionally, there are airplanes labeled apn1 to apn3, and cities labeled cit1 to cit10, each with a designated location: pos1 to pos10 and airports apt1 to apt10.",
+      "revised_text": "Additionally, there are airplanes labeled apn1 to apn3 and cities labeled cit1 to cit10. For each integer i from 1 through 10, pos{i} and apt{i} are locations, and apt{i} is an airport, where every {i} is replaced by the same decimal integer.",
+      "reason_en": "Makes all location and airport types uniquely recoverable.",
+      "reason_zh": "使全部地点与机场类型可被唯一恢复。",
+      "golden_evidence": [
+        "golden_problem.pddl:129-158: location and airport type atoms"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "missing_rule",
+      "original_text": "Each truck is starting at a position corresponding to the number, for instance, tru1 is at pos1, and each position contains packages with the same initial numbers as trucks and positions.",
+      "revised_text": "For each integer i from 1 through 10, tru{i} is initially at pos{i}, and obj{i}1, obj{i}2, and obj{i}3 are initially at pos{i}, where every {i} is replaced by the same decimal integer.",
+      "reason_en": "Defines the finite identifier correspondence for all truck and package placements.",
+      "reason_zh": "定义全部卡车与包裹位置的有限标识符对应关系。",
+      "golden_evidence": [
+        "golden_problem.pddl:165-204: truck and package placements"
+      ]
+    },
+    {
+      "id": 4,
+      "category": "missing_rule",
+      "original_text": "Moreover, specific locations correspond to their respective cities; for example, pos1 and apt1 are located within cit1.",
+      "revised_text": "Moreover, for each integer i from 1 through 10, pos{i} and apt{i} are located within cit{i}, where every {i} is replaced by the same decimal integer; for example, pos1 and apt1 are located within cit1.",
+      "reason_en": "Expands the example into the exact 20-atom indexed city mapping.",
+      "reason_zh": "将示例扩展为恰好 20 个原子的索引城市映射。",
+      "golden_evidence": [
+        "golden_problem.pddl:205-224: all city-membership atoms"
+      ]
+    },
+    {
+      "id": 5,
+      "category": "irregular_mapping",
+      "original_text": "Our goal is to rearrange these packages to new designated locations: obj51 should be moved to pos2, obj43 to pos10, obj82 to apt6, obj33 should remain at pos3, and so forth. This involves packages being transported across different cities and locations, such as obj12 needing to move to pos7 and obj93 ending up at apt7.",
+      "revised_text": "The complete goal is that all of the following package locations hold simultaneously: obj51 at pos2; obj43 at pos10; obj82 at apt6; obj33 at pos3; obj61 at apt2; obj22 at pos6; obj103 at pos5; obj32 at apt7; obj12 at pos7; obj91 at apt6; obj31 at pos7; obj52 at apt5; obj83 at pos10; obj73 at apt2; obj23 at apt8; obj42 at apt8; obj62 at pos3; obj102 at apt8; obj53 at pos5; obj81 at pos6; obj93 at apt7; obj13 at pos4; obj72 at apt8; obj101 at pos1; obj71 at pos5; obj92 at pos2; obj63 at pos2; obj41 at pos8; obj11 at pos3; and obj21 at pos5.",
+      "reason_en": "Enumerates all 30 irregular goal pairs and makes their conjunction explicit.",
+      "reason_zh": "列举全部 30 个不规则目标对并明确其合取关系。",
+      "golden_evidence": [
+        "golden_problem.pddl:227-256: all 30 goal atoms"
+      ]
+    }
+  ],
+  "preserved": [
+    "Opening and closing sentences and one-paragraph organization.",
+    "Exact airplane placements and correct index-1 package/city examples."
+  ],
+  "verification": {
+    "ledger_rows": 249,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

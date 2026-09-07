@@ -1,0 +1,80 @@
+section,pddl_item,evidence,evidence_kind,unique,status,notes
+objects,PACKAGE3,package3,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,PACKAGE2,package2,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,PACKAGE1,package1,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY5,city5,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY4,city4,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY3,city3,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY2,city2,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY1,city1,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,TRUCK5,truck5,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,TRUCK4,truck4,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,TRUCK3,truck3,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,TRUCK2,truck2,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,TRUCK1,truck1,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,PLANE2,plane2,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,PLANE1,plane1,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY5-1,"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,Substituting X=1..5 yields exactly the ten golden location labels.
+objects,CITY4-1,"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,Substituting X=1..5 yields exactly the ten golden location labels.
+objects,CITY3-1,"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,Substituting X=1..5 yields exactly the ten golden location labels.
+objects,CITY2-1,"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,Substituting X=1..5 yields exactly the ten golden location labels.
+objects,CITY1-1,"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,Substituting X=1..5 yields exactly the ten golden location labels.
+objects,CITY5-2,"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,Substituting X=1..5 yields exactly the ten golden location labels.
+objects,CITY4-2,"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,Substituting X=1..5 yields exactly the ten golden location labels.
+objects,CITY3-2,"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,Substituting X=1..5 yields exactly the ten golden location labels.
+objects,CITY2-2,"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,Substituting X=1..5 yields exactly the ten golden location labels.
+objects,CITY1-2,"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,Substituting X=1..5 yields exactly the ten golden location labels.
+init,(PACKAGE PACKAGE3),package3,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(PACKAGE PACKAGE2),package2,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(PACKAGE PACKAGE1),package1,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(CITY CITY5),city5,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(CITY CITY4),city4,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(CITY CITY3),city3,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(CITY CITY2),city2,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(CITY CITY1),city1,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(TRUCK TRUCK5),truck5,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(TRUCK TRUCK4),truck4,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(TRUCK TRUCK3),truck3,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(TRUCK TRUCK2),truck2,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(TRUCK TRUCK1),truck1,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(AIRPLANE PLANE2),plane2,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(AIRPLANE PLANE1),plane1,direct,true,covered,The label occurs in the corresponding explicit typed inventory.
+init,(LOCATION CITY5-1),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(LOCATION CITY4-1),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(LOCATION CITY3-1),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(LOCATION CITY2-1),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(LOCATION CITY1-1),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(AIRPORT CITY5-2),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(LOCATION CITY5-2),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(AIRPORT CITY4-2),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(LOCATION CITY4-2),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(AIRPORT CITY3-2),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(LOCATION CITY3-2),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(AIRPORT CITY2-2),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(LOCATION CITY2-2),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(AIRPORT CITY1-2),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(LOCATION CITY1-2),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(IN-CITY CITY5-2 CITY5),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(IN-CITY CITY5-1 CITY5),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(IN-CITY CITY4-2 CITY4),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(IN-CITY CITY4-1 CITY4),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(IN-CITY CITY3-2 CITY3),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(IN-CITY CITY3-1 CITY3),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(IN-CITY CITY2-2 CITY2),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(IN-CITY CITY2-1 CITY2),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(IN-CITY CITY1-2 CITY1),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(IN-CITY CITY1-1 CITY1),"Each city has a specific location, denoted as cityX-1, and an airport, denoted as cityX-2.",deterministic_rule,true,covered,"For each listed city X=1..5, cityX-1 is its location and cityX-2 its airport; both are in that city."
+init,(AT PLANE2 CITY1-2),"Our airplanes, plane2 and plane1, are stationed at airports city1-2 and city2-2, respectively.",deterministic_rule,true,covered,The ordered respectively mapping uniquely states this airplane location.
+init,(AT PLANE1 CITY2-2),"Our airplanes, plane2 and plane1, are stationed at airports city1-2 and city2-2, respectively.",deterministic_rule,true,covered,The ordered respectively mapping uniquely states this airplane location.
+init,(AT TRUCK5 CITY5-1),"Truck1 begins at the location city1-1, truck2 at city2-1, truck3 at city3-1, truck4 at city4-1, and truck5 at city5-1.",direct,true,covered,The complete truck sentence directly states this mapping.
+init,(AT TRUCK4 CITY4-1),"Truck1 begins at the location city1-1, truck2 at city2-1, truck3 at city3-1, truck4 at city4-1, and truck5 at city5-1.",direct,true,covered,The complete truck sentence directly states this mapping.
+init,(AT TRUCK3 CITY3-1),"Truck1 begins at the location city1-1, truck2 at city2-1, truck3 at city3-1, truck4 at city4-1, and truck5 at city5-1.",direct,true,covered,The complete truck sentence directly states this mapping.
+init,(AT TRUCK2 CITY2-1),"Truck1 begins at the location city1-1, truck2 at city2-1, truck3 at city3-1, truck4 at city4-1, and truck5 at city5-1.",direct,true,covered,The complete truck sentence directly states this mapping.
+init,(AT TRUCK1 CITY1-1),"Truck1 begins at the location city1-1, truck2 at city2-1, truck3 at city3-1, truck4 at city4-1, and truck5 at city5-1.",direct,true,covered,The complete truck sentence directly states this mapping.
+init,(AT PACKAGE3 CITY1-1),"As for our packages, package3 is initially at city1-1, package2 at city1-2, and package1 at city4-1.",direct,true,covered,The package sentence directly states this initial location.
+init,(AT PACKAGE2 CITY1-2),"As for our packages, package3 is initially at city1-1, package2 at city1-2, and package1 at city4-1.",direct,true,covered,The package sentence directly states this initial location.
+init,(AT PACKAGE1 CITY4-1),"As for our packages, package3 is initially at city1-1, package2 at city1-2, and package1 at city4-1.",direct,true,covered,The package sentence directly states this initial location.
+goal,(AT PACKAGE3 CITY1-2),"The objective is simple: we want to rearrange the packages so that package3 ends up at city1-2, package2 at city1-1, and package1 at city3-2.",direct,true,covered,The objective sentence directly states this goal atom.
+goal,(AT PACKAGE2 CITY1-1),"The objective is simple: we want to rearrange the packages so that package3 ends up at city1-2, package2 at city1-1, and package1 at city3-2.",direct,true,covered,The objective sentence directly states this goal atom.
+goal,(AT PACKAGE1 CITY3-2),"The objective is simple: we want to rearrange the packages so that package3 ends up at city1-2, package2 at city1-1, and package1 at city3-2.",direct,true,covered,The objective sentence directly states this goal atom.
+

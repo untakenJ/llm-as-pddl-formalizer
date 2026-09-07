@@ -1,0 +1,67 @@
+{
+  "case": "p85",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 32,
+    "init": 64,
+    "goal": 6,
+    "semantic_items": 102
+  },
+  "before": {
+    "objects_covered": 30,
+    "init_covered": 54,
+    "goal_covered": 6,
+    "missing": 6,
+    "ambiguous": 6,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 32,
+    "init_covered": 64,
+    "goal_covered": 6,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "missing_rule",
+      "original_text": "City 6 through City 1 are home to Truck 6 to Truck 1 respectively.",
+      "revised_text": "Truck 6 through Truck 1 are initially at the normal locations of City 6 through City 1 respectively.",
+      "reason_en": "The original paired trucks with cities but did not uniquely state the six initial truck locations.",
+      "reason_zh": "原文只把卡车与城市配对，却没有唯一说明六辆卡车的初始地点。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 20-25: truck type atoms",
+        "golden_problem.pddl:lines 60-65: (AT TRUCKi CITYi-1) for i=6..1"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "ambiguity",
+      "original_text": "There are two airplanes initially stationed at the airport in City 4.",
+      "revised_text": "There are two airplanes, Plane 2 and Plane 1, initially stationed at the airport in City 4.",
+      "reason_en": "Two airplanes were counted and located but not individually named, so Plane 1 and Plane 2 were not recoverable as distinct objects.",
+      "reason_zh": "原文只说明两架飞机及其位置，却未逐一命名，因此无法恢复飞机 1 和飞机 2 这两个独立对象。",
+      "golden_evidence": [
+        "golden_problem.pddl:line 5: plane2 and plane1 objects",
+        "golden_problem.pddl:lines 26-27: airplane type atoms",
+        "golden_problem.pddl:lines 58-59: both airplanes at city4-2"
+      ]
+    }
+  ],
+  "preserved": [
+    "The package, city, location, and airport descriptions were preserved because their six-city mapping is complete.",
+    "All six explicit package initial locations and all six goal destinations were preserved verbatim."
+  ],
+  "verification": {
+    "ledger_rows": 102,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}
+

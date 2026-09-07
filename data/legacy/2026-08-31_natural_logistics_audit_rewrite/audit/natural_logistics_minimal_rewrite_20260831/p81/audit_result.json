@@ -1,0 +1,127 @@
+{
+  "case": "p81",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {"objects": 102, "init": 204, "goal": 40, "semantic_items": 346},
+  "before": {
+    "objects_covered": 45,
+    "init_covered": 52,
+    "goal_covered": 5,
+    "missing": 37,
+    "ambiguous": 207,
+    "contradictory": 0,
+    "over_generated": 94
+  },
+  "after": {
+    "objects_covered": 102,
+    "init_covered": 204,
+    "goal_covered": 40,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "Specifically, we have packages named obj11 through obj143, and our fleet includes trucks tru1 to tru14, and airplanes apn1 to apn4.",
+      "revised_text": "Specifically, for every integer X from 1 through 14, we have packages objX1, objX2, and objX3, where X is replaced by its decimal numeral in each identifier (so X = 10 yields obj101, obj102, and obj103); our fleet includes trucks tru1 to tru14, and airplanes apn1 to apn4.",
+      "reason_en": "Replaces the package pseudo-range with the exact bounded identifier construction while preserving the valid truck and airplane ranges.",
+      "reason_zh": "用精确的有界标识符构造替换包裹伪范围，同时保留正确的卡车和飞机范围。",
+      "golden_evidence": ["golden_problem.pddl:8-10,16-18,23-25,30-32,37-39,45-47,52-54,59-61,66-68,74-76,81-83,88-90,95-97,103-105: 42 package objects", "golden_problem.pddl:108-149: PACKAGE atoms"]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "Our cities, numbered cit1 to cit14, contain specific positions and airports.",
+      "revised_text": "Our cities, numbered cit1 to cit14, each contain a position and an airport; specifically, for every integer X from 1 through 14, posX is a location in citX and aptX is an airport location in citX.",
+      "reason_en": "Adds exact identifiers, types, and all 28 same-index city memberships with one finite rule.",
+      "reason_zh": "用一条有限规则补充精确标识符、类型以及全部 28 个同索引城市隶属关系。",
+      "golden_evidence": ["golden_problem.pddl:164-219: CITY, LOCATION, and AIRPORT atoms", "golden_problem.pddl:284-311: IN-CITY atoms"]
+    },
+    {
+      "id": 3,
+      "category": "ambiguity",
+      "original_text": "Trucks are stationed at positions such as pos1 in cit1 and pos2 in cit2, corresponding to the packages they need to load initially.",
+      "revised_text": "For every integer X from 1 through 14, truck truX and packages objX1, objX2, and objX3 are stationed at posX initially.",
+      "reason_en": "Replaces examples and an undefined correspondence with all 56 truck/package placements.",
+      "reason_zh": "用全部 56 个卡车/包裹位置替换示例和未定义的对应关系。",
+      "golden_evidence": ["golden_problem.pddl:228-283: truck/package initial AT atoms"]
+    },
+    {
+      "id": 4,
+      "category": "missing_rule",
+      "original_text": "Airplanes, on the other hand, start at specific airports such as apn1 at apt3 in cit3 and apn2 at apt4 in cit4.",
+      "revised_text": "Airplanes, on the other hand, start at specific airports: apn1 at apt3 in cit3, apn2 at apt4 in cit4, apn3 at apt8 in cit8, and apn4 at apt4 in cit4.",
+      "reason_en": "Removes ‘such as’ and adds the two omitted airplane starts.",
+      "reason_zh": "删除“例如”并补充两个遗漏的飞机初始位置。",
+      "golden_evidence": ["golden_problem.pddl:224-227: (AT APN1 APT3), (AT APN2 APT4), (AT APN3 APT8), (AT APN4 APT4)"]
+    },
+    {
+      "id": 5,
+      "category": "contradiction",
+      "original_text": "each package",
+      "revised_text": "the packages listed below",
+      "reason_en": "Restricts the stated goal to the 40 packages in the golden conjunction rather than implying goals for all 42 packages.",
+      "reason_zh": "把目标限定为黄金合取式中的 40 个包裹，避免暗示全部 42 个包裹都有目标。",
+      "golden_evidence": ["golden_problem.pddl:313-354: 40-atom goal conjunction"]
+    },
+    {
+      "id": 6,
+      "category": "irregular_mapping",
+      "original_text": "The main objectives include moving obj52 to pos7, obj142 to apt4, and obj42 to pos10 among others. Each package's final destination is clearly defined, such as obj11 going to apt5 and obj123 to pos7.",
+      "revised_text": "The main objectives are to move obj52 to pos7; obj142 to apt4; obj42 to pos10; obj11 to apt5; obj123 to pos7; obj33 to pos4; obj112 to apt14; obj113 to apt8; obj61 to apt8; obj73 to apt5; obj132 to apt12; obj111 to pos11; obj103 to apt11; obj51 to apt3; obj122 to pos10; obj31 to pos7; obj72 to apt11; obj131 to apt13; obj91 to apt8; obj13 to apt11; obj41 to apt14; obj102 to pos13; obj12 to apt9; obj23 to pos12; obj83 to apt4; obj62 to apt4; obj81 to apt8; obj92 to apt13; obj43 to apt7; obj143 to pos4; obj82 to apt11; obj32 to apt13; obj133 to apt3; obj71 to pos9; obj63 to apt1; obj21 to pos1; obj93 to apt4; obj141 to pos9; obj53 to pos1; and obj101 to pos13.",
+      "reason_en": "Replaces five examples and vague continuation with all 40 irregular goal pairs.",
+      "reason_zh": "用全部 40 个不规则目标对替换五个示例和模糊续写。",
+      "golden_evidence": ["golden_problem.pddl:314-353: complete goal atom list"]
+    },
+    {
+      "id": 7,
+      "category": "contradiction",
+      "original_text": "optimizing",
+      "revised_text": "selecting",
+      "reason_en": "Removes an unsupported optimization criterion.",
+      "reason_zh": "删除无支持的优化标准。",
+      "golden_evidence": ["golden_problem.pddl:313-354: goal conjunction has no metric"]
+    },
+    {
+      "id": 8,
+      "category": "contradiction",
+      "original_text": "each package",
+      "revised_text": "each listed package",
+      "reason_en": "Prevents the closing sentence from implying goals for the two packages absent from the goal conjunction.",
+      "reason_zh": "防止结尾句暗示目标合取式中未出现的两个包裹也有目标。",
+      "golden_evidence": ["golden_problem.pddl:313-354: exact goal scope"]
+    },
+    {
+      "id": 9,
+      "category": "contradiction",
+      "original_text": "efficiently",
+      "revised_text": "",
+      "reason_en": "Deletes a second unsupported optimization implication.",
+      "reason_zh": "删除第二处无支持的优化含义。",
+      "golden_evidence": ["golden_problem.pddl:313-354: no optimization metric"]
+    },
+    {
+      "id": 10,
+      "category": "ambiguity",
+      "original_text": "such as trucks and airplanes",
+      "revised_text": "namely trucks and airplanes",
+      "reason_en": "Closes the vehicle-mode inventory instead of implying additional unnamed modes.",
+      "reason_zh": "封闭交通方式清单，避免暗示其他未命名方式。",
+      "golden_evidence": ["golden_problem.pddl:7,11,15,22,29,36,40,44,51,58,65,69,73,80,87,94,98,102: complete truck and airplane object inventory"]
+    },
+    {
+      "id": 11,
+      "category": "ambiguity",
+      "original_text": "various locations",
+      "revised_text": "the specified locations",
+      "reason_en": "Makes the overview refer forward to the exact bounded location rules rather than a vague set.",
+      "reason_zh": "使概述指向后文精确的有界地点规则，而非模糊集合。",
+      "golden_evidence": ["golden_problem.pddl:178-219: complete location and airport inventories"]
+    }
+  ],
+  "preserved": ["Opening challenge and initial-state overview.", "Valid truck, airplane, and city ranges.", "Goal introduction and closing sentence apart from the unsupported scope and optimization wording."],
+  "verification": {"ledger_rows": 346, "all_items_covered": true, "all_correspondences_unique": true, "no_over_generation": true}
+}

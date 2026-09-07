@@ -1,0 +1,109 @@
+{
+  "case": "p68",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 87,
+    "init": 174,
+    "goal": 34,
+    "semantic_items": 295
+  },
+  "before": {
+    "objects_covered": 62,
+    "init_covered": 89,
+    "goal_covered": 7,
+    "missing": 27,
+    "ambiguous": 110,
+    "contradictory": 0,
+    "over_generated": 78
+  },
+  "after": {
+    "objects_covered": 87,
+    "init_covered": 174,
+    "goal_covered": 34,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "In the initial setup of this logistics challenge, we have packages labeled from obj11 to obj123, which are spread across various locations.",
+      "revised_text": "In the initial setup of this logistics challenge, we have packages objX1, objX2, and objX3 for every integer X from 1 through 12, where X is replaced by its decimal numeral in each identifier (so X = 10 yields obj101, obj102, and obj103); these packages are spread across various locations.",
+      "reason_en": "Replaces the pseudo-range with the exact bounded package-identifier construction.",
+      "reason_zh": "用精确且有界的包裹标识符构造替换伪范围。",
+      "golden_evidence": [
+        "golden_problem.pddl:8-10,15-17,22-24,30-32,37-39,51-53,59-61,66-68,73-75,80-82,88-90: 36 package objects",
+        "golden_problem.pddl:93-128: 36 PACKAGE atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "The scenario includes twelve cities, each having a position and an airport as a location.",
+      "revised_text": "The scenario includes twelve cities, cit1 through cit12; for every integer X from 1 through 12, posX and aptX are locations, and aptX is an airport in citX.",
+      "reason_en": "Names the complete city/location inventories and supplies exact location and airport typing with a bounded index rule.",
+      "reason_zh": "明确完整的城市与地点清单，并用有界索引规则给出精确的地点和机场类型。",
+      "golden_evidence": [
+        "golden_problem.pddl:141-188: CITY, LOCATION, and AIRPORT atoms"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "ambiguity",
+      "original_text": "Each truck and package also begins at a specific position: for example, tru1 along with packages obj11, obj12, and obj13 are at position pos1 in city 1, tru2 with packages obj21, obj22, and obj23 are situated at position pos2 in city 2, and this pattern continues similarly for all twelve trucks and positions.",
+      "revised_text": "For every integer X from 1 through 12, truck truX and packages objX1, objX2, and objX3 begin at posX.",
+      "reason_en": "Replaces examples and ‘similarly’ with one complete same-index rule for all 48 placements.",
+      "reason_zh": "用一条完整的同索引规则替换示例及“类似地”表述，覆盖全部 48 个位置原子。",
+      "golden_evidence": [
+        "golden_problem.pddl:195-242: all truck/package initial AT atoms"
+      ]
+    },
+    {
+      "id": 4,
+      "category": "ambiguity",
+      "original_text": "Each position and airport location is designated to be within a specific city, such as pos1 and apt1 in city 1, pos2 and apt2 in city 2, continuing sequentially up to city 12.",
+      "revised_text": "For every integer X from 1 through 12, posX and aptX are in citX.",
+      "reason_en": "Makes the finite index correspondence explicit instead of relying on examples and a continuation phrase.",
+      "reason_zh": "明确有限索引对应关系，不再依赖示例和续写占位语。",
+      "golden_evidence": [
+        "golden_problem.pddl:243-266: all 24 IN-CITY atoms"
+      ]
+    },
+    {
+      "id": 5,
+      "category": "irregular_mapping",
+      "original_text": "For instance, obj13 should remain at pos1, while obj53 needs to be relocated to the airport in city 1. We need obj21 to reach the airport in city 9, obj32 to be delivered to pos12, and similar specific targets for each package listed, including obj122 arriving at pos7, obj72 being transferred to pos2, and obj111 staying at pos11.",
+      "revised_text": "Specifically, obj13 should remain at pos1; obj53 needs to be relocated to apt1; obj21 needs to reach apt9; obj32 should be delivered to pos12; obj23 should reach apt11; obj122 should arrive at pos7; obj73 should reach pos3; obj42 should reach pos6; obj22 should reach apt2; obj81 should reach apt7; obj121 should reach pos3; obj52 should reach pos9; obj11 should reach apt8; obj72 should be transferred to pos2; obj112 should reach apt11; obj111 should stay at pos11; obj93 should reach apt7; obj63 should reach pos12; obj123 should reach pos11; obj83 should reach pos6; obj33 should reach apt10; obj12 should reach apt6; obj41 should reach pos8; obj92 should reach pos6; obj61 should reach apt2; obj91 should reach apt1; obj101 should reach apt3; obj31 should reach apt1; obj62 should reach pos11; obj82 should reach apt6; obj51 should reach pos10; obj71 should reach apt2; obj113 should reach apt2; and obj43 should reach apt1.",
+      "reason_en": "Replaces seven examples and a vague placeholder with all 34 irregular goal pairs.",
+      "reason_zh": "用全部 34 个不规则目标对替换七个示例和模糊占位语。",
+      "golden_evidence": [
+        "golden_problem.pddl:269-302: complete 34-atom goal conjunction"
+      ]
+    },
+    {
+      "id": 6,
+      "category": "contradiction",
+      "original_text": "the most efficient route",
+      "revised_text": "a route",
+      "reason_en": "Removes an unsupported optimization objective while preserving the closing sentence.",
+      "reason_zh": "删除无 PDDL 支持的优化目标，同时保留结尾句。",
+      "golden_evidence": [
+        "golden_problem.pddl:268-303: destination conjunction with no metric"
+      ]
+    }
+  ],
+  "preserved": [
+    "The airplane inventory and three initial airport placements.",
+    "The goal introduction and all unaffected challenge-oriented wording, including ‘various locations’ because exact placements are supplied later.",
+    "The original single-paragraph organization and the closing sentence apart from its unsupported efficiency phrase."
+  ],
+  "verification": {
+    "ledger_rows": 295,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

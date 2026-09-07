@@ -1,0 +1,41 @@
+{
+  "case": "p08",
+  "status": "COMPLETE",
+  "decision": "NO REWRITE REQUIRED",
+  "counts": {
+    "objects": 22,
+    "init": 44,
+    "goal": 9,
+    "semantic_items": 75
+  },
+  "before": {
+    "objects_covered": 22,
+    "init_covered": 44,
+    "goal_covered": 9,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 22,
+    "init_covered": 44,
+    "goal_covered": 9,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [],
+  "preserved": [
+    "All explicit package/location/city groups.",
+    "The complete truck and airport/airplane statements.",
+    "All nine explicit package-destination goals."
+  ],
+  "verification": {
+    "ledger_rows": 75,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

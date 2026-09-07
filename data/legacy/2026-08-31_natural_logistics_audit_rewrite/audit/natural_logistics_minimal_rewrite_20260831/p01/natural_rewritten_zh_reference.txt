@@ -1,0 +1,1 @@
+在这个物流场景中，我们从若干对象和地点开始。包裹 obj11、obj12 和 obj13 最初位于地点 pos1。同样，包裹 obj21、obj22 和 obj23 起始于地点 pos2。我们有两辆卡车：卡车 tru1 停在 pos1，卡车 tru2 位于 pos2。此外，我们有一架飞机 apn1，它位于机场 apt2。我们的地图包含两座城市：cit1 和 cit2。城市 cit1 包含地点 pos1 和机场 apt1，而城市 cit2 包含地点 pos2 和机场 apt2。最终目标是将包裹 obj11 和 obj13 转移到机场 apt1，并将包裹 obj21 和 obj23 移至地点 pos1。

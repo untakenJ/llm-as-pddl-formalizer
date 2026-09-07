@@ -1,0 +1,99 @@
+{
+  "case": "p39",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 51,
+    "init": 102,
+    "goal": 21,
+    "semantic_items": 174
+  },
+  "before": {
+    "objects_covered": 38,
+    "init_covered": 46,
+    "goal_covered": 6,
+    "missing": 22,
+    "ambiguous": 55,
+    "contradictory": 1,
+    "over_generated": 42
+  },
+  "after": {
+    "objects_covered": 51,
+    "init_covered": 102,
+    "goal_covered": 21,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "contradiction",
+      "original_text": "There are seven packages labeled from obj11 to obj73, seven trucks named tru1 to tru7, seven cities named cit1 to cit7, and seven airports, apt1 through apt7, which also serve as locations.",
+      "revised_text": "There are 21 packages: obj11, obj12, obj13, obj21, obj22, obj23, obj31, obj32, obj33, obj41, obj42, obj43, obj51, obj52, obj53, obj61, obj62, obj63, obj71, obj72, and obj73; seven trucks named tru1 to tru7; seven cities named cit1 to cit7; and seven airports, apt1 through apt7, which also serve as locations.",
+      "reason_en": "Corrects the package count and replaces an over-generating pseudo-range with the exact inventory.",
+      "reason_zh": "修正包裹数量，并用精确清单替换过度生成的伪范围。",
+      "golden_evidence": [
+        "golden_problem.pddl:4-54: complete object inventory",
+        "golden_problem.pddl:57-77: 21 PACKAGE atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "Trucks are stationed at positions pos1 through pos7, each in their respective cities cit1 to cit7, along with three packages per position.",
+      "revised_text": "For every integer i from 1 through 7, position posi and airport apti are locations in city citi, truck trui is initially at posi, and packages obji1, obji2, and obji3 are initially at posi; in these identifiers, i is the same integer appended to pos, apt, cit, and tru and placed between obj and the package suffix 1, 2, or 3.",
+      "reason_en": "Defines every location, city mapping, truck placement, and package placement with one finite exact rule.",
+      "reason_zh": "用一条有限精确规则定义全部地点、城市映射、卡车位置和包裹位置。",
+      "golden_evidence": [
+        "golden_problem.pddl:92-112: location and airport types",
+        "golden_problem.pddl:117-158: truck/package AT and all IN-CITY atoms"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "ambiguity",
+      "original_text": "Similarly, the positions pos2 to pos7 in cities cit2 to cit7 are each associated with one truck and three packages.",
+      "revised_text": "The preceding complete rule covers indices 2 through 7 as well.",
+      "reason_en": "Ties the remaining indices to the now-complete rule instead of an undefined analogy.",
+      "reason_zh": "将其余索引绑定到完整规则，而非未定义的类推。",
+      "golden_evidence": [
+        "golden_problem.pddl:121-158: all index-2 through index-7 placements and city mappings"
+      ]
+    },
+    {
+      "id": 4,
+      "category": "irregular_mapping",
+      "original_text": "These targets include obj61 reaching apt5, obj52 ending up at pos2, obj21 being delivered to apt5, and several other packages reaching specific airports or positions within or across the different cities. For example, obj13 should be at pos7, obj32 should arrive at apt5, and obj11 must be delivered to apt4.",
+      "revised_text": "These targets are obj61 reaching apt5, obj52 ending up at pos2, obj21 being delivered to apt5, obj53 remaining at pos5, obj63 reaching pos2, obj62 reaching apt2, obj22 reaching apt4, obj23 reaching apt2, obj31 reaching apt7, obj42 reaching pos5, obj13 reaching pos7, obj72 reaching pos5, obj71 reaching apt6, obj33 reaching apt4, obj12 reaching apt2, obj73 reaching apt4, obj32 reaching apt5, obj11 reaching apt4, obj43 reaching apt4, obj41 reaching apt6, and obj51 remaining at pos5.",
+      "reason_en": "Enumerates all 21 irregular goal pairs rather than giving examples.",
+      "reason_zh": "列举全部 21 个不规则目标对，而非仅给示例。",
+      "golden_evidence": [
+        "golden_problem.pddl:161-181: complete 21-atom goal conjunction"
+      ]
+    },
+    {
+      "id": 5,
+      "category": "contradiction",
+      "original_text": "to meet the specified destinations efficiently",
+      "revised_text": "to meet the specified destinations",
+      "reason_en": "Removes an unsupported optimization implication.",
+      "reason_zh": "删除无支持的优化含义。",
+      "golden_evidence": [
+        "golden_problem.pddl:160-182: destination conjunction with no metric"
+      ]
+    }
+  ],
+  "preserved": [
+    "Opening, valid truck/city/airport ranges, and index-1 example.",
+    "Ordered airplane initial locations.",
+    "Goal introduction and planning-oriented close, except the unsupported efficiency word."
+  ],
+  "verification": {
+    "ledger_rows": 174,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

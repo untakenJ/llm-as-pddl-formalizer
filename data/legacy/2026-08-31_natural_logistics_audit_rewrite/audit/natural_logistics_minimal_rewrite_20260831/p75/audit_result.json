@@ -1,0 +1,76 @@
+{
+  "case": "p75",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 95,
+    "init": 190,
+    "goal": 38,
+    "semantic_items": 323
+  },
+  "before": {
+    "objects_covered": 91,
+    "init_covered": 105,
+    "goal_covered": 38,
+    "missing": 0,
+    "ambiguous": 89,
+    "contradictory": 0,
+    "over_generated": 84
+  },
+  "after": {
+    "objects_covered": 95,
+    "init_covered": 190,
+    "goal_covered": 38,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "Initially, we have 39 packages labeled from obj11 to obj133, 13 trucks named tru1 to tru13, 13 cities known as cit1 to cit13, and several locations, both positional and airport, across these cities.",
+      "revised_text": "Initially, for each integer i from 1 through 13, there are exactly three packages whose names are formed by concatenating obj, i, and each of 1, 2, and 3; one truck named by concatenating tru and i; one city named by concatenating cit and i; and two locations named by concatenating pos and i and apt and i, with the latter also being an airport.",
+      "reason_en": "The package pseudo-range over-generated 84 labels, and the locations were neither finitely named nor typed.",
+      "reason_zh": "包裹伪范围会多生成 84 个标签，而且地点既未被有限地命名，也未明确类型。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 4-98: complete object declarations",
+        "golden_problem.pddl:lines 101-208: unary package, truck, city, location, airport, and airplane facts"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "Each city hosts a position and an airport, for example, pos1 and apt1 are within cit1.",
+      "revised_text": "For each integer i from 1 through 13, the position named by concatenating pos and i and the airport named by concatenating apt and the same i are both within the city named by concatenating cit and i.",
+      "reason_en": "One example did not establish the other 24 required in-city atoms.",
+      "reason_zh": "单个示例不能建立其余 24 个必需的地点—城市关系。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 265-290: all 26 in-city atoms"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "missing_rule",
+      "original_text": "Correspondingly, each truck, along with its respective packages, is located at a position within a city. For instance, tru1 and packages obj11, obj12, obj13 are located at pos1 within cit1.",
+      "revised_text": "For each integer i from 1 through 13, the truck named by concatenating tru and i and the three packages named by concatenating obj, i, and each of 1, 2, and 3 are all initially located at the position named by concatenating pos and the same i.",
+      "reason_en": "The vague correspondence plus one example did not define the other 48 initial truck/package locations.",
+      "reason_zh": "模糊的对应描述加一个示例，不能定义其余 48 个卡车/包裹初始位置。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 213-264: all 52 initial truck/package at atoms"
+      ]
+    }
+  ],
+  "preserved": [
+    "The opening sentence and both airplane sentences were preserved verbatim.",
+    "The complete two-paragraph goal wording, including all 38 goal pairs, was preserved verbatim."
+  ],
+  "verification": {
+    "ledger_rows": 323,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}
+

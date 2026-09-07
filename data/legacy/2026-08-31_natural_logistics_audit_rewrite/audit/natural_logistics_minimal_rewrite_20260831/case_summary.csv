@@ -1,0 +1,101 @@
+case,decision,objects,init,goal,semantic_items,before_objects_covered,before_init_covered,before_goal_covered,before_missing,before_ambiguous,before_contradictory,before_over_generated,change_points,categories,after_missing,after_ambiguous,after_contradictory,after_over_generated,notes
+p01,NO REWRITE REQUIRED,15,30,4,49,15,30,4,0,0,0,0,0,,0,0,0,0,p01/rewrite_notes.md
+p02,NO REWRITE REQUIRED,15,30,6,51,15,30,6,0,0,0,0,0,,0,0,0,0,p02/rewrite_notes.md
+p03,NO REWRITE REQUIRED,22,44,7,73,22,44,7,0,0,0,0,0,,0,0,0,0,p03/rewrite_notes.md
+p04,NO REWRITE REQUIRED,22,44,7,73,22,44,7,0,0,0,0,0,,0,0,0,0,p04/rewrite_notes.md
+p05,NO REWRITE REQUIRED,22,44,8,74,22,44,8,0,0,0,0,0,,0,0,0,0,p05/rewrite_notes.md
+p06,REWRITE REQUIRED,22,44,8,74,22,44,8,0,1,1,14,2,ambiguity; contradiction,0,0,0,0,p06/rewrite_notes.md
+p07,NO REWRITE REQUIRED,22,44,9,75,22,44,9,0,0,0,0,0,,0,0,0,0,p07/rewrite_notes.md
+p08,NO REWRITE REQUIRED,22,44,9,75,22,44,9,0,0,0,0,0,,0,0,0,0,p08/rewrite_notes.md
+p09,REWRITE REQUIRED,29,58,10,97,29,58,10,0,0,1,42,1,contradiction,0,0,0,0,p09/rewrite_notes.md
+p10,REWRITE REQUIRED,29,58,10,97,29,57,10,1,0,0,0,1,missing_rule,0,0,0,0,p10/rewrite_notes.md
+p11,REWRITE REQUIRED,29,58,11,98,29,51,11,0,7,0,0,1,missing_rule,0,0,0,0,p11/rewrite_notes.md
+p12,REWRITE REQUIRED,15,30,4,49,15,27,4,1,2,0,3,2,ambiguity; missing_rule,0,0,0,0,p12/rewrite_notes.md
+p13,NO REWRITE REQUIRED,29,58,11,98,29,58,11,0,0,0,0,0,,0,0,0,0,p13/rewrite_notes.md
+p14,NO REWRITE REQUIRED,29,58,12,99,29,58,12,0,0,0,0,0,,0,0,0,0,p14/rewrite_notes.md
+p15,NO REWRITE REQUIRED,29,58,12,99,29,58,12,0,0,0,0,0,,0,0,0,0,p15/rewrite_notes.md
+p16,REWRITE REQUIRED,37,74,13,124,37,61,13,0,10,3,3,2,ambiguity; contradiction,0,0,0,0,p16/rewrite_notes.md
+p17,NO REWRITE REQUIRED,37,74,13,124,37,74,13,0,0,0,0,0,,0,0,0,0,p17/rewrite_notes.md
+p18,REWRITE REQUIRED,37,74,14,125,37,71,14,0,4,1,4,3,ambiguity; contradiction,0,0,0,0,p18/rewrite_notes.md
+p19,REWRITE REQUIRED,37,74,14,125,37,70,14,4,0,0,0,1,missing_rule,0,0,0,0,p19/rewrite_notes.md
+p20,NO REWRITE REQUIRED,37,74,15,126,37,74,15,0,0,0,0,0,,0,0,0,0,p20/rewrite_notes.md
+p21,NO REWRITE REQUIRED,37,74,15,126,37,74,15,0,0,0,0,0,,0,0,0,0,p21/rewrite_notes.md
+p22,REWRITE REQUIRED,32,64,6,102,28,32,6,6,30,1,0,3,ambiguity; contradiction; missing_rule,0,0,0,0,p22/rewrite_notes.md
+p23,NO REWRITE REQUIRED,15,30,4,49,15,30,4,0,0,0,0,0,,0,0,0,0,p23/rewrite_notes.md
+p24,NO REWRITE REQUIRED,49,98,5,152,49,98,5,0,0,0,0,0,,0,0,0,0,p24/rewrite_notes.md
+p25,REWRITE REQUIRED,83,166,7,256,83,160,7,1,0,5,5,2,contradiction; missing_rule,0,0,0,0,p25/rewrite_notes.md
+p26,REWRITE REQUIRED,100,200,7,307,48,48,0,0,211,1,0,4,ambiguity; irregular_mapping; missing_rule,0,0,0,0,p26/rewrite_notes.md
+p27,REWRITE REQUIRED,44,88,16,148,44,84,16,4,0,1,35,2,contradiction; missing_rule,0,0,0,0,p27/rewrite_notes.md
+p28,REWRITE REQUIRED,44,88,16,148,44,82,16,0,7,0,35,2,ambiguity,0,0,0,0,p28/rewrite_notes.md
+p29,NO REWRITE REQUIRED,44,88,17,149,44,88,17,0,0,0,0,0,,0,0,0,0,p29/rewrite_notes.md
+p30,NO REWRITE REQUIRED,44,88,17,149,44,88,17,0,0,0,0,0,,0,0,0,0,p30/rewrite_notes.md
+p31,REWRITE REQUIRED,44,88,18,150,44,88,18,0,1,0,35,1,ambiguity,0,0,0,0,p31/rewrite_notes.md
+p32,NO REWRITE REQUIRED,44,88,18,150,44,88,18,0,0,0,0,0,,0,0,0,0,p32/rewrite_notes.md
+p33,REWRITE REQUIRED,51,102,19,172,51,102,19,0,1,1,42,1,contradiction,0,0,0,0,p33/rewrite_notes.md
+p34,NO REWRITE REQUIRED,15,30,5,50,15,30,5,0,0,0,0,0,,0,0,0,0,p34/rewrite_notes.md
+p35,REWRITE REQUIRED,51,102,19,172,51,102,19,0,0,1,0,1,contradiction,0,0,0,0,p35/rewrite_notes.md
+p36,NO REWRITE REQUIRED,51,102,20,173,51,102,20,0,0,0,0,0,,0,0,0,0,p36/rewrite_notes.md
+p37,REWRITE REQUIRED,51,102,20,173,51,95,20,0,7,0,0,1,ambiguity,0,0,0,0,p37/rewrite_notes.md
+p38,REWRITE REQUIRED,51,102,21,174,43,70,21,0,40,0,0,3,missing_rule,0,0,0,0,p38/rewrite_notes.md
+p39,REWRITE REQUIRED,51,102,21,174,38,46,6,22,55,1,42,5,ambiguity; contradiction; irregular_mapping; missing_rule,0,0,0,0,p39/rewrite_notes.md
+p40,NO REWRITE REQUIRED,58,116,22,196,58,116,22,0,0,0,0,0,,0,0,0,0,p40/rewrite_notes.md
+p41,NO REWRITE REQUIRED,58,116,22,196,58,116,22,0,0,0,0,0,,0,0,0,0,p41/rewrite_notes.md
+p42,REWRITE REQUIRED,58,116,23,197,43,69,23,1,61,0,2,4,ambiguity; contradiction; missing_rule,0,0,0,0,p42/rewrite_notes.md
+p43,REWRITE REQUIRED,58,116,23,197,58,100,23,0,16,0,0,2,ambiguity,0,0,0,0,p43/rewrite_notes.md
+p44,NO REWRITE REQUIRED,58,116,24,198,58,116,24,0,0,0,0,0,,0,0,0,0,p44/rewrite_notes.md
+p45,NO REWRITE REQUIRED,15,30,5,50,15,30,5,0,0,0,0,0,,0,0,0,0,p45/rewrite_notes.md
+p46,NO REWRITE REQUIRED,58,116,24,198,58,116,24,0,0,0,0,0,,0,0,0,0,p46/rewrite_notes.md
+p47,REWRITE REQUIRED,66,132,25,223,66,123,25,0,9,2,0,2,contradiction,0,0,0,0,p47/rewrite_notes.md
+p48,REWRITE REQUIRED,66,132,25,223,57,79,25,18,44,0,0,1,missing_rule,0,0,0,0,p48/rewrite_notes.md
+p49,NO REWRITE REQUIRED,66,132,26,224,66,132,26,0,0,0,0,0,,0,0,0,0,p49/rewrite_notes.md
+p50,NO REWRITE REQUIRED,66,132,26,224,66,132,26,0,0,0,0,0,,0,0,0,0,p50/rewrite_notes.md
+p51,REWRITE REQUIRED,66,132,27,225,60,90,27,0,48,0,115,3,ambiguity; missing_rule,0,0,0,0,p51/rewrite_notes.md
+p52,NO REWRITE REQUIRED,66,132,27,225,66,132,27,0,0,0,0,0,,0,0,0,0,p52/rewrite_notes.md
+p53,REWRITE REQUIRED,73,146,28,247,71,102,28,0,46,0,63,3,ambiguity; missing_rule,0,0,0,0,p53/rewrite_notes.md
+p54,REWRITE REQUIRED,73,146,28,247,71,77,28,7,64,0,63,4,ambiguity; missing_rule,0,0,0,0,p54/rewrite_notes.md
+p55,NO REWRITE REQUIRED,73,146,29,248,73,146,29,0,0,0,0,0,,0,0,0,0,p55/rewrite_notes.md
+p56,NO REWRITE REQUIRED,15,30,5,50,15,30,5,0,0,0,0,0,,0,0,0,0,p56/rewrite_notes.md
+p57,REWRITE REQUIRED,73,146,29,248,72,98,6,23,49,2,63,6,ambiguity; contradiction; irregular_mapping; missing_rule,0,0,0,0,p57/rewrite_notes.md
+p58,REWRITE REQUIRED,73,146,30,249,52,80,7,23,87,0,63,5,ambiguity; irregular_mapping; missing_rule,0,0,0,0,p58/rewrite_notes.md
+p59,NO REWRITE REQUIRED,73,146,30,249,73,146,30,0,0,0,0,0,,0,0,0,0,p59/rewrite_notes.md
+p60,NO REWRITE REQUIRED,80,160,31,271,80,160,31,0,0,0,0,0,,0,0,0,0,p60/rewrite_notes.md
+p61,REWRITE REQUIRED,80,160,31,271,80,160,31,0,0,0,70,1,ambiguity,0,0,0,0,p61/rewrite_notes.md
+p62,NO REWRITE REQUIRED,80,160,32,272,80,160,32,0,0,0,0,0,,0,0,0,0,p62/rewrite_notes.md
+p63,NO REWRITE REQUIRED,80,160,32,272,80,160,32,0,0,0,0,0,,0,0,0,0,p63/rewrite_notes.md
+p64,REWRITE REQUIRED,80,160,33,273,80,106,33,0,51,7,73,7,ambiguity; contradiction; missing_rule,0,0,0,0,p64/rewrite_notes.md
+p65,NO REWRITE REQUIRED,80,160,33,273,80,160,33,0,0,0,0,0,,0,0,0,0,p65/rewrite_notes.md
+p66,REWRITE REQUIRED,87,174,34,295,87,126,34,0,48,0,0,1,ambiguity,0,0,0,0,p66/rewrite_notes.md
+p67,NO REWRITE REQUIRED,15,30,6,51,15,30,6,0,0,0,0,0,,0,0,0,0,p67/rewrite_notes.md
+p68,REWRITE REQUIRED,87,174,34,295,62,89,7,27,110,0,78,6,ambiguity; contradiction; irregular_mapping; missing_rule,0,0,0,0,p68/rewrite_notes.md
+p69,REWRITE REQUIRED,87,174,35,296,47,63,5,54,127,0,78,7,ambiguity; irregular_mapping; missing_rule,0,0,0,0,p69/rewrite_notes.md
+p70,REWRITE REQUIRED,87,174,35,296,75,92,35,22,72,0,78,4,ambiguity; contradiction; missing_rule,0,0,0,0,p70/rewrite_notes.md
+p71,NO REWRITE REQUIRED,87,174,36,297,87,174,36,0,0,0,0,0,,0,0,0,0,p71/rewrite_notes.md
+p72,NO REWRITE REQUIRED,87,174,36,297,87,174,36,0,0,0,0,0,,0,0,0,0,p72/rewrite_notes.md
+p73,REWRITE REQUIRED,95,190,37,322,92,106,37,9,78,0,84,3,ambiguity; missing_rule,0,0,0,0,p73/rewrite_notes.md
+p74,NO REWRITE REQUIRED,95,190,37,322,95,190,37,0,0,0,0,0,,0,0,0,0,p74/rewrite_notes.md
+p75,REWRITE REQUIRED,95,190,38,323,91,105,38,0,89,0,84,3,ambiguity; missing_rule,0,0,0,0,p75/rewrite_notes.md
+p76,REWRITE REQUIRED,95,190,38,323,95,124,38,0,66,0,0,2,missing_rule,0,0,0,0,p76/rewrite_notes.md
+p77,REWRITE REQUIRED,95,190,39,324,75,96,3,36,114,0,14,3,irregular_mapping; missing_rule,0,0,0,0,p77/rewrite_notes.md
+p78,REWRITE REQUIRED,15,30,6,51,15,24,6,0,3,3,3,2,ambiguity; contradiction,0,0,0,0,p78/rewrite_notes.md
+p79,NO REWRITE REQUIRED,95,190,39,324,95,190,39,0,0,0,0,0,,0,0,0,0,p79/rewrite_notes.md
+p80,NO REWRITE REQUIRED,102,204,40,346,102,204,40,0,0,0,0,0,,0,0,0,0,p80/rewrite_notes.md
+p81,REWRITE REQUIRED,102,204,40,346,45,52,5,37,207,0,94,11,ambiguity; contradiction; irregular_mapping; missing_rule,0,0,0,0,p81/rewrite_notes.md
+p82,REWRITE REQUIRED,102,204,41,347,45,80,7,34,181,0,1,5,ambiguity; contradiction; irregular_mapping,0,0,0,0,p82/rewrite_notes.md
+p83,NO REWRITE REQUIRED,102,204,41,347,102,204,41,0,0,0,0,0,,0,0,0,0,p83/rewrite_notes.md
+p84,NO REWRITE REQUIRED,15,30,6,51,15,30,6,0,0,0,0,0,,0,0,0,0,p84/rewrite_notes.md
+p85,REWRITE REQUIRED,32,64,6,102,30,54,6,6,6,0,0,2,ambiguity; missing_rule,0,0,0,0,p85/rewrite_notes.md
+p86,NO REWRITE REQUIRED,113,226,17,356,113,226,17,0,0,0,0,0,,0,0,0,0,p86/rewrite_notes.md
+p87,REWRITE REQUIRED,48,96,8,152,46,57,8,24,17,0,0,4,ambiguity; irregular_mapping; missing_rule,0,0,0,0,p87/rewrite_notes.md
+p88,NO REWRITE REQUIRED,204,408,5,617,204,408,5,0,0,0,0,0,,0,0,0,0,p88/rewrite_notes.md
+p89,REWRITE REQUIRED,206,412,8,626,100,104,8,385,29,0,1,3,contradiction; irregular_mapping; missing_rule,0,0,0,0,p89/rewrite_notes.md
+p90,NO REWRITE REQUIRED,117,234,19,370,117,234,19,0,0,0,0,0,,0,0,0,0,p90/rewrite_notes.md
+p91,REWRITE REQUIRED,56,112,14,182,42,42,4,74,3,17,9,4,contradiction; irregular_mapping; missing_rule,0,0,0,0,p91/rewrite_notes.md
+p92,REWRITE REQUIRED,116,232,7,355,91,98,7,149,10,0,2,4,contradiction; irregular_mapping; missing_rule,0,0,0,0,p92/rewrite_notes.md
+p93,NO REWRITE REQUIRED,81,162,8,251,81,162,8,0,0,0,0,0,,0,0,0,0,p93/rewrite_notes.md
+p94,NO REWRITE REQUIRED,25,50,3,78,25,50,3,0,0,0,0,0,,0,0,0,0,p94/rewrite_notes.md
+p95,NO REWRITE REQUIRED,21,42,3,66,21,42,3,0,0,0,0,0,,0,0,0,0,p95/rewrite_notes.md
+p96,REWRITE REQUIRED,49,98,5,152,49,88,5,0,10,0,0,1,missing_rule,0,0,0,0,p96/rewrite_notes.md
+p97,REWRITE REQUIRED,26,52,7,85,26,50,7,2,0,0,0,1,missing_rule,0,0,0,0,p97/rewrite_notes.md
+p98,REWRITE REQUIRED,42,84,6,132,42,84,6,0,0,0,2,2,ambiguity; contradiction,0,0,0,0,p98/rewrite_notes.md
+p99,NO REWRITE REQUIRED,53,106,5,164,53,106,5,0,0,0,0,0,,0,0,0,0,p99/rewrite_notes.md
+p100,NO REWRITE REQUIRED,77,154,21,252,77,154,21,0,0,0,0,0,,0,0,0,0,p100/rewrite_notes.md

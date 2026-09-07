@@ -1,0 +1,68 @@
+{
+  "case": "p16",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 37,
+    "init": 74,
+    "goal": 13,
+    "semantic_items": 124
+  },
+  "before": {
+    "objects_covered": 37,
+    "init_covered": 61,
+    "goal_covered": 13,
+    "missing": 0,
+    "ambiguous": 10,
+    "contradictory": 3,
+    "over_generated": 3
+  },
+  "after": {
+    "objects_covered": 37,
+    "init_covered": 74,
+    "goal_covered": 13,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "contradiction",
+      "original_text": "holding packages obj31, obj32, and obj33",
+      "revised_text": "along with packages obj31, obj32, and obj33",
+      "reason_en": "The original implies truck containment; the golden init instead has three package-at-pos3 atoms and no matching in atoms.",
+      "reason_zh": "原文暗示包裹装在卡车内；黄金初始状态给出三个包裹位于 pos3 的原子，且没有相应的 in 原子。",
+      "golden_evidence": [
+        "golden_problem.pddl:14: (at obj31 pos3)",
+        "golden_problem.pddl:14: (at obj32 pos3)",
+        "golden_problem.pddl:14: (at obj33 pos3)",
+        "golden_domain.pddl:13-14: (at ?obj ?loc) and (in ?obj ?obj) are distinct predicates"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "ambiguity",
+      "original_text": "within a specific city (cit1, cit2, cit3, cit4, cit5)",
+      "revised_text": "within its same-numbered city (cit1, cit2, cit3, cit4, cit5)",
+      "reason_en": "The original lists five cities without defining which position-airport pair belongs to which city; the same-number rule uniquely yields exactly the ten golden in-city atoms.",
+      "reason_zh": "原文列出五座城市，却未定义位置—机场对与城市的对应关系；同编号规则唯一地产生恰好十个黄金 in-city 原子。",
+      "golden_evidence": [
+        "golden_problem.pddl:16-19: (in-city pos1 cit1) through (in-city apt5 cit5), matched by shared numeric index"
+      ]
+    }
+  ],
+  "preserved": [
+    "Complete object and unary-type inventories.",
+    "Both airplane placements and four already-clear truck/package co-location clauses.",
+    "All exact initial placements and city mappings that already had unique evidence.",
+    "The complete goal sentence and all unaffected wording."
+  ],
+  "verification": {
+    "ledger_rows": 124,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

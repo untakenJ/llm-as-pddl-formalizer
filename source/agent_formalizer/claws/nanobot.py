@@ -16,6 +16,8 @@ from agent_formalizer.claws.common import (
     tool_records,
 )
 from agent_formalizer.config import CONTAINER_WORKSPACE, NANOBOT_ENV_PATH
+from agent_formalizer.deadline_integration import ENVIRONMENT_KEYS, selected as logical_deadlines_selected
+from agent_formalizer.optional_evidence import inspect_json_analysis_fields
 from agent_formalizer.result_types import AgentResult
 
 NANOBOT_CONFIG_DIR = "/tmp/nanobot-pddl-benchmark"
@@ -125,6 +127,7 @@ NANOBOT_PROVIDER_MAP = {
     "gemini": "gemini",
     "google-vertex": "openai",
     "deepseek": "deepseek",
+    "logits": "custom",
     "dashscope": "dashscope",
 }
 
@@ -211,7 +214,7 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
                     },
                 }
             )
-        return {
+        config = {
             "agents": {
                 "defaults": {
                     "workspace": CONTAINER_WORKSPACE,
@@ -248,6 +251,11 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             },
             "channels": {},
         }
+        if logical_deadlines_selected(self):
+            # Native allowlist surface: propagate only the non-secret timing
+            # runtime, never the model credential or host environment.
+            config["tools"]["exec"]["allowedEnvKeys"] = list(ENVIRONMENT_KEYS)
+        return config
 
     def tool_policy(self) -> dict:
         return {
@@ -368,25 +376,85 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         session_id: str | None = None,
         session_file: str | None = None,
         container_name: str | None = None,
-    ) -> None:
+    ) -> dict:
         if not container_name:
-            return
+            return {
+                "status": "failed",
+                "collector": "nanobot-docker-copy",
+                "reason": "container_name_unavailable",
+                "files_copied": 0,
+            }
         output = dest / "sessions"
         output.mkdir(parents=True, exist_ok=True)
         source = session_file or self._session_path(agent_id)
+        destination = output / "nanobot.jsonl"
         try:
-            subprocess.run(
+            result = subprocess.run(
                 [
                     "docker",
                     "cp",
                     f"{container_name}:{source}",
-                    str(output / "nanobot.jsonl"),
+                    str(destination),
                 ],
                 capture_output=True,
                 timeout=30,
             )
-        except (OSError, subprocess.TimeoutExpired):
-            return
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {
+                "status": "failed",
+                "collector": "nanobot-docker-copy",
+                "error_type": type(exc).__name__,
+                "files_copied": 0,
+            }
+        if result.returncode != 0:
+            return {
+                "status": "failed",
+                "collector": "nanobot-docker-copy",
+                "copy_exit_code": result.returncode,
+                "files_copied": 0,
+            }
+        if not destination.is_file():
+            return {
+                "status": "missing",
+                "collector": "nanobot-docker-copy",
+                "copy_exit_code": result.returncode,
+                "files_copied": 0,
+            }
+        return {
+            "status": "persisted" if destination.stat().st_size else "empty",
+            "collector": "nanobot-docker-copy",
+            "copy_exit_code": result.returncode,
+            "files_copied": 1,
+        }
+
+    def analysis_evidence_spec(self) -> dict:
+        return {
+            "schema_version": 1,
+            "analysis_source": {
+                "kind": "native_session_message_fields",
+                "native_harness_exposure": "structured",
+                "absence_is_model_attributable": False,
+                "text_fields": ["reasoning_content", "thinking"],
+                "opaque_fields": [],
+            },
+            "raw_session": {
+                "adapter_persistence": "implemented",
+                "collector": "nanobot-docker-copy",
+            },
+            "normalized_analysis": {
+                "status": "not_implemented",
+                "known_loss_modes": [
+                    "reasoning_content_and_thinking_blocks_are_not_projected"
+                ],
+            },
+        }
+
+    def inspect_analysis_evidence(self, artifact_dir: Path) -> dict:
+        return inspect_json_analysis_fields(
+            sorted((artifact_dir / "sessions").glob("*.jsonl")),
+            artifact_dir=artifact_dir,
+            text_fields={"reasoning_content", "thinking"},
+        )
 
     def collect_usage(self, workspace, artifact_dir: Path) -> dict:
         """Copy and normalize Nanobot's own per-run token accounting."""

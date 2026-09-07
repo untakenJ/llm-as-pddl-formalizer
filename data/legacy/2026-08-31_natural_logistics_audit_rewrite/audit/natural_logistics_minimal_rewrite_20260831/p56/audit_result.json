@@ -1,0 +1,39 @@
+{
+  "case": "p56",
+  "status": "COMPLETE",
+  "decision": "NO REWRITE REQUIRED",
+  "counts": {
+    "objects": 15,
+    "init": 30,
+    "goal": 5,
+    "semantic_items": 50
+  },
+  "before": {
+    "objects_covered": 15,
+    "init_covered": 30,
+    "goal_covered": 5,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 15,
+    "init_covered": 30,
+    "goal_covered": 5,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [],
+  "preserved": [
+    "Entire English description preserved byte-for-byte"
+  ],
+  "verification": {
+    "ledger_rows": 50,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

@@ -1,0 +1,68 @@
+section,pddl_item,evidence,evidence_kind,unique,status,notes
+objects,PACKAGE5,package5,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,PACKAGE4,package4,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,PACKAGE3,package3,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,PACKAGE2,package2,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,PACKAGE1,package1,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY3,city3,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY2,city2,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY1,city1,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,TRUCK6,Truck6,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,TRUCK5,truck5,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,TRUCK4,truck4,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,TRUCK3,truck3,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,TRUCK2,truck2,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,TRUCK1,truck1,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,PLANE1,plane1,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY3-1,city3-1,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY2-1,city2-1,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY1-1,city1-1,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY3-2,city3-2,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY2-2,city2-2,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+objects,CITY1-2,city1-2,direct,true,covered,The label occurs in an explicit typed inventory or named placement.
+init,(PACKAGE PACKAGE5),package5,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(PACKAGE PACKAGE4),package4,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(PACKAGE PACKAGE3),package3,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(PACKAGE PACKAGE2),package2,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(PACKAGE PACKAGE1),package1,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(CITY CITY3),city3,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(CITY CITY2),city2,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(CITY CITY1),city1,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(TRUCK TRUCK6),Truck6,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(TRUCK TRUCK5),truck5,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(TRUCK TRUCK4),truck4,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(TRUCK TRUCK3),truck3,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(TRUCK TRUCK2),truck2,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(TRUCK TRUCK1),truck1,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(AIRPLANE PLANE1),plane1,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(LOCATION CITY3-1),city3-1,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(LOCATION CITY2-1),city2-1,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(LOCATION CITY1-1),city1-1,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(AIRPORT CITY3-2),city3-2,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(LOCATION CITY3-2),city3-2,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(AIRPORT CITY2-2),city2-2,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(LOCATION CITY2-2),city2-2,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(AIRPORT CITY1-2),city1-2,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(LOCATION CITY1-2),city1-2,direct,true,covered,The label occurs in the corresponding explicit typed statement.
+init,(IN-CITY CITY3-2 CITY3),"Each city has specific locations: city3 has city3-1 and city3-2 (which is also an airport), city2 has city2-1 and city2-2 (also an airport), and city1 has city1-1 and city1-2 (also an airport).",direct,true,covered,The city-specific location clause directly establishes this membership.
+init,(IN-CITY CITY3-1 CITY3),"Each city has specific locations: city3 has city3-1 and city3-2 (which is also an airport), city2 has city2-1 and city2-2 (also an airport), and city1 has city1-1 and city1-2 (also an airport).",direct,true,covered,The city-specific location clause directly establishes this membership.
+init,(IN-CITY CITY2-2 CITY2),"Each city has specific locations: city3 has city3-1 and city3-2 (which is also an airport), city2 has city2-1 and city2-2 (also an airport), and city1 has city1-1 and city1-2 (also an airport).",direct,true,covered,The city-specific location clause directly establishes this membership.
+init,(IN-CITY CITY2-1 CITY2),"Each city has specific locations: city3 has city3-1 and city3-2 (which is also an airport), city2 has city2-1 and city2-2 (also an airport), and city1 has city1-1 and city1-2 (also an airport).",direct,true,covered,The city-specific location clause directly establishes this membership.
+init,(IN-CITY CITY1-2 CITY1),"Each city has specific locations: city3 has city3-1 and city3-2 (which is also an airport), city2 has city2-1 and city2-2 (also an airport), and city1 has city1-1 and city1-2 (also an airport).",direct,true,covered,The city-specific location clause directly establishes this membership.
+init,(IN-CITY CITY1-1 CITY1),"Each city has specific locations: city3 has city3-1 and city3-2 (which is also an airport), city2 has city2-1 and city2-2 (also an airport), and city1 has city1-1 and city1-2 (also an airport).",direct,true,covered,The city-specific location clause directly establishes this membership.
+init,(AT PLANE1 CITY3-2),"The airplane, plane1, is stationed at the airport city3-2.",direct,true,covered,The airplane sentence directly states this initial airport.
+init,(AT TRUCK6 CITY3-1),"Truck6 is situated at city3-1, truck3 at the airport city3-2, truck5 at city2-1, truck1 at the airport city2-2, truck4 at city1-1, and truck2 at the airport city1-2.",direct,true,covered,The complete truck sentence directly states this mapping.
+init,(AT TRUCK5 CITY2-1),"Truck6 is situated at city3-1, truck3 at the airport city3-2, truck5 at city2-1, truck1 at the airport city2-2, truck4 at city1-1, and truck2 at the airport city1-2.",direct,true,covered,The complete truck sentence directly states this mapping.
+init,(AT TRUCK4 CITY1-1),"Truck6 is situated at city3-1, truck3 at the airport city3-2, truck5 at city2-1, truck1 at the airport city2-2, truck4 at city1-1, and truck2 at the airport city1-2.",direct,true,covered,The complete truck sentence directly states this mapping.
+init,(AT TRUCK3 CITY3-2),"Truck6 is situated at city3-1, truck3 at the airport city3-2, truck5 at city2-1, truck1 at the airport city2-2, truck4 at city1-1, and truck2 at the airport city1-2.",direct,true,covered,The complete truck sentence directly states this mapping.
+init,(AT TRUCK2 CITY1-2),"Truck6 is situated at city3-1, truck3 at the airport city3-2, truck5 at city2-1, truck1 at the airport city2-2, truck4 at city1-1, and truck2 at the airport city1-2.",direct,true,covered,The complete truck sentence directly states this mapping.
+init,(AT TRUCK1 CITY2-2),"Truck6 is situated at city3-1, truck3 at the airport city3-2, truck5 at city2-1, truck1 at the airport city2-2, truck4 at city1-1, and truck2 at the airport city1-2.",direct,true,covered,The complete truck sentence directly states this mapping.
+init,(AT PACKAGE5 CITY2-1),"As for the packages, package5 and package1 are located at city2-1, package4 is at city1-2, package3 is at city1-1, and package2 is at the airport city2-2.",direct,true,covered,The package sentence directly states this initial location.
+init,(AT PACKAGE4 CITY1-2),"As for the packages, package5 and package1 are located at city2-1, package4 is at city1-2, package3 is at city1-1, and package2 is at the airport city2-2.",direct,true,covered,The package sentence directly states this initial location.
+init,(AT PACKAGE3 CITY1-1),"As for the packages, package5 and package1 are located at city2-1, package4 is at city1-2, package3 is at city1-1, and package2 is at the airport city2-2.",direct,true,covered,The package sentence directly states this initial location.
+init,(AT PACKAGE2 CITY2-2),"As for the packages, package5 and package1 are located at city2-1, package4 is at city1-2, package3 is at city1-1, and package2 is at the airport city2-2.",direct,true,covered,The package sentence directly states this initial location.
+init,(AT PACKAGE1 CITY2-1),"As for the packages, package5 and package1 are located at city2-1, package4 is at city1-2, package3 is at city1-1, and package2 is at the airport city2-2.",direct,true,covered,The package sentence directly states this initial location.
+goal,(AT PACKAGE5 CITY3-2),"The objective of this game is to move package5 to the airport city3-2, deliver package4 to city2-1, and transport package3 to city2-1.",direct,true,covered,The objective sentence directly states this goal atom.
+goal,(AT PACKAGE4 CITY2-1),"The objective of this game is to move package5 to the airport city3-2, deliver package4 to city2-1, and transport package3 to city2-1.",direct,true,covered,The objective sentence directly states this goal atom.
+goal,(AT PACKAGE3 CITY2-1),"The objective of this game is to move package5 to the airport city3-2, deliver package4 to city2-1, and transport package3 to city2-1.",direct,true,covered,The objective sentence directly states this goal atom.
+

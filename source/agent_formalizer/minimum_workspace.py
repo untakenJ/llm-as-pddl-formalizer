@@ -8,6 +8,8 @@ the fixed-route model gateway and, when configured, the fixed solver gateway.
 
 from __future__ import annotations
 
+from agent_formalizer.external_calls.control import ToolControlMonitor, read_json
+
 import json
 import logging
 import shutil
@@ -21,7 +23,12 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from agent_formalizer.config import MODEL_GATEWAY_SCRIPT
+from agent_formalizer.config import (
+    LOGITS_BRIDGE_ENV_PATH,
+    LOGITS_GATEWAY_SCRIPT,
+    LOGITS_MODEL_ASSETS_ROOT,
+    MODEL_GATEWAY_SCRIPT,
+)
 from agent_formalizer.tools.solver import (
     GATEWAY_ENTRYPOINT as SOLVER_GATEWAY_ENTRYPOINT,
     SOLVER_DIR,
@@ -59,13 +66,16 @@ class MinimumHostWorkspace:
         adapter,
         *,
         artifact_dir: Path,
+        diagnostics_plan=None,
     ):
         self.instance_id = instance_id
         self.container_name = runtime_name  # logical name retained in shared evidence APIs
         self.adapter = adapter
         self.artifact_dir = Path(artifact_dir)
+        self.diagnostics_plan = diagnostics_plan
         self.workspace_dir = self.artifact_dir / "minimum_agent_workspace"
         self.model_gateway_port = _loopback_port()
+        self.logits_bridge_port = _loopback_port()
         self.solver_gateway_port: int | None = None
         self.model_gateway_origin = f"http://127.0.0.1:{self.model_gateway_port}"
         self.solver_gateway_origin: str | None = None
@@ -76,16 +86,18 @@ class MinimumHostWorkspace:
         self._secret_dir: Path | None = None
         self._control_dir: Path | None = None
         self._control_path: Path | None = None
+        self._cancel_path: Path | None = None
         self._gateway_monitor_stop: threading.Event | None = None
         self._gateway_monitor_thread: threading.Thread | None = None
         self._gateway_terminal_error: dict | None = None
         self._gateway_monitor_error: str | None = None
         self._gateway_action_step_limit_reached = False
         self._deadline_enforced = False
+        self._solver_control_monitor: ToolControlMonitor | None = None
 
     @property
     def runtime_api_base(self) -> str:
-        path = urlsplit(self.adapter.direct_api_base).path.rstrip("/")
+        path = urlsplit(self.adapter.api_base).path.rstrip("/")
         return self.model_gateway_origin + path
 
     def _fixed_environment(self) -> dict[str, str]:
@@ -107,6 +119,7 @@ class MinimumHostWorkspace:
         directory.chmod(0o700)
         self._control_dir = directory
         self._control_path = directory / "state.json"
+        self._cancel_path = directory / "benchmark-cancelled"
         return self._control_path
 
     def _spawn(
@@ -130,7 +143,7 @@ class MinimumHostWorkspace:
     @staticmethod
     def _wait_healthy(process: subprocess.Popen, url: str, label: str) -> None:
         last_error = "not ready"
-        for _ in range(100):
+        for _ in range(600):
             if process.poll() is not None:
                 raise RuntimeError(
                     f"{label} exited during startup with code {process.returncode}"
@@ -153,6 +166,7 @@ class MinimumHostWorkspace:
         control_path = self._stage_control()
         secret_path = self._stage_secret(secret)
         policy = gateway["transient_error_policy"]
+        transport = gateway.get("transport")
         env = {
             **self._fixed_environment(),
             "PDDL_GATEWAY_UPSTREAM_ORIGIN": gateway["upstream_origin"],
@@ -180,9 +194,67 @@ class MinimumHostWorkspace:
                 gateway.get("request_overrides", {}), sort_keys=True
             ),
             "PDDL_GATEWAY_CONTROL_FILE": str(control_path),
+            "PDDL_GATEWAY_BENCHMARK_CANCEL_FILE": str(self._cancel_path),
+            "PDDL_GATEWAY_RESPONSE_DELIVERY": gateway.get(
+                "response_delivery", "buffered_atomic"
+            ),
         }
+        if self.diagnostics_plan is not None:
+            try:
+                run_root = self.diagnostics_plan.run_root
+                execution_dir = self.diagnostics_plan.execution_dir
+                run_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+                execution_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+                run_root.chmod(0o700)
+                execution_dir.chmod(0o700)
+                runtime_config = {
+                    **self.diagnostics_plan.runtime_config,
+                    "event_path": str(execution_dir / "events.jsonl"),
+                    "manifest_path": str(
+                        execution_dir / "diagnostics_manifest.json"
+                    ),
+                    "run_budget_path": str(run_root / ".run-bytes"),
+                }
+                diagnostics_config_path = (
+                    control_path.parent / "infra-diagnostics.json"
+                )
+                diagnostics_config_path.write_text(
+                    json.dumps(runtime_config, indent=2, ensure_ascii=False) + "\n"
+                )
+                diagnostics_config_path.chmod(0o600)
+                env["PDDL_GATEWAY_INFRA_DIAGNOSTICS_CONFIG"] = str(
+                    diagnostics_config_path
+                )
+            except OSError as exc:
+                logger.warning(
+                    "Infrastructure diagnostics disabled for %s: %s",
+                    self.container_name,
+                    exc,
+                )
+        command = [sys.executable, str(MODEL_GATEWAY_SCRIPT)]
+        if transport == "logits-rest-openai-v1":
+            runtime_python = LOGITS_BRIDGE_ENV_PATH / "bin" / "python"
+            if not runtime_python.is_file() or not LOGITS_MODEL_ASSETS_ROOT.is_dir():
+                raise RuntimeError(
+                    "Logits gateway runtime is incomplete. Run: bash "
+                    "source/agent_formalizer/install_harnesses.sh logits"
+                )
+            env.update(
+                {
+                    "PDDL_LOGITS_MODEL": gateway["upstream_model"],
+                    "PDDL_LOGITS_BRIDGE_PORT": str(self.logits_bridge_port),
+                    "PDDL_LOGITS_ORIGIN": "https://api.logits.dev",
+                    "PDDL_LOGITS_MODEL_ASSETS_ROOT": str(LOGITS_MODEL_ASSETS_ROOT),
+                    "PDDL_LOGITS_LEDGER_PATH": str(
+                        self.artifact_dir / "minimum_logits_gateway.jsonl"
+                    ),
+                }
+            )
+            command = [str(runtime_python), str(LOGITS_GATEWAY_SCRIPT)]
+        elif transport is not None:
+            raise RuntimeError(f"Unsupported model gateway transport: {transport}")
         self._gateway_process = self._spawn(
-            [sys.executable, str(MODEL_GATEWAY_SCRIPT)],
+            command,
             env=env,
             log_stem="minimum_model_gateway",
         )
@@ -204,7 +276,24 @@ class MinimumHostWorkspace:
             **self._fixed_environment(),
             "PDDL_SOLVER_GATEWAY_PORT": str(self.solver_gateway_port),
             "PDDL_SOLVER_GATEWAY_LISTEN_HOST": "127.0.0.1",
+            "PDDL_SOLVER_UPSTREAM_BASE": self.adapter.solver_upstream_base(
+                containerized=False
+            ),
+            "PDDL_SOLVER_UPSTREAM_HEALTH_REQUIRED": (
+                "1" if self.adapter.solver_backend() == "local" else "0"
+            ),
         }
+        policy = self.adapter.resolved_config.raw["resolved"].get("solver_error_routing")
+        if policy:
+            if self._control_dir is None or self._cancel_path is None:
+                raise RuntimeError("solver recovery requires gateway control")
+            self._solver_control_monitor = ToolControlMonitor(self._control_dir / "solver.json")
+            env.update({
+                "PDDL_SOLVER_ERROR_ROUTING": policy,
+                "PDDL_SOLVER_CONTROL_FILE": str(self._solver_control_monitor.path),
+                "PDDL_SOLVER_CANCEL_FILE": str(self._cancel_path),
+                "PDDL_SOLVER_EVIDENCE_DIR": str(self.artifact_dir / "gateway" / "solver_calls"),
+            })
         self._solver_process = self._spawn(
             [sys.executable, str(entrypoint)],
             env=env,
@@ -215,6 +304,8 @@ class MinimumHostWorkspace:
             self.solver_gateway_origin + "/__benchmark__/health",
             "minimum solver gateway",
         )
+        if self._solver_control_monitor is not None and read_json(self._solver_control_monitor.path) is None:
+            raise RuntimeError("solver recovery control is not readable by the host monitor")
 
     def start(self) -> str:
         if self.adapter.network_mode != "model_only":
@@ -267,6 +358,8 @@ class MinimumHostWorkspace:
             try:
                 while not stop.is_set():
                     control = self._read_control()
+                    if self._solver_control_monitor is not None:
+                        control = self._solver_control_monitor.merge(control or {}, attempt_clock)
                     if control is None:
                         stop.wait(0.05)
                         continue
@@ -284,13 +377,36 @@ class MinimumHostWorkspace:
                         attempt_clock.resume()
                         paused = False
                     terminal = control.get("terminal_infra_error")
+                    if (
+                        terminal is None
+                        and self.adapter.resolved_config.model_response_delivery[
+                            "mode"
+                        ] == "native_streaming"
+                        and control.get("active_committed_streams", 0) > 0
+                        and self._gateway_process is not None
+                        and self._gateway_process.poll() is not None
+                    ):
+                        terminal = {
+                            "reason": "post_commit_stream_failure",
+                            "stream_error_type": "GatewaySidecarExit",
+                        }
                     if isinstance(terminal, dict):
                         self._gateway_terminal_error = dict(terminal)
+                        attempt_clock.cancel("gateway_terminal_infra_error")
                         return
                     if bool(control.get("action_step_limit_reached")):
                         self._gateway_action_step_limit_reached = True
+                        attempt_clock.cancel("action_step_limit")
                         return
+                    if self._solver_control_monitor is not None:
+                        if self._solver_control_monitor.acknowledge(paused=paused, clock=attempt_clock):
+                            self.enforce_agent_deadline()
+                            return
                     stop.wait(0.05)
+            except Exception:
+                logger.exception("External call monitor failed for %s", self.instance_id)
+                self._gateway_monitor_error = "external_call_control_failed"
+                attempt_clock.cancel("external_call_control_failed")
             finally:
                 if paused:
                     attempt_clock.resume()
@@ -318,6 +434,10 @@ class MinimumHostWorkspace:
             terminal = control.get("terminal_infra_error") if control else None
             if isinstance(terminal, dict):
                 self._gateway_terminal_error = dict(terminal)
+            elif self._solver_control_monitor is not None:
+                state = read_json(self._solver_control_monitor.path) or {}
+                if isinstance(state.get("terminal_infra_error"), dict):
+                    self._gateway_terminal_error = dict(state["terminal_infra_error"])
         return (
             dict(self._gateway_terminal_error)
             if self._gateway_terminal_error is not None
@@ -404,6 +524,7 @@ class MinimumHostWorkspace:
     def validate_action_step_guard(self) -> dict:
         stats = self.model_gateway_stats()
         expected_routing = self.adapter.resolved_config.model_error_routing
+        expected_delivery = self.adapter.resolved_config.model_response_delivery["mode"]
         expected_gateway_routing = {
             "max_retries": expected_routing["max_retries"],
             "backoff_seconds": expected_routing["backoff_seconds"],
@@ -417,10 +538,11 @@ class MinimumHostWorkspace:
             and stats.get("tool_calls") == 0
             and stats.get("action_steps") == 0
             and stats.get("transient_policy") == expected_gateway_routing
+            and stats.get("streaming_mode") == expected_delivery
         )
         return {
             "preset": "action-step-guard",
-            "version": 1,
+            "version": 2 if expected_delivery == "native_streaming" else 1,
             "status": "pass" if passed else "fail",
             "configured_model_call_limit": self.adapter.max_model_calls,
             "gateway_reported_model_call_limit": stats.get("max_model_calls"),
@@ -428,6 +550,8 @@ class MinimumHostWorkspace:
             "gateway_reported_action_step_limit": stats.get("max_action_steps"),
             "configured_transient_policy": expected_gateway_routing,
             "gateway_reported_transient_policy": stats.get("transient_policy", {}),
+            "configured_response_delivery": expected_delivery,
+            "gateway_reported_response_delivery": stats.get("streaming_mode"),
         }
 
     def validate_state_isolation(self) -> dict:
@@ -493,6 +617,11 @@ class MinimumHostWorkspace:
         # run_process_with_attempt_clock owns and kills the minimum runtime
         # subprocess.  Keep the gateway alive until its final ledger is read.
         self._deadline_enforced = True
+        if self._cancel_path is not None:
+            try:
+                self._cancel_path.write_text("benchmark_deadline\n")
+            except OSError:
+                pass
 
     def cleanup(self) -> None:
         self.stop_model_gateway_monitor()
@@ -516,3 +645,4 @@ class MinimumHostWorkspace:
         self._secret_dir = None
         self._control_dir = None
         self._control_path = None
+        self._cancel_path = None

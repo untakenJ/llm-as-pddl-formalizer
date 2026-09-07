@@ -1,0 +1,5 @@
+在 Logistics 游戏中，我有若干分布在不同城市和地点的包裹与交通工具。对于从 1 到 10 的每个整数 i，我恰好有三个包裹；其标签由 obj、i 的十进制表示以及 1、2、3 中的一个依次拼接而成。例如，i=1 时得到 obj11、obj12 和 obj13，而 i=10 时得到 obj101、obj102 和 obj103。同样，卡车标签为 tru1 到 tru10，飞机标签为 apn1 到 apn3。这些交通工具和包裹分布在不同城市中，每座城市都有一个普通位置和一个机场。城市标签为 cit1 到 cit10。对于从 1 到 10 的每个整数 i，pos{i} 和 apt{i} 都是 cit{i} 中的地点，且 apt{i} 是机场；其中每个 {i} 都替换为同一个十进制整数。
+
+当前，apn1 位于 apt1，apn2 位于 apt4，apn3 位于 apt8。对于从 1 到 10 的每个整数 i，tru{i} 位于 pos{i}，三个包裹 obj{i}1、obj{i}2 和 obj{i}3 也位于 pos{i}；其中每个 {i} 都替换为同一个十进制整数。例如，位于 pos1 的 tru1 与 obj11、obj12 和 obj13 在一起。
+
+我的目标是重新安排这些包裹，使特定包裹位于各自指定的地点。完整目标要求以下所有包裹位置同时成立：obj63 位于 pos6；obj93 位于 apt2；obj72 位于 pos8；obj92 位于 apt10；obj41 位于 apt4；obj73 位于 pos9；obj12 位于 apt10；obj43 位于 apt5；obj53 位于 pos5；obj11 位于 pos4；obj101 位于 pos7；obj52 位于 pos10；obj91 位于 apt4；obj81 位于 apt8；obj13 位于 pos10；obj71 位于 apt1；obj61 位于 apt2；obj33 位于 apt9；obj42 位于 pos6；obj103 位于 apt4；obj83 位于 pos2；obj23 位于 pos3；obj31 位于 apt6；obj21 位于 pos6；obj102 位于 pos6；obj22 位于 apt2；obj51 位于 pos5；obj62 位于 pos4；且 obj32 位于 apt2。我的目标是实现这一分布，以满足问题要求。

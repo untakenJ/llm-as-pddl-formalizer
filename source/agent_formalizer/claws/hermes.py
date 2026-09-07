@@ -17,6 +17,7 @@ from agent_formalizer.claws.common import (
     safe_component,
 )
 from agent_formalizer.config import CONTAINER_WORKSPACE, HERMES_ENV_PATH
+from agent_formalizer.optional_evidence import inspect_sqlite_analysis_fields
 from agent_formalizer.result_types import AgentResult
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ HERMES_PROVIDER_MAP = {
     "gemini": "gemini",
     "google-vertex": "custom",
     "deepseek": "deepseek",
+    "logits": "custom",
     "dashscope": "alibaba",
 }
 
@@ -316,6 +318,85 @@ class HermesAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             json.dumps(report, indent=2, ensure_ascii=False) + "\n"
         )
         return usage
+
+    def backup_session(
+        self,
+        agent_id: str,
+        dest: Path,
+        *,
+        session_id: str | None = None,
+        session_file: str | None = None,
+        container_name: str | None = None,
+    ) -> dict:
+        """Report the state copied by ``collect_usage`` without copying twice."""
+        sessions = dest / "sessions"
+        usage_path = sessions / "usage.json"
+        report: dict = {}
+        try:
+            value = json.loads(usage_path.read_text(encoding="utf-8"))
+            if isinstance(value, dict):
+                report = value
+        except (OSError, json.JSONDecodeError):
+            pass
+        state_present = (sessions / HERMES_STATE_DB).is_file()
+        raw_files = sum(
+            1
+            for root_name in ("raw", "raw_state")
+            for path in (sessions / root_name).glob("**/*")
+            if path.is_file()
+        )
+        if state_present:
+            status = "persisted"
+        elif raw_files:
+            status = "failed_partial"
+        elif report.get("status") == "error":
+            status = "failed"
+        else:
+            status = "missing"
+        return {
+            "status": status,
+            "collector": "hermes-wal-aware-usage-hook",
+            "canonical_state_database": state_present,
+            "raw_fallback_files": raw_files,
+            "state_snapshot_status": report.get("status", "unknown"),
+            "raw_sessions_copied": report.get("raw_sessions_copied"),
+            "raw_sessions_error_type_recorded": bool(
+                report.get("raw_sessions_error")
+            ),
+        }
+
+    def analysis_evidence_spec(self) -> dict:
+        return {
+            "schema_version": 1,
+            "analysis_source": {
+                "kind": "native_session_database_message_fields",
+                "native_harness_exposure": "structured",
+                "absence_is_model_attributable": False,
+                "text_fields": ["reasoning", "reasoning_content"],
+                "opaque_fields": [
+                    "reasoning_details",
+                    "codex_reasoning_items",
+                ],
+            },
+            "raw_session": {
+                "adapter_persistence": "implemented",
+                "collector": "hermes-wal-aware-usage-hook",
+            },
+            "normalized_analysis": {
+                "status": "not_implemented",
+                "known_loss_modes": [
+                    "state_database_messages_are_not_projected_to_agent_steps"
+                ],
+            },
+        }
+
+    def inspect_analysis_evidence(self, artifact_dir: Path) -> dict:
+        return inspect_sqlite_analysis_fields(
+            artifact_dir / "sessions" / HERMES_STATE_DB,
+            artifact_dir=artifact_dir,
+            text_fields={"reasoning", "reasoning_content"},
+            opaque_fields={"reasoning_details", "codex_reasoning_items"},
+        )
 
     def _snapshot_command(self, source_db: str, snapshot_db: str) -> str:
         """Build the in-container command for a WAL-aware SQLite backup."""

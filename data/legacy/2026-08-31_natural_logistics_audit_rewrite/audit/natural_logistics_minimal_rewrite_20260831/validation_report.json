@@ -1,0 +1,1307 @@
+{
+  "cases_checked": 100,
+  "valid": 100,
+  "invalid": 0,
+  "results": [
+    {
+      "case": "p01",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 15,
+        "init": 30,
+        "goal": 4,
+        "semantic_items": 49
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p02",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 15,
+        "init": 30,
+        "goal": 6,
+        "semantic_items": 51
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p03",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 22,
+        "init": 44,
+        "goal": 7,
+        "semantic_items": 73
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p04",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 22,
+        "init": 44,
+        "goal": 7,
+        "semantic_items": 73
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p05",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 22,
+        "init": 44,
+        "goal": 8,
+        "semantic_items": 74
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p06",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 22,
+        "init": 44,
+        "goal": 8,
+        "semantic_items": 74
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p07",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 22,
+        "init": 44,
+        "goal": 9,
+        "semantic_items": 75
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p08",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 22,
+        "init": 44,
+        "goal": 9,
+        "semantic_items": 75
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p09",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 29,
+        "init": 58,
+        "goal": 10,
+        "semantic_items": 97
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p10",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 29,
+        "init": 58,
+        "goal": 10,
+        "semantic_items": 97
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p11",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 29,
+        "init": 58,
+        "goal": 11,
+        "semantic_items": 98
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p12",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 15,
+        "init": 30,
+        "goal": 4,
+        "semantic_items": 49
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p13",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 29,
+        "init": 58,
+        "goal": 11,
+        "semantic_items": 98
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p14",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 29,
+        "init": 58,
+        "goal": 12,
+        "semantic_items": 99
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p15",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 29,
+        "init": 58,
+        "goal": 12,
+        "semantic_items": 99
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p16",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 37,
+        "init": 74,
+        "goal": 13,
+        "semantic_items": 124
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p17",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 37,
+        "init": 74,
+        "goal": 13,
+        "semantic_items": 124
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p18",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 37,
+        "init": 74,
+        "goal": 14,
+        "semantic_items": 125
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p19",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 37,
+        "init": 74,
+        "goal": 14,
+        "semantic_items": 125
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p20",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 37,
+        "init": 74,
+        "goal": 15,
+        "semantic_items": 126
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p21",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 37,
+        "init": 74,
+        "goal": 15,
+        "semantic_items": 126
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p22",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 32,
+        "init": 64,
+        "goal": 6,
+        "semantic_items": 102
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p23",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 15,
+        "init": 30,
+        "goal": 4,
+        "semantic_items": 49
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p24",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 49,
+        "init": 98,
+        "goal": 5,
+        "semantic_items": 152
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p25",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 83,
+        "init": 166,
+        "goal": 7,
+        "semantic_items": 256
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p26",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 100,
+        "init": 200,
+        "goal": 7,
+        "semantic_items": 307
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p27",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 44,
+        "init": 88,
+        "goal": 16,
+        "semantic_items": 148
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p28",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 44,
+        "init": 88,
+        "goal": 16,
+        "semantic_items": 148
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p29",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 44,
+        "init": 88,
+        "goal": 17,
+        "semantic_items": 149
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p30",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 44,
+        "init": 88,
+        "goal": 17,
+        "semantic_items": 149
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p31",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 44,
+        "init": 88,
+        "goal": 18,
+        "semantic_items": 150
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p32",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 44,
+        "init": 88,
+        "goal": 18,
+        "semantic_items": 150
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p33",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 51,
+        "init": 102,
+        "goal": 19,
+        "semantic_items": 172
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p34",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 15,
+        "init": 30,
+        "goal": 5,
+        "semantic_items": 50
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p35",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 51,
+        "init": 102,
+        "goal": 19,
+        "semantic_items": 172
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p36",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 51,
+        "init": 102,
+        "goal": 20,
+        "semantic_items": 173
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p37",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 51,
+        "init": 102,
+        "goal": 20,
+        "semantic_items": 173
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p38",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 51,
+        "init": 102,
+        "goal": 21,
+        "semantic_items": 174
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p39",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 51,
+        "init": 102,
+        "goal": 21,
+        "semantic_items": 174
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p40",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 58,
+        "init": 116,
+        "goal": 22,
+        "semantic_items": 196
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p41",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 58,
+        "init": 116,
+        "goal": 22,
+        "semantic_items": 196
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p42",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 58,
+        "init": 116,
+        "goal": 23,
+        "semantic_items": 197
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p43",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 58,
+        "init": 116,
+        "goal": 23,
+        "semantic_items": 197
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p44",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 58,
+        "init": 116,
+        "goal": 24,
+        "semantic_items": 198
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p45",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 15,
+        "init": 30,
+        "goal": 5,
+        "semantic_items": 50
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p46",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 58,
+        "init": 116,
+        "goal": 24,
+        "semantic_items": 198
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p47",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 66,
+        "init": 132,
+        "goal": 25,
+        "semantic_items": 223
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p48",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 66,
+        "init": 132,
+        "goal": 25,
+        "semantic_items": 223
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p49",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 66,
+        "init": 132,
+        "goal": 26,
+        "semantic_items": 224
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p50",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 66,
+        "init": 132,
+        "goal": 26,
+        "semantic_items": 224
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p51",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 66,
+        "init": 132,
+        "goal": 27,
+        "semantic_items": 225
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p52",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 66,
+        "init": 132,
+        "goal": 27,
+        "semantic_items": 225
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p53",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 73,
+        "init": 146,
+        "goal": 28,
+        "semantic_items": 247
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p54",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 73,
+        "init": 146,
+        "goal": 28,
+        "semantic_items": 247
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p55",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 73,
+        "init": 146,
+        "goal": 29,
+        "semantic_items": 248
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p56",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 15,
+        "init": 30,
+        "goal": 5,
+        "semantic_items": 50
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p57",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 73,
+        "init": 146,
+        "goal": 29,
+        "semantic_items": 248
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p58",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 73,
+        "init": 146,
+        "goal": 30,
+        "semantic_items": 249
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p59",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 73,
+        "init": 146,
+        "goal": 30,
+        "semantic_items": 249
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p60",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 80,
+        "init": 160,
+        "goal": 31,
+        "semantic_items": 271
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p61",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 80,
+        "init": 160,
+        "goal": 31,
+        "semantic_items": 271
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p62",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 80,
+        "init": 160,
+        "goal": 32,
+        "semantic_items": 272
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p63",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 80,
+        "init": 160,
+        "goal": 32,
+        "semantic_items": 272
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p64",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 80,
+        "init": 160,
+        "goal": 33,
+        "semantic_items": 273
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p65",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 80,
+        "init": 160,
+        "goal": 33,
+        "semantic_items": 273
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p66",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 87,
+        "init": 174,
+        "goal": 34,
+        "semantic_items": 295
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p67",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 15,
+        "init": 30,
+        "goal": 6,
+        "semantic_items": 51
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p68",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 87,
+        "init": 174,
+        "goal": 34,
+        "semantic_items": 295
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p69",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 87,
+        "init": 174,
+        "goal": 35,
+        "semantic_items": 296
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p70",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 87,
+        "init": 174,
+        "goal": 35,
+        "semantic_items": 296
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p71",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 87,
+        "init": 174,
+        "goal": 36,
+        "semantic_items": 297
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p72",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 87,
+        "init": 174,
+        "goal": 36,
+        "semantic_items": 297
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p73",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 95,
+        "init": 190,
+        "goal": 37,
+        "semantic_items": 322
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p74",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 95,
+        "init": 190,
+        "goal": 37,
+        "semantic_items": 322
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p75",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 95,
+        "init": 190,
+        "goal": 38,
+        "semantic_items": 323
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p76",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 95,
+        "init": 190,
+        "goal": 38,
+        "semantic_items": 323
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p77",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 95,
+        "init": 190,
+        "goal": 39,
+        "semantic_items": 324
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p78",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 15,
+        "init": 30,
+        "goal": 6,
+        "semantic_items": 51
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p79",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 95,
+        "init": 190,
+        "goal": 39,
+        "semantic_items": 324
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p80",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 102,
+        "init": 204,
+        "goal": 40,
+        "semantic_items": 346
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p81",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 102,
+        "init": 204,
+        "goal": 40,
+        "semantic_items": 346
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p82",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 102,
+        "init": 204,
+        "goal": 41,
+        "semantic_items": 347
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p83",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 102,
+        "init": 204,
+        "goal": 41,
+        "semantic_items": 347
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p84",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 15,
+        "init": 30,
+        "goal": 6,
+        "semantic_items": 51
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p85",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 32,
+        "init": 64,
+        "goal": 6,
+        "semantic_items": 102
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p86",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 113,
+        "init": 226,
+        "goal": 17,
+        "semantic_items": 356
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p87",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 48,
+        "init": 96,
+        "goal": 8,
+        "semantic_items": 152
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p88",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 204,
+        "init": 408,
+        "goal": 5,
+        "semantic_items": 617
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p89",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 206,
+        "init": 412,
+        "goal": 8,
+        "semantic_items": 626
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p90",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 117,
+        "init": 234,
+        "goal": 19,
+        "semantic_items": 370
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p91",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 56,
+        "init": 112,
+        "goal": 14,
+        "semantic_items": 182
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p92",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 116,
+        "init": 232,
+        "goal": 7,
+        "semantic_items": 355
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p93",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 81,
+        "init": 162,
+        "goal": 8,
+        "semantic_items": 251
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p94",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 25,
+        "init": 50,
+        "goal": 3,
+        "semantic_items": 78
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p95",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 21,
+        "init": 42,
+        "goal": 3,
+        "semantic_items": 66
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p96",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 49,
+        "init": 98,
+        "goal": 5,
+        "semantic_items": 152
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p97",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 26,
+        "init": 52,
+        "goal": 7,
+        "semantic_items": 85
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p98",
+      "valid": true,
+      "decision": "REWRITE REQUIRED",
+      "counts": {
+        "objects": 42,
+        "init": 84,
+        "goal": 6,
+        "semantic_items": 132
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p99",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 53,
+        "init": 106,
+        "goal": 5,
+        "semantic_items": 164
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "case": "p100",
+      "valid": true,
+      "decision": "NO REWRITE REQUIRED",
+      "counts": {
+        "objects": 77,
+        "init": 154,
+        "goal": 21,
+        "semantic_items": 252
+      },
+      "errors": [],
+      "warnings": []
+    }
+  ]
+}

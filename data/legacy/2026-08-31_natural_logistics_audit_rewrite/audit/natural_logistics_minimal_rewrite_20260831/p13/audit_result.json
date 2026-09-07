@@ -1,0 +1,41 @@
+{
+  "case": "p13",
+  "status": "COMPLETE",
+  "decision": "NO REWRITE REQUIRED",
+  "counts": {
+    "objects": 29,
+    "init": 58,
+    "goal": 11,
+    "semantic_items": 98
+  },
+  "before": {
+    "objects_covered": 29,
+    "init_covered": 58,
+    "goal_covered": 11,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 29,
+    "init_covered": 58,
+    "goal_covered": 11,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [],
+  "preserved": [
+    "Complete object and unary-type inventories.",
+    "All exact initial placements and city mappings that already had unique evidence.",
+    "The complete goal sentence and all unaffected wording."
+  ],
+  "verification": {
+    "ledger_rows": 98,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

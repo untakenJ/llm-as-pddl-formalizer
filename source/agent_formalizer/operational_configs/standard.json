@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "config_id": "standard-infra-diagnostics-v1",
+  "credential": {
+    "registry_file": "source/agent_formalizer/credential_profiles.json",
+    "secrets_env_file": "_private/.env"
+  },
+  "scheduling": {
+    "formalizer_workers": 1,
+    "solver_workers": 1,
+    "val_workers": 1,
+    "resume": true
+  },
+  "evidence_collection": {
+    "agent_trace": true
+  },
+  "infra_diagnostics": {
+    "enabled": true,
+    "capture": {
+      "transport_errors": true,
+      "gateway_internal_errors": true
+    },
+    "provider_diagnostics": {
+      "mode": "structured",
+      "capture_success_metadata": false,
+      "handlers": {}
+    },
+    "storage": {
+      "root": ".cache/infra-diagnostics",
+      "retention_days": 7,
+      "max_event_bytes": 65536,
+      "max_run_bytes": 268435456
+    }
+  },
+  "results": {
+    "root": "output"
+  }
+}

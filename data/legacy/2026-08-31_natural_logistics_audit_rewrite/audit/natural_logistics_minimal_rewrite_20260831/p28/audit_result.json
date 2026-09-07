@@ -1,0 +1,64 @@
+{
+  "case": "p28",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 44,
+    "init": 88,
+    "goal": 16,
+    "semantic_items": 148
+  },
+  "before": {
+    "objects_covered": 44,
+    "init_covered": 82,
+    "goal_covered": 16,
+    "missing": 0,
+    "ambiguous": 7,
+    "contradictory": 0,
+    "over_generated": 35
+  },
+  "after": {
+    "objects_covered": 44,
+    "init_covered": 88,
+    "goal_covered": 16,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "There are packages labeled obj11 through obj63 and trucks labeled tru1 through tru6.",
+      "revised_text": "There are packages labeled obj11, obj12, obj13, obj21, obj22, obj23, obj31, obj32, obj33, obj41, obj42, obj43, obj51, obj52, obj53, obj61, obj62, and obj63, and trucks labeled tru1 through tru6.",
+      "reason_en": "The pseudo-range can generate 35 non-golden identifiers; the exact list cannot.",
+      "reason_zh": "伪范围可能生成 35 个非黄金标识符；精确列表不会。",
+      "golden_evidence": [
+        "golden_problem.pddl:8-10,16-18,23-25,30-32,37-39,45-47: exactly 18 package objects",
+        "golden_problem.pddl:50-67: exactly 18 package type atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "ambiguity",
+      "original_text": "Each city, cit1 through cit6, has a position (pos1 through pos6) and an airport (apt1 through apt6).",
+      "revised_text": "Each city, cit1 through cit6, has its same-numbered position (pos1 through pos6) and its same-numbered airport (apt1 through apt6).",
+      "reason_en": "The two same-numbered modifiers uniquely pair every position and airport with its city.",
+      "reason_zh": "两处“同编号”修饰语将每个位置和机场与其城市唯一配对。",
+      "golden_evidence": [
+        "golden_problem.pddl:126-137: (in-city pos1 cit1), (in-city apt1 cit1), ..., (in-city apt6 cit6)"
+      ]
+    }
+  ],
+  "preserved": [
+    "The opening frame, truck range, airplane placements, and sentence order.",
+    "All six initial co-location groups, all 16 goals, and all unaffected wording."
+  ],
+  "verification": {
+    "ledger_rows": 148,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

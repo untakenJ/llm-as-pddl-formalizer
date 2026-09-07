@@ -1,0 +1,65 @@
+{
+  "case": "p12",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 15,
+    "init": 30,
+    "goal": 4,
+    "semantic_items": 49
+  },
+  "before": {
+    "objects_covered": 15,
+    "init_covered": 27,
+    "goal_covered": 4,
+    "missing": 1,
+    "ambiguous": 2,
+    "contradictory": 0,
+    "over_generated": 3
+  },
+  "after": {
+    "objects_covered": 15,
+    "init_covered": 30,
+    "goal_covered": 4,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "These are part of city cit1.",
+      "revised_text": "Position pos1 is part of city cit1.",
+      "reason_en": "Names pos1 as the subject of the required city-membership fact and removes three extra package-city implications.",
+      "reason_zh": "明确以 pos1 作为所需城市隶属事实的主语，并消除三个额外的包裹—城市暗示。",
+      "golden_evidence": [
+        "golden_problem.pddl:9: (in-city pos1 cit1)"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "",
+      "revised_text": "Both airports are locations.",
+      "reason_en": "The immediately preceding sentence defines exactly apt1 and apt2 as the two airports, so this rule expands to exactly two location atoms.",
+      "reason_zh": "紧邻前句恰好将 apt1 和 apt2 定义为两个机场，因此该规则恰好展开为两个地点原子。",
+      "golden_evidence": [
+        "golden_problem.pddl:6: (location apt1) and (location apt2)"
+      ]
+    }
+  ],
+  "preserved": [
+    "All package, truck, airport, airplane, and initial-location wording outside the changed pronoun.",
+    "The direct pos2/cit2 and airport/city mappings.",
+    "The full four-pair goal and closing sentence."
+  ],
+  "verification": {
+    "ledger_rows": 49,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}
+

@@ -1,0 +1,1 @@
+在 Logistics 游戏中，初始设置如下：两个包裹 obj11 和 obj12 当前位于位置 pos1，另一个包裹 obj13 也位于 pos1。位置 pos1 属于城市 cit1。与此同时，包裹 obj21、obj22 和 obj23 位于城市 cit2 的位置 pos2。我们有两辆卡车：tru1 位于 pos1，tru2 位于 pos2。此外，还有两个机场：城市 cit1 中的 apt1 和城市 cit2 中的 apt2；飞机 apn1 停在 apt2。这两个机场也都是地点。我们的目标是将 obj12 移至机场 apt2，将 obj13 移至机场 apt1，将 obj21 移至机场 apt2，并将 obj11 移至位置 pos2。游戏要求策略性地移动卡车和飞机，以便在给定城市和地点内实现这些目标。

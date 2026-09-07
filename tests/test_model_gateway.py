@@ -83,6 +83,8 @@ class ModelGatewayTests(unittest.TestCase):
         max_action_steps: int = 20,
         max_model_calls: int | None = None,
         request_overrides: dict | None = None,
+        provider: str = "openai",
+        reasoning_dir: Path | None = None,
     ) -> dict[str, str]:
         if max_model_calls is None:
             max_model_calls = min(10, max_action_steps)
@@ -94,6 +96,7 @@ class ModelGatewayTests(unittest.TestCase):
             "PDDL_GATEWAY_PORT": str(gateway_port),
             "PDDL_GATEWAY_API_KEY_FILE": str(key_file),
             "PDDL_GATEWAY_AUTH_MODE": "bearer",
+            "PDDL_GATEWAY_PROVIDER": provider,
             "PDDL_GATEWAY_ALLOWED_MODELS": json.dumps(["gpt-test"]),
             "PDDL_GATEWAY_ALLOWED_PATH_PREFIXES": json.dumps(["/v1"]),
             "PDDL_GATEWAY_MAX_TRANSIENT_RETRIES": str(max_retries),
@@ -104,6 +107,13 @@ class ModelGatewayTests(unittest.TestCase):
                 request_overrides or {}
             ),
         }
+        if reasoning_dir is not None:
+            env["PDDL_GATEWAY_REASONING_PATH"] = str(
+                reasoning_dir / "provider_reasoning.jsonl"
+            )
+            env["PDDL_GATEWAY_REASONING_STATUS_PATH"] = str(
+                reasoning_dir / "reasoning_capture_status.json"
+            )
         env.pop("PDDL_GATEWAY_API_KEY", None)
         return env
 
@@ -555,6 +565,180 @@ class ModelGatewayTests(unittest.TestCase):
                 self.assertEqual(
                     status["ledger"][0]["rejection"], "action_step_limit"
                 )
+            finally:
+                process.terminate()
+                process.wait(timeout=10)
+                if process.stderr:
+                    process.stderr.close()
+                upstream.shutdown()
+                upstream.server_close()
+                thread.join(timeout=5)
+
+    def test_deepseek_reasoning_is_kept_even_when_response_is_not_delivered(self):
+        try:
+            upstream = ThreadingHTTPServer(("127.0.0.1", 0), ScriptedUpstreamHandler)
+        except PermissionError as exc:
+            self.skipTest(f"sandbox forbids local sockets: {exc}")
+        response = self._tool_response(2)
+        response["choices"][0]["message"]["reasoning_content"] = (
+            "reasoning returned before rejected tool batch"
+        )
+        ScriptedUpstreamHandler.calls = 0
+        ScriptedUpstreamHandler.responses = [(200, response, {})]
+        thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        thread.start()
+        gateway_port = free_port()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            key_file = root / "gateway-key"
+            key_file.write_text("gateway-test-secret")
+            reasoning_dir = root / "reasoning"
+            process = subprocess.Popen(
+                [os.sys.executable, str(MODEL_GATEWAY_SCRIPT)],
+                env=self._gateway_env(
+                    upstream_port=upstream.server_port,
+                    gateway_port=gateway_port,
+                    key_file=key_file,
+                    max_action_steps=2,
+                    provider="deepseek",
+                    reasoning_dir=reasoning_dir,
+                ),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            base = f"http://127.0.0.1:{gateway_port}"
+            try:
+                self._wait_for_gateway(base, process)
+                request = urllib.request.Request(
+                    f"{base}/v1/chat/completions",
+                    data=json.dumps({"model": "gpt-test"}).encode(),
+                    method="POST",
+                    headers={"Content-Type": "application/json"},
+                )
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(request, timeout=5)
+                self.assertEqual(caught.exception.code, 429)
+
+                rows = [
+                    json.loads(line)
+                    for line in (reasoning_dir / "provider_reasoning.jsonl")
+                    .read_text()
+                    .splitlines()
+                ]
+                status = json.loads(
+                    urllib.request.urlopen(
+                        f"{base}/__benchmark__/ledger", timeout=5
+                    ).read()
+                )
+                capture_status = json.loads(
+                    (reasoning_dir / "reasoning_capture_status.json").read_text()
+                )
+                self.assertEqual(
+                    rows[0]["text"],
+                    "reasoning returned before rejected tool batch",
+                )
+                self.assertEqual(
+                    rows[-1]["downstream_state"],
+                    "not_delivered_action_budget",
+                )
+                self.assertEqual(
+                    status["ledger"][0]["reasoning_fragments_captured"], 1
+                )
+                self.assertEqual(
+                    status["reasoning_capture"]["fragments_captured"], 1
+                )
+                self.assertEqual(capture_status["write_errors"], 0)
+            finally:
+                process.terminate()
+                process.wait(timeout=10)
+                if process.stderr:
+                    process.stderr.close()
+                upstream.shutdown()
+                upstream.server_close()
+                thread.join(timeout=5)
+
+    def test_gemini_native_thought_is_captured_without_changing_response(self):
+        try:
+            upstream = ThreadingHTTPServer(("127.0.0.1", 0), ScriptedUpstreamHandler)
+        except PermissionError as exc:
+            self.skipTest(f"sandbox forbids local sockets: {exc}")
+        response = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"thought": True, "text": "gemini readable thought"},
+                            {"text": "gemini final answer"},
+                            {"thoughtSignature": "opaque-signature"},
+                        ]
+                    }
+                }
+            ]
+        }
+        ScriptedUpstreamHandler.calls = 0
+        ScriptedUpstreamHandler.responses = [(200, response, {})]
+        thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        thread.start()
+        gateway_port = free_port()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            key_file = root / "gateway-key"
+            key_file.write_text("gateway-test-secret")
+            reasoning_dir = root / "reasoning"
+            process = subprocess.Popen(
+                [os.sys.executable, str(MODEL_GATEWAY_SCRIPT)],
+                env=self._gateway_env(
+                    upstream_port=upstream.server_port,
+                    gateway_port=gateway_port,
+                    key_file=key_file,
+                    provider="gemini",
+                    reasoning_dir=reasoning_dir,
+                ),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            base = f"http://127.0.0.1:{gateway_port}"
+            try:
+                self._wait_for_gateway(base, process)
+                request = urllib.request.Request(
+                    f"{base}/v1/models/gpt-test:generateContent",
+                    data=json.dumps({"contents": []}).encode(),
+                    method="POST",
+                    headers={"Content-Type": "application/json"},
+                )
+                delivered = json.loads(urllib.request.urlopen(request, timeout=5).read())
+                self.assertEqual(delivered, response)
+
+                # The response body can reach the client before the handler's
+                # final evidence/ledger writes. Wait for completion, not an
+                # arbitrary sleep or a partially appended reasoning file.
+                for _ in range(100):
+                    with urllib.request.urlopen(f"{base}/__benchmark__/ledger", timeout=2) as reply:
+                        finalized = json.load(reply).get("ledger", [])
+                    if finalized:
+                        break
+                    time.sleep(0.01)
+                else:
+                    self.fail("gateway did not finalize the response ledger")
+
+                rows = [
+                    json.loads(line)
+                    for line in (reasoning_dir / "provider_reasoning.jsonl")
+                    .read_text()
+                    .splitlines()
+                ]
+                fragments = [
+                    row for row in rows if row["record_type"] == "reasoning_fragment"
+                ]
+                self.assertEqual(
+                    [row["text"] for row in fragments],
+                    ["gemini readable thought"],
+                )
+                self.assertNotIn("gemini final answer", json.dumps(fragments))
+                self.assertNotIn("opaque-signature", json.dumps(fragments))
+                self.assertEqual(rows[-1]["downstream_state"], "forwarded_complete")
             finally:
                 process.terminate()
                 process.wait(timeout=10)

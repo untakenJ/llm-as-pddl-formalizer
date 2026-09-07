@@ -1,0 +1,11 @@
+{
+  "case": "p84",
+  "status": "COMPLETE",
+  "decision": "NO REWRITE REQUIRED",
+  "counts": {"objects": 15, "init": 30, "goal": 6, "semantic_items": 51},
+  "before": {"objects_covered": 15, "init_covered": 30, "goal_covered": 6, "missing": 0, "ambiguous": 0, "contradictory": 0, "over_generated": 0},
+  "after": {"objects_covered": 15, "init_covered": 30, "goal_covered": 6, "missing": 0, "ambiguous": 0, "contradictory": 0, "over_generated": 0},
+  "changes": [],
+  "preserved": ["The complete original English description was preserved byte-for-byte.", "All exact object/type facts, initial positions, city mappings, and six goal pairs."],
+  "verification": {"ledger_rows": 51, "all_items_covered": true, "all_correspondences_unique": true, "no_over_generation": true}
+}

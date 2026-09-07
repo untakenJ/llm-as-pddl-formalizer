@@ -31,8 +31,19 @@ CACHE_DIR = ROOT_DIR / ".cache"
 DEFAULT_SECRETS_ENV_FILE = ROOT_DIR / "_private" / ".env"
 MODEL_GATEWAY_SCRIPT = PACKAGE_DIR / "model_gateway.py"
 MODEL_GATEWAY_CONTAINER_PATH = "/opt/pddl-benchmark/model_gateway.py"
+PROVIDER_REASONING_MODULE = PACKAGE_DIR / "provider_reasoning.py"
+PROVIDER_REASONING_CONTAINER_PATH = "/opt/pddl-benchmark/provider_reasoning.py"
+INFRA_DIAGNOSTICS_PACKAGE = PACKAGE_DIR / "infra_diagnostics"
+INFRA_DIAGNOSTICS_CONTAINER_PATH = "/opt/pddl-benchmark/infra_diagnostics"
+EXTERNAL_CALLS_PACKAGE = PACKAGE_DIR / "external_calls"
+EXTERNAL_CALLS_CONTAINER_PATH = "/opt/pddl-benchmark/external_calls"
 MODEL_GATEWAY_HOST = "model-gateway"
 MODEL_GATEWAY_PORT = 8766
+LOGITS_GATEWAY_SCRIPT = PACKAGE_DIR / "logits_gateway.py"
+LOGITS_GATEWAY_CONTAINER_PATH = "/opt/pddl-benchmark/logits_gateway.py"
+LOGITS_BRIDGE_SCRIPT = PACKAGE_DIR / "logits_openai_bridge.py"
+LOGITS_BRIDGE_CONTAINER_PATH = "/opt/pddl-benchmark/logits_openai_bridge.py"
+LOGITS_BRIDGE_PORT = 8769
 WEB_GATEWAY_SCRIPT = PACKAGE_DIR / "web_gateway.py"
 WEB_GATEWAY_CONTAINER_PATH = "/opt/pddl-benchmark/web_gateway.py"
 WEB_GATEWAY_HOST = "web-gateway"
@@ -184,6 +195,7 @@ PROVIDER_API_KEY_ENV: dict[str, str] = {
     "gemini": "GEMINI_API_KEY",
     "google-vertex": "GOOGLE_CLOUD_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
+    "logits": "LOGITS_API_KEY",
     "dashscope": "DASHSCOPE_API_KEY",
     "qwen": "DASHSCOPE_API_KEY",
 }
@@ -197,6 +209,10 @@ PROVIDER_API_BASE: dict[str, str] = {
     # The project/location-qualified route is constructed from resolved config.
     "google-vertex": "https://aiplatform.googleapis.com",
     "deepseek": "https://api.deepseek.com/v1",
+    # Logits' public service speaks its native sampling REST protocol.  The
+    # per-attempt gateway translates the OpenAI Chat Completions wire format;
+    # this origin is still the auditable external route.
+    "logits": "https://api.logits.dev",
     "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
 }
@@ -235,6 +251,10 @@ OPENCLAW_BENCHMARK_STATE_DIR = ROOT_DIR / ".cache" / "openclaw-benchmark-state"
 # Repository-local third-party harness runtimes. The installer populates this
 # ignored directory; adapters never read the harnesses' personal user config.
 HARNESS_RUNTIME_ROOT = (CACHE_DIR / "harness-runtimes").resolve()
+
+LOGITS_BRIDGE_RUNTIME_ROOT = (HARNESS_RUNTIME_ROOT / "logits-bridge").resolve()
+LOGITS_BRIDGE_ENV_PATH = (LOGITS_BRIDGE_RUNTIME_ROOT / "venv").resolve()
+LOGITS_MODEL_ASSETS_ROOT = (LOGITS_BRIDGE_RUNTIME_ROOT / "models").resolve()
 
 HERMES_ENV_PATH = (HARNESS_RUNTIME_ROOT / "hermes").resolve()
 NANOBOT_ENV_PATH = (HARNESS_RUNTIME_ROOT / "nanobot").resolve()

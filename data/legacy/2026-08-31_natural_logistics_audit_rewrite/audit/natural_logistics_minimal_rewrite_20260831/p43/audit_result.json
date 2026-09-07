@@ -1,0 +1,64 @@
+{
+  "case": "p43",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 58,
+    "init": 116,
+    "goal": 23,
+    "semantic_items": 197
+  },
+  "before": {
+    "objects_covered": 58,
+    "init_covered": 100,
+    "goal_covered": 23,
+    "missing": 0,
+    "ambiguous": 16,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 58,
+    "init_covered": 116,
+    "goal_covered": 23,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "an airport (apt1 through apt8)",
+      "revised_text": "an airport location (apt1 through apt8)",
+      "reason_en": "Adding “location” directly supports the independent LOCATION facts for apt1–apt8 while preserving their airport type.",
+      "reason_zh": "添加“地点”一词，可直接支持 apt1–apt8 各自独立的 LOCATION 事实，同时保留其机场类型。",
+      "golden_evidence": [
+        "golden_problem.pddl:105,107,109,111,113,115,117,119 ((LOCATION APT1) through (LOCATION APT8))",
+        "golden_problem.pddl:120-127 ((AIRPORT APT1) through (AIRPORT APT8))"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "ambiguity",
+      "original_text": "Airports apt1 through apt8 are scattered across cities cit1 to cit8.",
+      "revised_text": "Airports apt1 through apt8 are in cities cit1 through cit8, respectively.",
+      "reason_en": "“Scattered across” did not uniquely map each airport to a city. Ordered ranges plus “respectively” uniquely map aptN to citN.",
+      "reason_zh": "“散布在”无法唯一确定每个机场所属的城市；有序范围加“分别”可唯一确定 aptN 到 citN 的映射。",
+      "golden_evidence": [
+        "golden_problem.pddl:165,167,169,171,173,175,177,179 ((IN-CITY APT1 CIT1) through (IN-CITY APT8 CIT8))"
+      ]
+    }
+  ],
+  "preserved": [
+    "The complete package inventory, vehicle inventory, airplane placements, truck/package placements, position-to-city rule, and 23-pair goal enumeration.",
+    "The original sentence structure and wording outside the two defective spans."
+  ],
+  "verification": {
+    "ledger_rows": 197,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "case": "p59",
+  "status": "COMPLETE",
+  "decision": "NO REWRITE REQUIRED",
+  "counts": {
+    "objects": 73,
+    "init": 146,
+    "goal": 30,
+    "semantic_items": 249
+  },
+  "before": {
+    "objects_covered": 73,
+    "init_covered": 146,
+    "goal_covered": 30,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 73,
+    "init_covered": 146,
+    "goal_covered": 30,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [],
+  "preserved": [
+    "The complete original English description was preserved byte-for-byte.",
+    "All exact inventories, initial placements, city mappings, and goals."
+  ],
+  "verification": {
+    "ledger_rows": 249,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

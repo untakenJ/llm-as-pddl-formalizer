@@ -38,9 +38,13 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+import json
 import logging
 import os
 import sys
+import time
+import uuid
+from pathlib import Path
 
 # Make the package importable when run as a script
 # (source/agent_formalizer/run_formalizer_agent.py -> add source/ to path).
@@ -52,16 +56,19 @@ from agent_formalizer.claws import CLAWS, get_adapter
 from agent_formalizer.benchmark_profile import load_benchmark_profile
 from agent_formalizer.config import (
     DATASETS,
-    DEFAULT_SECRETS_ENV_FILE,
     DOMAINS,
     agent_model_label,
 )
 from agent_formalizer.credentials import (
-    DEFAULT_CREDENTIAL_PROFILES_PATH,
     load_credential_registry,
 )
 from agent_formalizer.orchestrator import run_batch
+from agent_formalizer.operational_config import (
+    load_operational_config,
+    safe_operational_component,
+)
 from agent_formalizer.util import read_named_setting
+from local_solver import SUPPORTED_BACKENDS
 
 
 def _resolve_problem_numbers(args) -> list[int]:
@@ -87,17 +94,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--benchmark-config", default=None,
                    help="JSON benchmark profile (default: bundled "
                         "benchmark_profiles/native_safety_native_clean.json)")
+    p.add_argument(
+        "--operational-config",
+        default=None,
+        help=(
+            "strict JSON operational config for credentials, scheduling, optional "
+            "evidence, infrastructure diagnostics, and output locations"
+        ),
+    )
     p.add_argument("--credential-profile", default=None,
                    help="named credential profile for --model (default: model/provider "
                         "mapping in credential_profiles.json)")
     p.add_argument("--credential-profiles-file",
-                   default=str(DEFAULT_CREDENTIAL_PROFILES_PATH),
+                   default=None,
                    help="secret-free named credential registry; contains only variable "
                         "references and provider settings")
     p.add_argument("--api-key-env", default=None,
                    help="legacy API-key variable override inside the selected credential "
                         "profile; prefer --credential-profile")
-    p.add_argument("--secrets-env-file", default=str(DEFAULT_SECRETS_ENV_FILE),
+    p.add_argument("--secrets-env-file", default=None,
                    help="runner-only dotenv source for explicitly named provider "
                         "inputs; never mounted or passed to the agent container")
     p.add_argument("--model_label", default=None,
@@ -123,6 +138,25 @@ def build_parser() -> argparse.ArgumentParser:
                    help="maximum model API calls per problem (default: benchmark profile)")
     p.add_argument("--network-mode", choices=("model_only", "controlled_web"),
                    default=None, help="network condition override")
+    p.add_argument(
+        "--solver-backend",
+        choices=sorted(SUPPORTED_BACKENDS),
+        default=None,
+        help=(
+            "solver backend condition; omitted preserves the benchmark profile "
+            "(current bundled profiles use local)"
+        ),
+    )
+    p.add_argument(
+        "--solver-base-url",
+        default=None,
+        help="host-visible solver origin (used by host/minimum execution)",
+    )
+    p.add_argument(
+        "--solver-container-base-url",
+        default=None,
+        help="solver origin visible from the per-attempt gateway sidecar",
+    )
     p.add_argument("--attempts-per-case", type=int, default=None,
                    help="fixed independent attempts for every case")
     p.add_argument("--max-execution-tries", type=int, default=None,
@@ -139,10 +173,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vertex-location", default=None,
                    help="legacy credential-owned Vertex location override; prefer a "
                         "named credential profile")
-    p.add_argument("--trace", action=argparse.BooleanOptionalAction, default=True,
+    p.add_argument("--trace", action=argparse.BooleanOptionalAction, default=None,
                    help="record per-problem JSONL trace (default on; "
                         "pass --no-trace to disable)")
-    p.add_argument("--workers", type=int, default=1,
+    p.add_argument("--workers", type=int, default=None,
                    help="parallel worker threads for independent problems "
                         "(default 1 = sequential)")
     p.add_argument("--tools-profile", default=None,
@@ -154,7 +188,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tools-deny", default=None,
                    help="comma-separated OpenClaw tool deny list "
                         "(default: no condition-level tool override)")
+    p.add_argument(
+        "--operational-run-id",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
     return p
+
+
+def _atomic_json(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n")
+    os.replace(temporary, path)
 
 
 def main() -> None:
@@ -164,6 +210,15 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     args = build_parser().parse_args()
+    if args.operational_config and any(
+        value is not None
+        for value in (args.api_key_env, args.vertex_project, args.vertex_location)
+    ):
+        raise SystemExit(
+            "legacy --api-key-env/--vertex-project/--vertex-location overrides "
+            "cannot be combined with --operational-config; use a named credential "
+            "profile in the operational config"
+        )
     if args.credential_profile and any(
         value is not None
         for value in (args.api_key_env, args.vertex_project, args.vertex_location)
@@ -173,6 +228,18 @@ def main() -> None:
             "--vertex-project, or --vertex-location; put the bound values in "
             "the named credential profile"
         )
+    try:
+        operational = load_operational_config(
+            args.operational_config,
+            credential_profiles_file=args.credential_profiles_file,
+            credential_profile=args.credential_profile,
+            secrets_env_file=args.secrets_env_file,
+            formalizer_workers=args.workers,
+            agent_trace=args.trace,
+            results_root=args.out_dir,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     profile = load_benchmark_profile(args.benchmark_config)
 
     openclaw_tool_flags = (
@@ -188,11 +255,13 @@ def main() -> None:
 
     model = args.model or profile.default_model
     try:
-        credential_registry = load_credential_registry(args.credential_profiles_file)
+        credential_registry = load_credential_registry(
+            operational.credential_registry_path
+        )
         credential = credential_registry.resolve(
             model,
-            name=args.credential_profile,
-            env_file=args.secrets_env_file,
+            name=operational.credential_profile,
+            env_file=operational.secrets_env_path,
             api_key_env_override=args.api_key_env,
         )
     except (RuntimeError, ValueError) as exc:
@@ -225,7 +294,7 @@ def main() -> None:
     ):
         try:
             vertex_project = read_named_setting(
-                args.vertex_project_env, args.secrets_env_file
+                args.vertex_project_env, operational.secrets_env_path
             )
         except RuntimeError as exc:
             raise SystemExit(str(exc)) from exc
@@ -261,6 +330,9 @@ def main() -> None:
         attempts_per_case=args.attempts_per_case,
         max_execution_tries=args.max_execution_tries,
         allow_final_message_recovery=args.allow_final_message_recovery,
+        solver_backend=args.solver_backend,
+        solver_host_base_url=args.solver_base_url,
+        solver_container_base_url=args.solver_container_base_url,
         credential_provider_options=provider_options,
         api_key=api_key,
         api_key_name=key_name,
@@ -281,17 +353,78 @@ def main() -> None:
         model_label, problem_numbers,
     )
 
-    results = run_batch(
-        adapter,
-        domain=args.domain,
-        data=args.data,
-        problem_numbers=problem_numbers,
-        model_label=model_label,
-        record_trace=args.trace,
-        out_dir_root=args.out_dir,
-        image=args.image,
-        workers=args.workers,
+    operational_run_id = args.operational_run_id or (
+        f"formalizer-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
     )
+    manifest_path = (
+        operational.results_root
+        / ".operational"
+        / f"{safe_operational_component(operational_run_id)}-{os.getpid()}.json"
+    )
+    operational_manifest = {
+        **operational.metadata(),
+        "run_id": operational_run_id,
+        "pid": os.getpid(),
+        "credential": credential.metadata(),
+        "credential_registry_sha256": credential_registry.sha256,
+        "solver_backend": {
+            "mode": adapter.solver_backend(),
+            "host_base_url": adapter.solver_upstream_base(containerized=False),
+            "container_base_url": adapter.solver_upstream_base(containerized=True),
+            "experiment_identity": "included in resolved benchmark configuration",
+        },
+        "diagnostics_root": (
+            str(
+                operational.diagnostics_root
+                / safe_operational_component(operational_run_id)
+            )
+            if operational.diagnostics_enabled
+            else None
+        ),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "status": "running",
+    }
+    _atomic_json(manifest_path, operational_manifest)
+    try:
+        results = run_batch(
+            adapter,
+            domain=args.domain,
+            data=args.data,
+            problem_numbers=problem_numbers,
+            model_label=model_label,
+            record_trace=operational.raw["evidence_collection"]["agent_trace"],
+            out_dir_root=operational.results_root,
+            image=args.image,
+            workers=operational.raw["scheduling"]["formalizer_workers"],
+            operational_config=operational,
+            operational_run_id=operational_run_id,
+        )
+    except BaseException as exc:
+        operational_manifest.update(
+            {
+                "status": "failed",
+                "error_type": type(exc).__name__,
+                "finished_at": time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                ),
+            }
+        )
+        _atomic_json(manifest_path, operational_manifest)
+        raise
+    operational_manifest.update(
+        {
+            "status": "completed",
+            "attempt_results": len(results),
+            "valid_attempts": sum(result.attempt_valid for result in results),
+            "infra_invalid_attempts": sum(
+                not result.attempt_valid for result in results
+            ),
+            "finished_at": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+            ),
+        }
+    )
+    _atomic_json(manifest_path, operational_manifest)
     if any(not result.attempt_valid for result in results):
         raise SystemExit(2)
 

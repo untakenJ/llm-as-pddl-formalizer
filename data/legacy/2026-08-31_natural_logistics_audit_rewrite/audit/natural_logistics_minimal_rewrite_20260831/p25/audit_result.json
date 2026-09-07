@@ -1,0 +1,67 @@
+{
+  "case": "p25",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 83,
+    "init": 166,
+    "goal": 7,
+    "semantic_items": 256
+  },
+  "before": {
+    "objects_covered": 83,
+    "init_covered": 160,
+    "goal_covered": 7,
+    "missing": 1,
+    "ambiguous": 0,
+    "contradictory": 5,
+    "over_generated": 5
+  },
+  "after": {
+    "objects_covered": 83,
+    "init_covered": 166,
+    "goal_covered": 7,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "contradiction",
+      "original_text": "Truck assignments: truck14 is at the first location in city14, truck13 at the first location in city13, continuing similarly down to truck1 at the first location in city1.",
+      "revised_text": "Truck assignments: trucks truck14, truck13, truck12, truck11, truck10, truck7, truck5, truck2, and truck1 are at the first location in their same-numbered cities, while trucks truck9, truck8, truck6, truck4, and truck3 are at the second location in their same-numbered cities.",
+      "reason_en": "The original continuation contradicts five golden second-location truck atoms and generates five false first-location atoms.",
+      "reason_zh": "原有延续规则与五个黄金第二地点卡车原子矛盾，并生成五个错误的第一地点原子。",
+      "golden_evidence": [
+        "golden_problem.pddl:162: (at truck9 city9-2)",
+        "golden_problem.pddl:163: (at truck8 city8-2)",
+        "golden_problem.pddl:165: (at truck6 city6-2)",
+        "golden_problem.pddl:167: (at truck4 city4-2)",
+        "golden_problem.pddl:168: (at truck3 city3-2)"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "",
+      "revised_text": "Package4 is situated at the first location in city8.",
+      "reason_en": "The original has no evidence for package4's golden initial location.",
+      "reason_zh": "原文没有为 package4 的黄金初始位置提供证据。",
+      "golden_evidence": [
+        "golden_problem.pddl:176: (at package4 city8-1)"
+      ]
+    }
+  ],
+  "preserved": [
+    "The complete object and city-layout rules.",
+    "All airplane placements, the eight already-stated package placements, all goals, and every unaffected phrase."
+  ],
+  "verification": {
+    "ledger_rows": 256,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

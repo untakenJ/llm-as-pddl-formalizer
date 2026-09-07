@@ -1,0 +1,41 @@
+{
+  "case": "p50",
+  "status": "COMPLETE",
+  "decision": "NO REWRITE REQUIRED",
+  "counts": {
+    "objects": 66,
+    "init": 132,
+    "goal": 26,
+    "semantic_items": 224
+  },
+  "before": {
+    "objects_covered": 66,
+    "init_covered": 132,
+    "goal_covered": 26,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 66,
+    "init_covered": 132,
+    "goal_covered": 26,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [],
+  "preserved": [
+    "Exhaustive object and type inventory",
+    "All initial airplane, truck, package, and city-membership mappings",
+    "Complete irregular 26-atom goal and original prose organization"
+  ],
+  "verification": {
+    "ledger_rows": 224,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

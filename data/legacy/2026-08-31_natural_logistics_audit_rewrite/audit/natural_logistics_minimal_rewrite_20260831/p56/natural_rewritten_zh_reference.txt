@@ -1,0 +1,1 @@
+在该物流场景中，我们需要管理若干对象和地点。初始时有六个包裹：obj11、obj12 和 obj13 位于 pos1，而 obj21、obj22 和 obj23 位于 pos2。此外，还有两辆卡车：tru1 停在 pos1，tru2 停在 pos2。两座城市 cit1 和 cit2 包含若干明确地点：pos1 和 apt1 位于 cit1，而 pos2 和 apt2 位于 cit2。Apt1 和 apt2 分别是各自城市的机场。一架飞机 apn1 位于 apt2。目标是按如下方式重新安排包裹：将 obj21 移到 apt2，将 obj12 移到 apt1，并让 obj13 留在 pos1。确保 obj22 仍位于 pos2，同时将 obj23 移到 apt2。

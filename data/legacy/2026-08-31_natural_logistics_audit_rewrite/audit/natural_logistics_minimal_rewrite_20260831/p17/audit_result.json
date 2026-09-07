@@ -1,0 +1,41 @@
+{
+  "case": "p17",
+  "status": "COMPLETE",
+  "decision": "NO REWRITE REQUIRED",
+  "counts": {
+    "objects": 37,
+    "init": 74,
+    "goal": 13,
+    "semantic_items": 124
+  },
+  "before": {
+    "objects_covered": 37,
+    "init_covered": 74,
+    "goal_covered": 13,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 37,
+    "init_covered": 74,
+    "goal_covered": 13,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [],
+  "preserved": [
+    "The complete city-by-city initial-state description.",
+    "The explicit airport-to-city mapping and both airplane placements.",
+    "The complete enumerated goal clause."
+  ],
+  "verification": {
+    "ledger_rows": 124,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

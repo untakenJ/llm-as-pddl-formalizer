@@ -1,0 +1,40 @@
+{
+  "case": "p94",
+  "status": "COMPLETE",
+  "decision": "NO REWRITE REQUIRED",
+  "counts": {
+    "objects": 25,
+    "init": 50,
+    "goal": 3,
+    "semantic_items": 78
+  },
+  "before": {
+    "objects_covered": 25,
+    "init_covered": 50,
+    "goal_covered": 3,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 25,
+    "init_covered": 50,
+    "goal_covered": 3,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [],
+  "preserved": [
+    "The complete original English description was preserved byte-for-byte; the finite cityX location rule and all mappings are already unique."
+  ],
+  "verification": {
+    "ledger_rows": 78,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}
+

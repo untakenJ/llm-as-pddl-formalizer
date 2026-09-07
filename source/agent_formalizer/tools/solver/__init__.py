@@ -2,7 +2,7 @@
 
 Layout:
   remote_client.py  shared planning.domains client (also used by run_solver.py)
-  gateway.py        per-attempt sidecar with egress to the remote backend
+  gateway.py        per-attempt sidecar routed to the selected backend
   pddl-solver       agent-facing CLI mounted at /usr/local/bin/pddl-solver
   prompt.txt        condition prompt documenting the CLI
 """

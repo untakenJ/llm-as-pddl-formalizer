@@ -1,0 +1,77 @@
+{
+  "case": "p77",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 95,
+    "init": 190,
+    "goal": 39,
+    "semantic_items": 324
+  },
+  "before": {
+    "objects_covered": 75,
+    "init_covered": 96,
+    "goal_covered": 3,
+    "missing": 36,
+    "ambiguous": 114,
+    "contradictory": 0,
+    "over_generated": 14
+  },
+  "after": {
+    "objects_covered": 95,
+    "init_covered": 190,
+    "goal_covered": 39,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "missing_rule",
+      "original_text": "Cities and their corresponding locations include: cit1 with pos1 and apt1; cit2 with pos2 and apt2; continuing sequentially up to cit13 with pos13 and apt13.",
+      "revised_text": "For each X from 1 to 13, city citX has locations posX and aptX, and aptX is an airport.",
+      "reason_en": "Replaces an open-ended sequential example with the exact finite city/location/airport construction.",
+      "reason_zh": "用精确的有限城市/地点/机场构造替换开放式顺序示例。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 4-98: CIT/POS/APT objects",
+        "golden_problem.pddl:lines 153-204: city, location, and airport type atoms",
+        "golden_problem.pddl:lines 265-290: all (IN-CITY ...) atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "Trucks and packages have initial positions within their respective city locations; for example, tru1 and obj11 to obj13 are at pos1, tru2 and obj21 to obj23 are at pos2, this continues up to tru13 having obj131 to obj133 at pos13.",
+      "revised_text": "For each X from 1 to 13, truck truX and packages objX1, objX2, and objX3 are initially at posX.",
+      "reason_en": "Replaces examples plus “this continues” with a bounded rule for all 13 trucks and 39 packages.",
+      "reason_zh": "用有界规则替换示例和“继续如此”的模糊说法，覆盖 13 辆卡车和 39 个包裹。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 213-264: all truck/package (AT ...) atoms"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "irregular_mapping",
+      "original_text": "Our goal is to rearrange packages to specific targets: obj21 to apt3, obj62 to apt8, obj133 to apt10, and similar specific end locations for each package respectively. The remaining packages and trucks need to be arranged as follows: variously in airports, positions, or cities, as specified for each, ultimately organizing the logistics for efficient distribution.",
+      "revised_text": "Our goal is to rearrange packages to specific targets: obj21 must be at apt3; obj62 must be at apt8; obj133 must be at apt10; obj132 must be at apt11; obj63 must be at pos10; obj92 must be at pos12; obj93 must be at apt3; obj32 must be at apt7; obj72 must be at pos2; obj91 must be at pos9; obj43 must be at pos7; obj33 must be at pos11; obj53 must be at pos8; obj31 must be at pos12; obj113 must be at apt7; obj23 must be at pos4; obj41 must be at apt13; obj52 must be at apt10; obj103 must be at pos13; obj83 must be at apt12; obj123 must be at pos6; obj73 must be at apt11; obj122 must be at apt7; obj13 must be at apt3; obj121 must be at pos7; obj82 must be at apt2; obj11 must be at apt4; obj101 must be at apt13; obj71 must be at pos3; obj131 must be at apt4; obj42 must be at apt8; obj61 must be at pos9; obj102 must be at apt2; obj112 must be at apt11; obj12 must be at pos13; obj111 must be at pos1; obj51 must be at apt12; obj22 must be at pos1; obj81 must be at apt13. All 39 package destinations must hold simultaneously.",
+      "reason_en": "Replaces three examples and vague remaining goals with the exact irregular 39-atom package goal and removes unsupported truck/efficiency goals.",
+      "reason_zh": "用精确的不规则 39 原子包裹目标替换三个示例和模糊的剩余目标，并删除未受支持的卡车/效率目标。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 292-332: conjunctive 39-atom goal"
+      ]
+    }
+  ],
+  "preserved": [
+    "Opening and exhaustive package list",
+    "Vehicle declarations and correct airplane placements",
+    "Original narrative order"
+  ],
+  "verification": {
+    "ledger_rows": 324,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

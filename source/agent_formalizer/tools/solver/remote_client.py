@@ -1,8 +1,8 @@
-"""Shared remote planner client for ``run_solver.py`` and the agent solver tool.
+"""Shared compatible planner client for evaluation and the agent solver tool.
 
 Both the offline evaluation pipeline and the in-container ``pddl-solver`` CLI
-talk to the same planning.domains package service. The gateway sidecar is the
-only egress path from a ``model_only`` attempt network.
+talk to the same selected planning.domains-compatible package service. The
+gateway sidecar is the only solver path from a ``model_only`` attempt network.
 """
 
 from __future__ import annotations
@@ -13,7 +13,9 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-SOLVER_BASE_URL = "https://solver.planning.domains:5001"
+# Host-side callers default to the repository's local Planutils service.
+# Containerized solver gateways always pass their selected upstream explicitly.
+SOLVER_BASE_URL = "http://127.0.0.1:8769"
 DEFAULT_SOLVER = "dual-bfws-ffparser"
 REQUEST_TIMEOUT_SECONDS = 30
 POLL_INTERVAL_SECONDS = 0.5
@@ -155,8 +157,12 @@ def solve_pddl(
     base_url: str = SOLVER_BASE_URL,
     timeout_seconds: float = REQUEST_TIMEOUT_SECONDS,
     poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
+    recovery_policy: str | None = None,
+    event=None,
+    cancelled=None,
+    charge=None,
 ) -> tuple[bool, dict | str]:
-    """Submit domain/problem PDDL to the remote package solver.
+    """Submit domain/problem PDDL to a planning.domains-compatible service.
 
     Returns ``(True, {"plan": ...})`` on success, or ``(False, diagnostic)``.
     """
@@ -170,6 +176,24 @@ def solve_pddl(
         return solver_failure("validate", "domain PDDL is empty", solver=solver)
     if not isinstance(problem_file, str) or not problem_file.strip():
         return solver_failure("validate", "problem PDDL is empty", solver=solver)
+
+    if recovery_policy is not None:
+        try:
+            from agent_formalizer.external_calls.solver import POLICY_ID, solve
+        except ModuleNotFoundError:
+            from external_calls.solver import POLICY_ID, solve
+        if recovery_policy != POLICY_ID:
+            raise ValueError(f"unsupported solver recovery policy {recovery_policy!r}")
+        ok, result, charged = solve(
+            domain_file, problem_file, solver=solver, base_url=base_url,
+            format_failure=solver_failure, timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            event=event or (lambda value: None),
+            cancelled=cancelled or (lambda: False),
+        )
+        if charge is not None:
+            charge(charged)
+        return ok, result
 
     submit_url = f"{base_url.rstrip('/')}/package/{solver}/solve"
     submit_payload, error, status, response_body = _http_json(

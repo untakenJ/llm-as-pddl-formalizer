@@ -1,0 +1,53 @@
+{
+  "case": "p61",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 80,
+    "init": 160,
+    "goal": 31,
+    "semantic_items": 271
+  },
+  "before": {
+    "objects_covered": 80,
+    "init_covered": 160,
+    "goal_covered": 31,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 70
+  },
+  "after": {
+    "objects_covered": 80,
+    "init_covered": 160,
+    "goal_covered": 31,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "Initially, we have packages labeled from obj11 to obj113, eleven trucks from tru1 to tru11, and cities from cit1 to cit11.",
+      "revised_text": "Initially, for each integer i from 1 through 11, we have exactly three packages labeled by concatenating obj, the decimal representation of i, and one of 1, 2, or 3; we also have eleven trucks from tru1 to tru11 and cities from cit1 to cit11.",
+      "reason_en": "The bounded concatenation rule yields exactly the 33 golden package labels and removes 70 labels introduced by the literal pseudo-range.",
+      "reason_zh": "有界连接规则恰好生成 33 个黄金包裹标签，并删除字面伪范围引入的 70 个额外标签。",
+      "golden_evidence": [
+        "golden_problem.pddl:8-10,15-17,23-25,30-32,37-39,44-46,52-54,59-61,66-68,73-75,81-83: package objects",
+        "golden_problem.pddl:86-118: (PACKAGE ...)"
+      ]
+    }
+  ],
+  "preserved": [
+    "All wording outside the single package-inventory sentence.",
+    "All initial placements, city memberships, and goal destinations."
+  ],
+  "verification": {
+    "ledger_rows": 271,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

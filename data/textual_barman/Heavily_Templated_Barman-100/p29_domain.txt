@@ -48,6 +48,6 @@ I have the following restrictions on my actions:
     Once Shake action is performed the following will be true: shaked shaker, shaker contains cocktail.
     Once Shake action is performed the following will be false: unshaked shaker, shaker contains ingredient1, shaker contains ingredient2.
     To perform Pour-shaker-to-shot action, the following needs to be true: hand holding shaker, shaked shaker, empty shot glass, clean shot glass, shaker contains cocktail, shaker level of shaker is l, next level from l1 is l.
-    Once Pour-shaker-to-shot action is performed the following will be true: shot glass contains cocktail, shot glass used with cocktail, shaker-level of shaker is l1.
+    Once Pour-shaker-to-shot action is performed the following will be true: shot glass contains cocktail, shaker-level of shaker is l1.
     Once Pour-shaker-to-shot action is performed the following will be false: clean shot glass, empty shot glass, shaker-level of shaker is l.
     

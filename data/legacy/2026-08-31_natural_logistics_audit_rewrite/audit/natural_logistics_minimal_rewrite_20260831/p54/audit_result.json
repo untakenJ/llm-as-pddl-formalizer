@@ -1,0 +1,78 @@
+{
+  "case": "p54",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 73,
+    "init": 146,
+    "goal": 28,
+    "semantic_items": 247
+  },
+  "before": {
+    "objects_covered": 71,
+    "init_covered": 77,
+    "goal_covered": 28,
+    "missing": 7,
+    "ambiguous": 64,
+    "contradictory": 0,
+    "over_generated": 63
+  },
+  "after": {
+    "objects_covered": 73,
+    "init_covered": 146,
+    "goal_covered": 28,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "In the Logistics game, we start with the following initial conditions: We have several packages including obj11 through obj103, and trucks tru1 through tru10.",
+      "revised_text": "In the Logistics game, we start with the following initial conditions: for every index i from 1 through 10, the three package labels are formed by writing obj, then i, then 1, 2, or 3, and the trucks are tru1 through tru10.",
+      "reason_en": "The package pseudo-range over-generates 63 identifiers; the bounded construction yields exactly the 30 golden labels.",
+      "reason_zh": "包裹伪范围会多生成 63 个标识符；有限构造恰好产生 30 个黄金标签。",
+      "golden_evidence": ["golden_problem.pddl:8-10,16-18,23-25,30-32,37-39,45-47,52-54,59-61,66-68,74-76: exact OBJ declarations", "golden_problem.pddl:79-118: (PACKAGE ...) and (TRUCK ...)"]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "Each package and truck is located in a specific position or city.",
+      "revised_text": "Initially, for every index i from 1 through 10, tru followed by i and the three package labels formed by writing obj, then i, then 1, 2, or 3 are all at pos followed by the same i.",
+      "reason_en": "The original does not provide any package/truck location mapping.",
+      "reason_zh": "原句没有提供任何包裹或卡车的位置映射。",
+      "golden_evidence": ["golden_problem.pddl:165-204: all truck and package (AT ...) atoms"]
+    },
+    {
+      "id": 3,
+      "category": "ambiguity",
+      "original_text": "apt 10",
+      "revised_text": "apt10",
+      "reason_en": "The golden identifier has no internal space.",
+      "reason_zh": "黄金标识符内部没有空格。",
+      "golden_evidence": ["golden_problem.pddl:241: (AT OBJ61 APT10)"]
+    },
+    {
+      "id": 4,
+      "category": "missing_rule",
+      "original_text": "Each location including pos1 through pos10 and apt1 through apt10, is situated in various cities, from cit1 to cit10.",
+      "revised_text": "Each location, including pos1 through pos10 and apt1 through apt10, is situated in a city from cit1 through cit10: for every index i from 1 through 10, pos followed by i and apt followed by i are both in cit followed by the same i, and each of apt1 through apt10 is an airport.",
+      "reason_en": "The original lacks unique in-city mappings and seven airport type facts.",
+      "reason_zh": "原句缺少唯一的地点到城市映射以及七个机场类型事实。",
+      "golden_evidence": ["golden_problem.pddl:119-158: (CITY ...), (LOCATION ...), and (AIRPORT ...)", "golden_problem.pddl:205-224: all (IN-CITY ...) atoms"]
+    }
+  ],
+  "preserved": [
+    "All three airplane identities and ordered initial positions",
+    "All 28 goal mappings except identifier-spacing repair",
+    "Closing sentence and paragraph structure"
+  ],
+  "verification": {
+    "ledger_rows": 247,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "report": "output/pdf/natural_logistics_full_change_points_bilingual_2026-08-31.pdf",
+  "markdown_source": "output/audit/natural_logistics_minimal_rewrite_20260831/full_change_points_bilingual_report.md",
+  "pages": 86,
+  "problems_audited": 100,
+  "rewrites_required": 49,
+  "preserved_verbatim": 51,
+  "change_points": 144,
+  "semantic_items_verified": 19718,
+  "validation": "100/100",
+  "pdf_bytes": 348947,
+  "pdf_sha256": "e91cbe4e1117681238b032d36153c8ff13e929c6848beadcc817142484c35925",
+  "markdown_sha256": "8284cc644d67fbddd149caf16b86452c0f2728a47fbfb1b4bb35d7bde940131f"
+}

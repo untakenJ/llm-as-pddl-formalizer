@@ -6,6 +6,18 @@
     "image_id": "sha256:804a1c8db954455393fb44455c95a92cbda5247f9b7ad52f56f4af50ae550df1",
     "dockerfile_sha256": "1f598bc5bc9600858368615463a3f02fc5d46ff380cc1acf0b59457ff88e41bc"
   },
+  "provider_transports": {
+    "logits": {
+      "python_version": "Python 3.12.13",
+      "python_executable_sha256": "9544d2a29138833e6177d45dbc57468d37710b5080c901fbb579d53f251cdd6f",
+      "python_distribution_manifest_sha256": "3d211ded6aa5371f801e25c35aa7b1892aa2bb3da3307b874ad88f9e123ec954",
+      "python_distribution_count": 29,
+      "bridge_entrypoint_sha256": "66991d6883b8ec2e1b7ef39184829a26584fb5098abee241e1bcb32112be2106",
+      "gateway_entrypoint_sha256": "e2da96f6df14976010fa40f62b945617f6c534c4d1ef8178dd5313f99c427017",
+      "model_assets_manifest_sha256": "163ee3a6e001a588a9e29aff4fce04d42de20055d5ad6d45038f4cc57a3b16ad",
+      "model_assets_count": 6
+    }
+  },
   "harnesses": {
     "openclaw": {
       "version": "OpenClaw 2026.6.10 (aa69b12)",

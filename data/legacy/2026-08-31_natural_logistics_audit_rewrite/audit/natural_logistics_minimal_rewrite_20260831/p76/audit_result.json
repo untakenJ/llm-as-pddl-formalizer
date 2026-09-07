@@ -1,0 +1,64 @@
+{
+  "case": "p76",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 95,
+    "init": 190,
+    "goal": 38,
+    "semantic_items": 323
+  },
+  "before": {
+    "objects_covered": 95,
+    "init_covered": 124,
+    "goal_covered": 38,
+    "missing": 0,
+    "ambiguous": 66,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 95,
+    "init_covered": 190,
+    "goal_covered": 38,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "missing_rule",
+      "original_text": "The trucks and packages are initially located as follows: tru1 along with packages obj11, obj12, and obj13 are at position pos1; tru2 with obj21, obj22, and obj23 at pos2, and similarly for the other trucks at their respective positions and corresponding packages.",
+      "revised_text": "The trucks and packages are initially located as follows: for each integer i from 1 through 13, the truck named by concatenating tru and i and the three packages named by concatenating obj, i, and each of 1, 2, and 3 are all at the position named by concatenating pos and the same i.",
+      "reason_en": "'Similarly' and 'respective/corresponding' left 44 initial at atoms without a uniquely expandable rule.",
+      "reason_zh": "“同样”以及“各自/对应”没有为其余 44 个初始位置原子提供可唯一展开的规则。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 213-264: all 52 initial truck/package at atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "Each position and airport is situated within different cities: pos1 and apt1 in cit1, pos2 and apt2 in cit2, continuing in the same way up to pos13 and apt13 in cit13.",
+      "revised_text": "Each position and airport is situated within its indexed city: for each integer i from 1 through 13, the position named by concatenating pos and i and the airport named by concatenating apt and the same i are both in the city named by concatenating cit and i.",
+      "reason_en": "'Continuing in the same way' did not count as a complete deterministic correspondence for the remaining 22 in-city atoms.",
+      "reason_zh": "“以同样方式继续”不能作为其余 22 个地点—城市原子的完整确定性对应规则。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 265-290: all 26 in-city atoms"
+      ]
+    }
+  ],
+  "preserved": [
+    "The explicit package, vehicle, city/location, airport, and airplane sentences were preserved verbatim.",
+    "The complete 38-atom goal sentence was preserved verbatim."
+  ],
+  "verification": {
+    "ledger_rows": 323,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}
+

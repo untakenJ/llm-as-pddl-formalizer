@@ -42,6 +42,9 @@ def get_adapter(
     attempts_per_case: int | None = None,
     max_execution_tries: int | None = None,
     allow_final_message_recovery: bool | None = None,
+    solver_backend: str | None = None,
+    solver_host_base_url: str | None = None,
+    solver_container_base_url: str | None = None,
     provider_options: dict | None = None,
     credential_provider_options: dict | None = None,
     api_key: str | None = None,
@@ -73,6 +76,7 @@ def get_adapter(
             attempts_per_case=attempts_per_case,
             max_execution_tries=max_execution_tries,
             allow_final_message_recovery=allow_final_message_recovery,
+            solver_backend=solver_backend,
             skills_mode=skills_mode,
             provider_options=provider_options,
             harness_overrides={
@@ -115,4 +119,10 @@ def get_adapter(
         )
         kwargs["tools_allow"] = configured.get("tools_allow")
         kwargs["tools_deny"] = configured.get("tools_deny")
-    return CLAWS[name](**kwargs)
+    adapter = CLAWS[name](**kwargs)
+    adapter.configure_solver_backend(
+        resolved_config.solver_backend,
+        host_base_url=solver_host_base_url,
+        container_base_url=solver_container_base_url,
+    )
+    return adapter

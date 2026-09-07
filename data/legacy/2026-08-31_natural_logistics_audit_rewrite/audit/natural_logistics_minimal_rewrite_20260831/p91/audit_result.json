@@ -1,0 +1,86 @@
+{
+  "case": "p91",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 56,
+    "init": 112,
+    "goal": 14,
+    "semantic_items": 182
+  },
+  "before": {
+    "objects_covered": 42,
+    "init_covered": 42,
+    "goal_covered": 4,
+    "missing": 74,
+    "ambiguous": 3,
+    "contradictory": 17,
+    "over_generated": 9
+  },
+  "after": {
+    "objects_covered": 56,
+    "init_covered": 112,
+    "goal_covered": 14,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "contradiction",
+      "original_text": "Specifically, package23 through package1 are scattered across distinct locations.",
+      "revised_text": "Specifically, the initial package locations are: package23 is at city1-5; package22 is at city1-5; package21 is at city2-4; package20 is at city2-3; package19 is at city1-2; package18 is at city3-3; package17 is at city2-3; package16 is at city3-5; package15 is at city2-2; package14 is at city2-1; package13 is at city3-4; package12 is at city1-6; package11 is at city1-4; package10 is at city3-3; package9 is at city3-3; package8 is at city1-2; package7 is at city1-4; package6 is at city1-4; package5 is at city3-1; package4 is at city2-1; package3 is at city1-5; package2 is at city3-3; package1 is at city1-2.",
+      "reason_en": "Replaces the false claim that all packages occupy distinct locations with the complete irregular initial package mapping.",
+      "reason_zh": "用完整的不规则包裹初始映射替换所有包裹位于不同地点的错误说法。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 101-123: all package (AT ...) atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "We have three major city hubs: city1, city2, and city3, each with various locations and airports within them.",
+      "revised_text": "We have three major city hubs: city1, city2, and city3; for each city index X from 1 to 3 and location index Y from 1 to 6, cityX-Y is a location in cityX, and cityX-6 is an airport.",
+      "reason_en": "Defines all 18 location identifiers, their cities, and the -6 airport suffix.",
+      "reason_zh": "定义全部 18 个地点标识符、所属城市和 -6 机场后缀。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 8-11: location objects",
+        "golden_problem.pddl:lines 50-88: location, airport, and in-city atoms"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "irregular_mapping",
+      "original_text": "Each vehicle is stationed at specific locations within these cities.",
+      "revised_text": "The airplanes are stationed as follows: plane7 is at city1-6; plane6 is at city2-6; plane5 is at city1-6; plane4 is at city1-6; plane3 is at city3-6; plane2 is at city1-6; plane1 is at city2-6. The trucks are stationed as follows: truck5 is at city3-4; truck4 is at city2-3; truck3 is at city1-5; truck2 is at city1-3; truck1 is at city1-6.",
+      "reason_en": "Expands unspecified vehicle positions into all seven airplane and five truck locations.",
+      "reason_zh": "将未指定的车辆位置展开为七架飞机和五辆卡车的全部位置。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 89-100: vehicle (AT ...) atoms"
+      ]
+    },
+    {
+      "id": 4,
+      "category": "irregular_mapping",
+      "original_text": "For example, package23 needs to be transported to city2-3, while package22 should remain at city1-5. Other packages need to be carefully placed according to the requirements, such as transferring package21 to city1-6 and package20 to city1-1. Our end goal is to ensure all specified packages are accurately positioned at their respective target locations, thus completing the logistics challenge.",
+      "revised_text": "The required package destinations are: package23 must be at city2-3; package22 must be at city1-5; package21 must be at city1-6; package20 must be at city1-1; package19 must be at city1-3; package18 must be at city1-3; package17 must be at city1-5; package16 must be at city1-1; package15 must be at city3-3; package14 must be at city1-5; package13 must be at city2-5; package12 must be at city3-2; package11 must be at city2-6; package10 must be at city1-6. All 14 listed package destinations must hold simultaneously.",
+      "reason_en": "Replaces four examples and vague remaining requirements with the complete irregular 14-atom goal, excluding nine packages with no golden goal.",
+      "reason_zh": "用完整的不规则 14 原子目标替换四个示例和模糊剩余要求，并排除没有黄金目标的九个包裹。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 124-137: conjunctive 14-atom goal"
+      ]
+    }
+  ],
+  "preserved": [
+    "Opening and fleet declarations",
+    "Task transition and narrative order"
+  ],
+  "verification": {
+    "ledger_rows": 182,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

@@ -31,19 +31,20 @@ import time
 
 from batch_utils import format_problem_name, run_parallel
 from api_providers import (
-    API_MODELS,
     Tracer,
     build_provider_client,
     default_tools_for_model,
     is_reasoning_model,
     respond_with_tools,
+    sanitize_model_name,
+    validate_api_model,
 )
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 Parser = argparse.ArgumentParser()
 Parser.add_argument("--domain", help="which domain to evaluate", choices=["blocksworld", "mystery_blocksworld", "barman", "logistics"])
-Parser.add_argument("--model", help="which API-served model to use", choices=API_MODELS)
+Parser.add_argument("--model", help="which API-served model to use", type=validate_api_model)
 Parser.add_argument("--data", help="which data to formalize", choices=["Heavily_Templated_BlocksWorld-100", "Moderately_Templated_BlocksWorld-100", "Natural_BlocksWorld-100", "Heavily_Templated_Mystery_BlocksWorld-100", "Heavily_Templated_Barman-100", "Heavily_Templated_Logistics-100", "Moderately_Templated_Logistics-100", "Natural_Logistics-100"])
 Parser.add_argument("--index_start", help="index to start generating result from (inclusive)")
 Parser.add_argument("--index_end", help="index to end generating result from (exclusive)")
@@ -158,10 +159,11 @@ def run_planner_gpt(provider, client, domain, data, problem, model, tools=None,
     }
 
     out_root = out_dir_root or f'{ROOT_DIR}/output'
-    out_dir = f'{out_root}/llm-as-planner-api/{domain}/{data}/{model}'
+    model_label = sanitize_model_name(model)
+    out_dir = f'{out_root}/llm-as-planner-api/{domain}/{data}/{model_label}'
     os.makedirs(out_dir, exist_ok=True)
-    plan_path = f'{out_dir}/{problem}_{model}_plan.txt'
-    trace_path = f'{out_dir}/{problem}_{model}_trace.jsonl' if record_trace else None
+    plan_path = f'{out_dir}/{problem}_{model_label}_plan.txt'
+    trace_path = f'{out_dir}/{problem}_{model_label}_trace.jsonl' if record_trace else None
     tracer = Tracer(trace_path)
 
     t_start = time.monotonic()

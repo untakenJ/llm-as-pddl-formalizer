@@ -86,7 +86,9 @@
   },
   "condition_profile": {
     "id": "default",
-    "overrides": {}
+    "overrides": {
+      "solver_backend": "local"
+    }
   },
   "sampling": {
     "attempts_per_case": 1

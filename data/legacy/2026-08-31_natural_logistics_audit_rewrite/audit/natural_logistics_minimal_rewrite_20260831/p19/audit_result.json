@@ -1,0 +1,55 @@
+{
+  "case": "p19",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 37,
+    "init": 74,
+    "goal": 14,
+    "semantic_items": 125
+  },
+  "before": {
+    "objects_covered": 37,
+    "init_covered": 70,
+    "goal_covered": 14,
+    "missing": 4,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 37,
+    "init_covered": 74,
+    "goal_covered": 14,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "missing_rule",
+      "original_text": "",
+      "revised_text": "For each index i from 1 through 5, position posi and airport apti are locations in city citi, where i is replaced by that index in all three identifiers.",
+      "reason_en": "A bounded index rule supplies the four missing city-membership atoms and expands to exactly the complete golden ten-pair family.",
+      "reason_zh": "有界索引规则补足四个缺失的城市归属原子，并恰好展开为黄金 PDDL 中完整的十对关系。",
+      "golden_evidence": [
+        "golden_problem.pddl:3: pos1..pos5, apt1..apt5, cit1..cit5 objects",
+        "golden_problem.pddl:8-11: city, location, and airport type atoms",
+        "golden_problem.pddl:16-19: ten exact (in-city ...) atoms"
+      ]
+    }
+  ],
+  "preserved": [
+    "Every original sentence and the single-paragraph organization.",
+    "All ground and airplane initial placements.",
+    "The complete 14-item goal clause."
+  ],
+  "verification": {
+    "ledger_rows": 125,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

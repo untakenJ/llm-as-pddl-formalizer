@@ -1,0 +1,64 @@
+{
+  "case": "p27",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 44,
+    "init": 88,
+    "goal": 16,
+    "semantic_items": 148
+  },
+  "before": {
+    "objects_covered": 44,
+    "init_covered": 84,
+    "goal_covered": 16,
+    "missing": 4,
+    "ambiguous": 0,
+    "contradictory": 1,
+    "over_generated": 35
+  },
+  "after": {
+    "objects_covered": 44,
+    "init_covered": 88,
+    "goal_covered": 16,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "contradiction",
+      "original_text": "Initially, we have six packages in each city, numbered from obj11 to obj63.",
+      "revised_text": "Initially, we have 18 packages labeled obj11, obj12, obj13, obj21, obj22, obj23, obj31, obj32, obj33, obj41, obj42, obj43, obj51, obj52, obj53, obj61, obj62, and obj63.",
+      "reason_en": "The original count is false and its pseudo-range can generate 35 non-golden package identifiers.",
+      "reason_zh": "原有数量错误，且其伪范围可能生成 35 个非黄金包裹标识符。",
+      "golden_evidence": [
+        "golden_problem.pddl:8-10,16-18,23-25,30-32,37-39,45-47: exactly 18 package objects",
+        "golden_problem.pddl:50-67: exactly 18 package type atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "",
+      "revised_text": "The locations apt1 through apt6 are airports.",
+      "reason_en": "Adds the missing airport types for apt1, apt3, apt5, and apt6 through an exact finite range.",
+      "reason_zh": "通过精确有限范围补充 apt1、apt3、apt5 和 apt6 缺失的机场类型。",
+      "golden_evidence": [
+        "golden_problem.pddl:92-97: (airport apt1) through (airport apt6)"
+      ]
+    }
+  ],
+  "preserved": [
+    "All six truck/package co-location clauses and both airplane placements.",
+    "The complete city mapping, all 16 goals, and all unaffected wording."
+  ],
+  "verification": {
+    "ledger_rows": 148,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

@@ -87,6 +87,7 @@
   "condition_profile": {
     "id": "practical-unlimited",
     "overrides": {
+      "solver_backend": "local",
       "experimental_budgets": {
         "harness_execution_timeout_seconds": 2147483647,
         "control_model_request_attempts": 2147483647,

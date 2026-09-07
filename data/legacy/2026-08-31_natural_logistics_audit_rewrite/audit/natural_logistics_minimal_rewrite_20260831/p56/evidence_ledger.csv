@@ -1,0 +1,51 @@
+section,pddl_item,evidence,evidence_kind,unique,status,notes
+objects,apn1,"An airplane, apn1, is located at apt2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,apt2,"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,pos2,"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,apt1,"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,pos1,"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,cit2,"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,cit1,"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,tru2,"In addition, there are two trucks: tru1 stationed at pos1 and tru2 stationed at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,tru1,"In addition, there are two trucks: tru1 stationed at pos1 and tru2 stationed at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,obj23,"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,obj22,"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,obj21,"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,obj13,"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,obj12,"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+objects,obj11,"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(package obj11),"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(package obj12),"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(package obj13),"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(package obj21),"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(package obj22),"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(package obj23),"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(truck tru1),"In addition, there are two trucks: tru1 stationed at pos1 and tru2 stationed at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(truck tru2),"In addition, there are two trucks: tru1 stationed at pos1 and tru2 stationed at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(city cit1),"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(city cit2),"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(location pos1),"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(location apt1),"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(location pos2),"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(location apt2),"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(airport apt1),Apt1 and apt2 serve as the airports for their respective cities.,direct,true,covered,The explicit finite statement directly contains this item.
+init,(airport apt2),Apt1 and apt2 serve as the airports for their respective cities.,direct,true,covered,The explicit finite statement directly contains this item.
+init,(airplane apn1),"An airplane, apn1, is located at apt2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(at apn1 apt2),"An airplane, apn1, is located at apt2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(at tru1 pos1),"In addition, there are two trucks: tru1 stationed at pos1 and tru2 stationed at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(at obj11 pos1),"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(at obj12 pos1),"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(at obj13 pos1),"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(at tru2 pos2),"In addition, there are two trucks: tru1 stationed at pos1 and tru2 stationed at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(at obj21 pos2),"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(at obj22 pos2),"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(at obj23 pos2),"Initially, there are six packages: obj11, obj12, and obj13 located at pos1, and obj21, obj22, and obj23 located at pos2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(in-city pos1 cit1),"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(in-city apt1 cit1),"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(in-city pos2 cit2),"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+init,(in-city apt2 cit2),"Two cities, cit1 and cit2, contain various locations: pos1 and apt1 in cit1, and pos2 and apt2 in cit2.",direct,true,covered,The explicit finite statement directly contains this item.
+goal,(at obj21 apt2),"The objective is to rearrange the packages as follows: move obj21 to apt2, obj12 to apt1, and leave obj13 at pos1.",direct,true,covered,The explicit finite statement directly contains this item.
+goal,(at obj12 apt1),"The objective is to rearrange the packages as follows: move obj21 to apt2, obj12 to apt1, and leave obj13 at pos1.",direct,true,covered,The explicit finite statement directly contains this item.
+goal,(at obj13 pos1),"The objective is to rearrange the packages as follows: move obj21 to apt2, obj12 to apt1, and leave obj13 at pos1.",direct,true,covered,The explicit finite statement directly contains this item.
+goal,(at obj22 pos2),"Ensure obj22 remains at pos2, while obj23 is relocated to apt2.",direct,true,covered,The explicit finite statement directly contains this item.
+goal,(at obj23 apt2),"Ensure obj22 remains at pos2, while obj23 is relocated to apt2.",direct,true,covered,The explicit finite statement directly contains this item.

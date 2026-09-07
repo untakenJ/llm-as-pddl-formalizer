@@ -199,6 +199,8 @@ class EnvConfiguredAdapter(BaseClawAdapter):
 
         direct = urlsplit(self.direct_api_base)
         suffix = direct.path.rstrip("/")
+        if self.raw_provider == "logits" and not suffix:
+            suffix = "/v1"
         return f"http://{MODEL_GATEWAY_HOST}:{MODEL_GATEWAY_PORT}{suffix}"
 
     def upstream_api_base(self) -> str:
@@ -221,6 +223,17 @@ class EnvConfiguredAdapter(BaseClawAdapter):
         if not path:
             path = "/v1/projects" if self.is_google_vertex else "/v1"
         value["allowed_path_prefixes"] = [path]
+        if self.raw_provider == "logits":
+            # The public Logits endpoint is a token-level sampling API.  A
+            # provider-specific component in the same sidecar translates the
+            # harness's OpenAI-compatible requests before egress.
+            value.update(
+                {
+                    "transport": "logits-rest-openai-v1",
+                    "upstream_model": self.runtime_model,
+                    "allowed_path_prefixes": ["/v1"],
+                }
+            )
         return value
 
     def model_gateway_secret(self) -> str | None:

@@ -36,6 +36,20 @@ class SweepAttemptValidityTests(unittest.TestCase):
         self.assertEqual(valid, [1, 3])
         self.assertEqual(invalid, 1)
 
+    def test_streaming_incomplete_attempt_is_counted_as_operationally_invalid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / PREDICTION_TYPE / "domain" / "dataset" / "model" / "p01"
+            base.mkdir(parents=True)
+            (base / "invalid_attempt.json").write_text(
+                json.dumps({"attempt_valid": False, "status": "incomplete"})
+            )
+            invalid = _invalid_attempt_count(
+                root, "domain", "dataset", "model", [1]
+            )
+
+        self.assertEqual(invalid, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

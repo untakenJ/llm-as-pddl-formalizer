@@ -60,6 +60,12 @@ import sys
 import time
 from dataclasses import dataclass, field
 
+from local_solver import (
+    DEFAULT_SOLVER_BACKEND,
+    SUPPORTED_BACKENDS,
+    base_urls_for_backend,
+)
+
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 PYTHON = sys.executable
@@ -135,7 +141,9 @@ def _common_flags(model: str, domain: str, dataset: str, indices: list, out_dir:
 
 
 def run_formalizer_pipeline(model: str, domain: str, dataset: str,
-                            indices: list, out_dir: str, workers: int) -> BatchResult:
+                            indices: list, out_dir: str, workers: int,
+                            solver_backend: str = DEFAULT_SOLVER_BACKEND,
+                            solver_base_url: str | None = None) -> BatchResult:
     res = BatchResult(pipeline="llm-as-formalizer-api", domain=domain, dataset=dataset,
                       model=model, indices=list(indices))
     common = _common_flags(model, domain, dataset, indices, out_dir, workers)
@@ -143,8 +151,15 @@ def run_formalizer_pipeline(model: str, domain: str, dataset: str,
     rc, _, _ = _run([PYTHON, f"{SOURCE_DIR}/llm-as-formalizer-api.py", *common], "formalizer-api")
     res.stages["formalize"] = "ok" if rc == 0 else "FAIL"
 
-    rc, _, _ = _run([PYTHON, f"{SOURCE_DIR}/run_solver.py",
-                     "--prediction_type", "llm-as-formalizer-api", *common], "run_solver")
+    solver_command = [
+        PYTHON,
+        f"{SOURCE_DIR}/run_solver.py",
+        "--prediction_type", "llm-as-formalizer-api",
+        "--solver-backend", solver_backend,
+    ]
+    if solver_base_url:
+        solver_command.extend(["--solver-base-url", solver_base_url])
+    rc, _, _ = _run([*solver_command, *common], "run_solver")
     res.stages["solve"] = "ok" if rc == 0 else "FAIL"
 
     rc, stdout, _ = _run([PYTHON, f"{SOURCE_DIR}/run_val.py",
@@ -216,6 +231,12 @@ def write_summary(models: list, results: list, out_dir: str, run_meta: dict) -> 
              + (f" -- sampled {run_meta['samples']} per batch (seed={run_meta['sample_seed']})"
                 if run_meta.get('samples') else " -- full")
              + f" -- workers={run_meta.get('workers', 1)}",
+             f"Solver backend: `{run_meta.get('solver_backend', DEFAULT_SOLVER_BACKEND)}`"
+             + (
+                 f" (`{run_meta['solver_base_url']}`)"
+                 if run_meta.get("solver_base_url")
+                 else ""
+             ),
              ""]
     for pipeline, batches in by_pipeline.items():
         lines += [f"## {pipeline}", "",
@@ -289,6 +310,17 @@ def main() -> None:
     p.add_argument("--workers", type=int, default=8,
                    help="parallel worker threads per batch for independent problems "
                         "(passed through to formalizer/planner/solver/val; default 8; use 1 for sequential)")
+    p.add_argument(
+        "--solver-backend",
+        choices=sorted(SUPPORTED_BACKENDS),
+        default=DEFAULT_SOLVER_BACKEND,
+        help="solver backend for the formalizer-api evaluation stage (default: local)",
+    )
+    p.add_argument(
+        "--solver-base-url",
+        default=None,
+        help="explicit host-visible solver origin; defaults from --solver-backend",
+    )
     args = p.parse_args()
 
     if args.pairs:
@@ -304,6 +336,8 @@ def main() -> None:
         print("Note: --tag is ignored because --out_dir was given explicitly.")
     out_dir = args.out_dir or _default_out_dir(args.tag)
     os.makedirs(out_dir, exist_ok=True)
+    default_solver_base_url, _ = base_urls_for_backend(args.solver_backend)
+    solver_base_url = (args.solver_base_url or default_solver_base_url).rstrip("/")
 
     run_meta = {
         "index_start": args.index_start,
@@ -311,6 +345,8 @@ def main() -> None:
         "samples": args.samples,
         "sample_seed": args.sample_seed,
         "workers": args.workers,
+        "solver_backend": args.solver_backend,
+        "solver_base_url": solver_base_url,
     }
 
     print(f"Out dir: {out_dir}")
@@ -328,7 +364,18 @@ def main() -> None:
             if "formalizer" in pipelines:
                 print(f"\n=== [formalizer-api] {model} | {domain} / {dataset}  ({len(indices)} problems) ===", flush=True)
                 try:
-                    results.append(run_formalizer_pipeline(model, domain, dataset, indices, out_dir, args.workers))
+                    results.append(
+                        run_formalizer_pipeline(
+                            model,
+                            domain,
+                            dataset,
+                            indices,
+                            out_dir,
+                            args.workers,
+                            args.solver_backend,
+                            solver_base_url,
+                        )
+                    )
                 except Exception as e:
                     print(f"!! batch crashed: {e}")
                     results.append(BatchResult(pipeline="llm-as-formalizer-api",

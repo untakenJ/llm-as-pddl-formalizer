@@ -1,0 +1,63 @@
+{
+  "case": "p98",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 42,
+    "init": 84,
+    "goal": 6,
+    "semantic_items": 132
+  },
+  "before": {
+    "objects_covered": 42,
+    "init_covered": 84,
+    "goal_covered": 6,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 2
+  },
+  "after": {
+    "objects_covered": 42,
+    "init_covered": 84,
+    "goal_covered": 6,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "Each city contains specific locations that may serve as destinations for the packages: locations such as cityX-1, cityX-2 for standard locations, and cityX-3 for airports, where 'X' corresponds to the city number.",
+      "revised_text": "Each city contains specific locations that may serve as destinations for the packages: locations cityX-1 and cityX-2, and the airport cityX-3, where 'X' corresponds to the city number.",
+      "reason_en": "Removes the open-ended “such as” wording and states the exact three-location suffix schema.",
+      "reason_zh": "删除开放式的“例如”措辞，并明确精确的三地点后缀模式。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 6-8: exact location objects",
+        "golden_problem.pddl:lines 36-70: location, airport, and in-city atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "contradiction",
+      "original_text": "Our task is to use the available vehicles to achieve these delivery goals efficiently.",
+      "revised_text": "All six listed package destinations must hold simultaneously.",
+      "reason_en": "Removes the unsupported efficiency objective and explicitly states the six-way goal conjunction.",
+      "reason_zh": "删除未受支持的效率目标，并明确六个目标同时成立。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 93-98: conjunctive six-atom goal"
+      ]
+    }
+  ],
+  "preserved": [
+    "All mappings and complete original goal"
+  ],
+  "verification": {
+    "ledger_rows": 132,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

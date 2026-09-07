@@ -14,6 +14,7 @@ GENERIC_COMMIT="e6bbc91631b42026a2bc1e91cb51537d1151aa14"
 # No beta/release tag contains 85e0cfaf yet; pin the PR tip and annotate VERSION_NOTE.
 ZEROCLAW_COMMIT="85e0cfafbe677590e4fe5947f83673bb49ba0fc2"  # unreleased-pr8935+gemini-thought-signature
 ZEROCLAW_VERSION_NOTE="unreleased-pr8935+gemini-thought-signature"
+QWEN35_TOKENIZER_REVISION="851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
 
 if ! command -v uv >/dev/null 2>&1; then
     printf 'uv is required. Install it first: curl -LsSf https://astral.sh/uv/install.sh | sh\n' >&2
@@ -64,6 +65,23 @@ install_nanobot() {
         "${LOCK_ROOT}/nanobot.txt"
 }
 
+install_logits() {
+    local root="${RUNTIME_ROOT}/logits-bridge"
+    local env_path="${root}/venv"
+    local model_path="${root}/models/Qwen--Qwen3.5-4B/${QWEN35_TOKENIZER_REVISION}"
+    ensure_venv "${env_path}"
+    uv pip sync --python "${env_path}/bin/python" \
+        "${LOCK_ROOT}/logits-bridge.txt"
+    if [[ ! -f "${model_path}/tokenizer.json" ]]; then
+        mkdir -p "${model_path}"
+        "${env_path}/bin/hf" download Qwen/Qwen3.5-4B \
+            config.json tokenizer.json tokenizer_config.json \
+            chat_template.jinja vocab.json merges.txt \
+            --revision "${QWEN35_TOKENIZER_REVISION}" \
+            --local-dir "${model_path}"
+    fi
+}
+
 install_generic() {
     local root="${RUNTIME_ROOT}/genericagent"
     checkout_commit \
@@ -108,9 +126,11 @@ for target in "$@"; do
             install_nanobot
             install_zeroclaw
             install_generic
+            install_logits
             ;;
         hermes) install_hermes ;;
         nanobot) install_nanobot ;;
+        logits|logits-bridge) install_logits ;;
         zeroclaw) install_zeroclaw ;;
         generic|genericagent) install_generic ;;
         *)

@@ -1,0 +1,39 @@
+{
+  "case": "p29",
+  "status": "COMPLETE",
+  "decision": "NO REWRITE REQUIRED",
+  "counts": {
+    "objects": 44,
+    "init": 88,
+    "goal": 17,
+    "semantic_items": 149
+  },
+  "before": {
+    "objects_covered": 44,
+    "init_covered": 88,
+    "goal_covered": 17,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 44,
+    "init_covered": 88,
+    "goal_covered": 17,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [],
+  "preserved": [
+    "The complete original English description, byte-for-byte, because its direct statements and finite rules cover exactly the golden semantics."
+  ],
+  "verification": {
+    "ledger_rows": 149,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

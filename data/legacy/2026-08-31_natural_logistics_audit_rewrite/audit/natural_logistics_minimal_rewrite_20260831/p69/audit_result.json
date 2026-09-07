@@ -1,0 +1,122 @@
+{
+  "case": "p69",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 87,
+    "init": 174,
+    "goal": 35,
+    "semantic_items": 296
+  },
+  "before": {
+    "objects_covered": 47,
+    "init_covered": 63,
+    "goal_covered": 5,
+    "missing": 54,
+    "ambiguous": 127,
+    "contradictory": 0,
+    "over_generated": 78
+  },
+  "after": {
+    "objects_covered": 87,
+    "init_covered": 174,
+    "goal_covered": 35,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "Initial setup for the logistics game includes 36 packages labeled from obj11 to obj123 and 12 trucks labeled from tru1 to tru12.",
+      "revised_text": "Initial setup for the logistics game includes, for each X from 1 to 12, the three packages objX1, objX2, and objX3, and includes 12 trucks labeled from tru1 to tru12.",
+      "reason_en": "Replaces the pseudo-range obj11 to obj123 with a bounded two-index construction while preserving the truck declaration.",
+      "reason_zh": "用有界的双索引构造替换 obj11 到 obj123 的伪范围，并保留卡车声明。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 4-90: exact object set",
+        "golden_problem.pddl:lines 93-140: (PACKAGE ...) and (TRUCK ...) facts"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "There are also 12 cities each with a position and airport location.",
+      "revised_text": "There are also 12 cities labeled from cit1 to cit12, each with a position and airport location.",
+      "reason_en": "Adds the missing city labels while preserving the original count and city/location framing.",
+      "reason_zh": "补充缺失的城市标签，同时保留原有数量和城市/地点表述。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 141-152: (CITY CIT1) through (CITY CIT12)"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "ambiguity",
+      "original_text": "Every airplane (apn1, apn2, and apn3) is initially stationed at apt12 or apt7.",
+      "revised_text": "Every airplane (apn1, apn2, and apn3) is initially stationed as follows: apn1 and apn2 are at apt12, and apn3 is at apt7.",
+      "reason_en": "Resolves the ambiguous apt12-or-apt7 placement into the three exact initial airplane locations.",
+      "reason_zh": "将含糊的 apt12 或 apt7 表述改为三架飞机各自的确切初始位置。",
+      "golden_evidence": [
+        "golden_problem.pddl:line 192: (AT APN1 APT12)",
+        "golden_problem.pddl:line 193: (AT APN2 APT12)",
+        "golden_problem.pddl:line 194: (AT APN3 APT7)"
+      ]
+    },
+    {
+      "id": 4,
+      "category": "missing_rule",
+      "original_text": "Each position from pos1 to pos12 is located within its corresponding city, and similarly, each airport (apt1 to apt12) is located in its respective city.",
+      "revised_text": "For each X from 1 to 12, posX and aptX are locations in citX, and aptX is an airport.",
+      "reason_en": "Defines the index correspondence, location types, airport types, and all location-to-city relations without guessing.",
+      "reason_zh": "明确索引对应、地点类型、机场类型和全部地点到城市关系，无需猜测。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 153-188: (LOCATION ...) and (AIRPORT ...) facts",
+        "golden_problem.pddl:lines 243-266: (IN-CITY ...) facts"
+      ]
+    },
+    {
+      "id": 5,
+      "category": "missing_rule",
+      "original_text": "Specifically, the packages start at various locations; for example, obj11, obj12, and obj13 are at pos1, with the corresponding truck tru1.",
+      "revised_text": "Specifically, initially, for each X from 1 to 12, truck truX and packages objX1, objX2, and objX3 are at posX.",
+      "reason_en": "Replaces a vague example with the complete bounded initial mapping for all 12 trucks and 36 packages.",
+      "reason_zh": "用完整有界规则替换模糊示例，覆盖 12 辆卡车和 36 个包裹的初始位置。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 195-242: all truck and package (AT ...) facts"
+      ]
+    },
+    {
+      "id": 6,
+      "category": "irregular_mapping",
+      "original_text": "For instance, obj81 needs to be at pos1, obj62 at pos5, obj123 at pos7, obj42 at apt12, and obj112 at apt6.",
+      "revised_text": "Specifically, obj81 needs to be at pos1; obj62 needs to be at pos5; obj123 needs to be at pos7; obj42 needs to be at apt12; obj112 needs to be at apt6; obj63 needs to be at apt8; obj111 needs to be at pos5; obj122 needs to be at apt5; obj72 needs to be at pos1; obj52 needs to be at apt2; obj103 needs to be at apt3; obj61 needs to be at apt5; obj21 needs to be at apt9; obj31 needs to be at apt12; obj121 needs to be at pos12; obj41 needs to be at apt10; obj51 needs to be at apt5; obj22 needs to be at pos3; obj93 needs to be at apt10; obj13 needs to be at apt5; obj71 needs to be at pos7; obj73 needs to be at pos7; obj92 needs to be at apt2; obj12 needs to be at apt6; obj83 needs to be at apt8; obj33 needs to be at pos12; obj102 needs to be at pos11; obj23 needs to be at pos12; obj11 needs to be at apt9; obj32 needs to be at apt3; obj43 needs to be at apt7; obj91 needs to be at pos5; obj53 needs to be at apt6; obj113 needs to be at pos9; obj101 needs to be at apt12.",
+      "reason_en": "Expands the five examples into the exact irregular 35-atom goal mapping.",
+      "reason_zh": "将五个示例扩展为精确的不规则 35 原子目标映射。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 269-303: all 35 goal atoms"
+      ]
+    },
+    {
+      "id": 7,
+      "category": "ambiguity",
+      "original_text": "The comprehensive list outlines destinations for all packages ensuring proper distribution and logistics management to achieve the described end positions for each package.",
+      "revised_text": "These 35 package destinations must all hold simultaneously.",
+      "reason_en": "Removes the unsupported claim about all 36 packages and states that the 35 listed goals are simultaneous.",
+      "reason_zh": "删除关于全部 36 个包裹的不受支持声明，并明确列出的 35 个目标同时成立。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 268-304: conjunctive goal containing 35 atoms"
+      ]
+    }
+  ],
+  "preserved": [
+    "Original setup-to-goal narrative order",
+    "Correct goal-transition sentence and all unaffected wording"
+  ],
+  "verification": {
+    "ledger_rows": 296,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

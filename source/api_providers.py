@@ -3,6 +3,9 @@
 - **OpenAI**: Responses API (``client.responses.create``) with optional hosted tools.
 - **Gemini**: Google GenAI SDK on **Gemini Enterprise Agent Platform / Vertex**
   with a Google Cloud API key and JSON-schema structured output.
+- **DeepSeek**: OpenAI-compatible Chat Completions API with JSON output. The
+  complete response object, including any provider-returned
+  ``reasoning_content``, is retained in the trace.
 
 Gemini credentials (``_private/.env`` via ``env_loader``, or shell env):
 
@@ -11,6 +14,8 @@ Gemini credentials (``_private/.env`` via ``env_loader``, or shell env):
 - ``GOOGLE_CLOUD_LOCATION`` (e.g. ``global``)
 
 OpenAI: ``_private/key.txt``
+
+DeepSeek: ``DEEPSEEK_API_KEY`` from ``_private/.env`` or the shell.
 
 The Gemini formalizer/planner API path uses **Gemini Enterprise / Vertex via
 ``GOOGLE_CLOUD_API_KEY``** -- no Developer API key (``key_gemini.txt`` /
@@ -22,11 +27,18 @@ uses Vertex ADC (``GOOGLE_APPLICATION_CREDENTIALS`` or existing ADC) plus
 from __future__ import annotations
 
 import datetime
+import errno
+import http.client
 import json
 import os
+import re
+import socket
+import ssl
 import time
+from email.utils import parsedate_to_datetime
 
 from openai import OpenAI
+import requests
 
 from env_loader import load_project_dotenv
 
@@ -39,11 +51,50 @@ GEMINI_BACKEND = "google-vertex-api-key"
 GEMINI_INTERACTIONS_BACKEND = "google-developer-api-key"
 GEMINI_API_KEY_ENV = "GOOGLE_CLOUD_API_KEY"
 
-# Application-level 429 / RESOURCE_EXHAUSTED retries for the non-agent API
-# pipelines (llm-as-formalizer-api / llm-as-planner-api). Three attempts total;
-# only raise after all three fail. Backoff is applied between attempts.
-RATE_LIMIT_MAX_ATTEMPTS = 3
-RATE_LIMIT_BACKOFF_SECONDS = (10.0, 30.0, 60.0)
+DEEPSEEK_PROVIDER = "deepseek"
+DEEPSEEK_BACKEND = "deepseek-chat-completions"
+DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+
+LOGITS_PROVIDER = "logits"
+LOGITS_BACKEND = "logits-public-rest-openai-adapter"
+LOGITS_API_KEY_ENV = "LOGITS_API_KEY"
+
+# The standalone API pipelines own this policy independently of agent_formalizer.
+# SDK retries are disabled for their clients so every application-visible
+# attempt and delay can be recorded in the per-problem trace.
+DIRECT_API_TRANSIENT_POLICY_ID = "external-transient-v2"
+DIRECT_API_MAX_TRANSIENT_RETRIES = 5
+DIRECT_API_TRANSIENT_BACKOFF_SECONDS = (1.0, 2.0, 4.0, 8.0, 16.0)
+DIRECT_API_MAX_RETRY_AFTER_SECONDS = 60.0
+DIRECT_API_RETRYABLE_HTTP_STATUSES = frozenset(
+    {408, 429, 502, 503, 504, 520, 521, 522, 523, 524, 525, 529}
+)
+
+# Backwards-compatible names for callers that used the earlier 429-only helper.
+RATE_LIMIT_MAX_ATTEMPTS = DIRECT_API_MAX_TRANSIENT_RETRIES + 1
+RATE_LIMIT_BACKOFF_SECONDS = DIRECT_API_TRANSIENT_BACKOFF_SECONDS
+
+_TRANSIENT_500_CODES = frozenset(
+    {
+        "INTERNAL",
+        "INTERNAL_ERROR",
+        "INTERNAL_SERVER_ERROR",
+        "SERVER_ERROR",
+        "TEMPORARILY_UNAVAILABLE",
+    }
+)
+_TRANSIENT_PROVIDER_STATUSES = frozenset(
+    {
+        "DEADLINE_EXCEEDED",
+        "RATE_LIMIT",
+        "RATE_LIMITED",
+        "RESOURCE_EXHAUSTED",
+        "SERVICE_UNAVAILABLE",
+        "TOO_MANY_REQUESTS",
+        "UNAVAILABLE",
+    }
+)
 
 OPENAI_API_MODELS = [
     "gpt-3.5-turbo",
@@ -84,9 +135,14 @@ GEMINI_API_MODELS = [
     "gemini-1.5-flash-8b",
 ]
 
-API_MODELS = OPENAI_API_MODELS + GEMINI_API_MODELS
+DEEPSEEK_API_MODELS = [
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+]
 
-REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5")
+API_MODELS = OPENAI_API_MODELS + GEMINI_API_MODELS + DEEPSEEK_API_MODELS
+
+REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "deepseek-v4")
 
 OPENAI_TOOLS = [
     {"type": "web_search"},
@@ -100,13 +156,31 @@ def is_gemini_model(model: str) -> bool:
     return model.startswith("gemini-") or model in GEMINI_API_MODELS
 
 
+def is_deepseek_model(model: str) -> bool:
+    return model.startswith("deepseek-") or model in DEEPSEEK_API_MODELS
+
+
+def is_logits_model(model: str) -> bool:
+    """Logits model availability is dynamic; require an explicit provider id."""
+    return model.startswith("logits/") and len(model.split("/", 1)[1]) > 0
+
+
+def validate_api_model(model: str) -> str:
+    if model in API_MODELS or is_logits_model(model):
+        return model
+    raise ValueError(
+        f"Unsupported API model {model!r}. Use a known model name or an explicit "
+        "dynamic Logits route such as logits/Qwen/Qwen3.5-4B."
+    )
+
+
 def is_reasoning_model(model: str) -> bool:
     return any(model.startswith(p) for p in REASONING_PREFIXES)
 
 
 def default_tools_for_model(model: str) -> tuple[list | None, dict | None]:
-    """Return ``(tools, tool_executors)`` for OpenAI models; ``(None, None)`` for Gemini."""
-    if is_gemini_model(model):
+    """Return hosted tools only for models served by OpenAI Responses."""
+    if is_gemini_model(model) or is_deepseek_model(model) or is_logits_model(model):
         return None, None
     executors = OPENAI_TOOL_EXECUTORS or None
     return OPENAI_TOOLS, executors
@@ -146,6 +220,28 @@ def require_gemini_vertex_api_key_config() -> dict[str, str]:
             "credential JSON is required."
         )
     return {"api_key": api_key, "project": project, "location": location}
+
+
+def require_deepseek_api_key_config() -> dict[str, str]:
+    """Return the explicitly named DeepSeek credential without logging it."""
+    api_key = os.environ.get(DEEPSEEK_API_KEY_ENV, "").strip()
+    if not api_key:
+        raise SystemExit(
+            f"DeepSeek API key not found. Set {DEEPSEEK_API_KEY_ENV} in "
+            "_private/.env or the shell."
+        )
+    return {"api_key": api_key}
+
+
+def require_logits_api_key_config() -> dict[str, str]:
+    """Return the explicitly named Logits credential without logging it."""
+    api_key = os.environ.get(LOGITS_API_KEY_ENV, "").strip()
+    if not api_key:
+        raise SystemExit(
+            f"Logits API key not found. Set {LOGITS_API_KEY_ENV} in "
+            "_private/.env or the shell."
+        )
+    return {"api_key": api_key}
 
 
 def require_gemini_vertex_project_config() -> dict[str, str]:
@@ -188,14 +284,47 @@ def build_gemini_client():
     Enterprise default ``v1beta1``).
     """
     from google import genai
-    from google.genai.types import HttpOptions
+    from google.genai.types import HttpOptions, HttpRetryOptions
 
     cfg = require_gemini_vertex_api_key_config()
     return genai.Client(
         api_key=cfg["api_key"],
         vertexai=True,
-        http_options=HttpOptions(api_version="v1"),
+        http_options=HttpOptions(
+            api_version="v1",
+            retry_options=HttpRetryOptions(attempts=1),
+        ),
     )
+
+
+def build_deepseek_client():
+    """Construct the OpenAI-compatible DeepSeek client with SDK retries off."""
+    cfg = require_deepseek_api_key_config()
+    return OpenAI(
+        api_key=cfg["api_key"],
+        base_url=DEEPSEEK_BASE_URL,
+        max_retries=0,
+    )
+
+
+def build_logits_client(model: str):
+    """Build the direct public-REST client used by the API-only pipelines."""
+    import atexit
+
+    from agent_formalizer.config import LOGITS_MODEL_ASSETS_ROOT
+    from agent_formalizer.logits_openai_bridge import JsonlLedger, LogitsChatBackend
+
+    cfg = require_logits_api_key_config()
+    upstream_model = model.split("/", 1)[1]
+    client = LogitsChatBackend(
+        model=upstream_model,
+        api_key=cfg["api_key"],
+        ledger=JsonlLedger(None),
+        assets_root=LOGITS_MODEL_ASSETS_ROOT,
+        origin=os.environ.get("LOGITS_BASE_URL", "https://api.logits.dev"),
+    )
+    atexit.register(client.close)
+    return client
 
 
 def require_gemini_developer_api_key_config() -> dict[str, str]:
@@ -241,30 +370,375 @@ def build_gemini_interactions_client():
 
 
 def build_provider_client(model: str) -> tuple[str, object]:
-    """Return ``(provider_name, client)`` where provider is ``openai`` or ``google-vertex``."""
+    """Return the standalone API provider name and its configured client."""
     if is_gemini_model(model):
         return GEMINI_PROVIDER, build_gemini_client()
-    return "openai", OpenAI(api_key=_read_key_file("key.txt"))
+    if is_deepseek_model(model):
+        return DEEPSEEK_PROVIDER, build_deepseek_client()
+    if is_logits_model(model):
+        return LOGITS_PROVIDER, build_logits_client(model)
+    return "openai", OpenAI(api_key=_read_key_file("key.txt"), max_retries=0)
 
 
 def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def is_rate_limit_error(exc: BaseException) -> bool:
-    """True for HTTP 429 / RESOURCE_EXHAUSTED / quota-style rate limits."""
-    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
-    if code == 429:
-        return True
-    text = str(exc)
-    upper = text.upper()
-    return (
-        "429" in text
-        or "RESOURCE_EXHAUSTED" in upper
-        or "TOO_MANY_REQUESTS" in upper
-        or "RATE_LIMIT" in upper
-        or "QUOTA EXCEEDED" in upper
+def direct_api_transient_policy() -> dict:
+    """Return the secret-free, versioned retry policy recorded in traces."""
+    return {
+        "id": DIRECT_API_TRANSIENT_POLICY_ID,
+        "max_retries": DIRECT_API_MAX_TRANSIENT_RETRIES,
+        "backoff_seconds": list(DIRECT_API_TRANSIENT_BACKOFF_SECONDS),
+        "max_retry_after_seconds": DIRECT_API_MAX_RETRY_AFTER_SECONDS,
+        "retryable_http_statuses": sorted(DIRECT_API_RETRYABLE_HTTP_STATUSES),
+    }
+
+
+def _coerce_http_status(value) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value if 100 <= value <= 599 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        number = int(value.strip())
+        return number if 100 <= number <= 599 else None
+    enum_value = getattr(value, "value", None)
+    if enum_value is not value:
+        return _coerce_http_status(enum_value)
+    return None
+
+
+def _exception_http_status(exc: BaseException) -> int | None:
+    for value in (getattr(exc, "status_code", None), getattr(exc, "code", None)):
+        status = _coerce_http_status(value)
+        if status is not None:
+            return status
+    response = getattr(exc, "response", None)
+    if response is not None:
+        for value in (
+            getattr(response, "status_code", None),
+            getattr(response, "status", None),
+        ):
+            status = _coerce_http_status(value)
+            if status is not None:
+                return status
+    # Some SDK wrappers discard structured attributes but retain a leading
+    # HTTP status. Keep this narrow so arbitrary numbers in messages do not
+    # change routing.
+    match = re.match(r"^\s*(\d{3})\b", str(exc))
+    return _coerce_http_status(match.group(1)) if match else None
+
+
+def _structured_error_tokens(value) -> set[str]:
+    tokens: set[str] = set()
+
+    def visit(item):
+        if isinstance(item, dict):
+            for key, nested in item.items():
+                if str(key).lower() in {"code", "reason", "status", "type"}:
+                    tokens.add(str(nested).strip().upper())
+                visit(nested)
+        elif isinstance(item, (list, tuple)):
+            for nested in item:
+                visit(nested)
+
+    visit(value)
+    return {token for token in tokens if token}
+
+
+def _exception_provider_tokens(exc: BaseException) -> set[str]:
+    tokens = set()
+    for attr in ("status", "reason", "type"):
+        value = getattr(exc, attr, None)
+        if value is not None:
+            tokens.add(str(value).strip().upper())
+    for attr in ("details", "body"):
+        tokens.update(_structured_error_tokens(getattr(exc, attr, None)))
+
+    # Compatibility fallback for exception wrappers without structured fields.
+    upper = str(exc).upper()
+    for token in _TRANSIENT_PROVIDER_STATUSES:
+        if re.search(rf"\b{re.escape(token)}\b", upper):
+            tokens.add(token)
+    if "QUOTA EXCEEDED" in upper:
+        tokens.add("RESOURCE_EXHAUSTED")
+    return tokens
+
+
+def _exception_chain(exc: BaseException):
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def _is_retryable_transport_error(exc: BaseException) -> bool:
+    chain = tuple(_exception_chain(exc))
+    if any(
+        isinstance(item, (ssl.SSLCertVerificationError, requests.exceptions.SSLError))
+        or "certificate verify failed" in str(item).lower()
+        for item in chain
+    ):
+        return False
+
+    standard_types = (
+        ConnectionError,
+        TimeoutError,
+        socket.gaierror,
+        socket.timeout,
+        http.client.RemoteDisconnected,
+        http.client.IncompleteRead,
+        http.client.BadStatusLine,
+        http.client.LineTooLong,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
     )
+    retryable_errnos = {
+        errno.ECONNABORTED,
+        errno.ECONNREFUSED,
+        errno.ECONNRESET,
+        errno.EHOSTUNREACH,
+        errno.ENETDOWN,
+        errno.ENETUNREACH,
+        errno.EPIPE,
+        errno.ETIMEDOUT,
+    }
+    transport_class_names = {
+        "ConnectError",
+        "ConnectTimeout",
+        "NetworkError",
+        "PoolTimeout",
+        "ReadError",
+        "ReadTimeout",
+        "RemoteProtocolError",
+        "TimeoutException",
+        "TransportError",
+        "WriteError",
+        "WriteTimeout",
+    }
+    for item in chain:
+        if isinstance(item, standard_types):
+            return True
+        if isinstance(item, ssl.SSLError):
+            return True
+        if isinstance(item, OSError) and item.errno in retryable_errnos:
+            return True
+        if any(
+            cls.__module__.split(".", 1)[0] in {"httpx", "httpcore"}
+            and cls.__name__ in transport_class_names
+            for cls in type(item).__mro__
+        ):
+            return True
+    return False
+
+
+def classify_direct_api_error(exc: BaseException) -> dict:
+    """Classify an API exception without depending on agent_formalizer.
+
+    Structured HTTP/provider fields take precedence. Text is only a fallback
+    for SDK wrappers that discard those fields.
+    """
+    status = _exception_http_status(exc)
+    provider_tokens = _exception_provider_tokens(exc)
+    provider_status = next(
+        (
+            token
+            for token in sorted(provider_tokens)
+            if token and _coerce_http_status(token) is None
+        ),
+        None,
+    )
+
+    if status is not None:
+        if status in DIRECT_API_RETRYABLE_HTTP_STATUSES:
+            return {
+                "retryable": True,
+                "reason": f"upstream_http_{status}",
+                "http_status": status,
+                "provider_status": provider_status,
+            }
+        if status == 500 and provider_tokens & _TRANSIENT_500_CODES:
+            return {
+                "retryable": True,
+                "reason": "upstream_structured_internal_error",
+                "http_status": status,
+                "provider_status": provider_status,
+            }
+        return {
+            "retryable": False,
+            "reason": f"upstream_http_{status}",
+            "http_status": status,
+            "provider_status": provider_status,
+        }
+
+    transient_provider = provider_tokens & _TRANSIENT_PROVIDER_STATUSES
+    if transient_provider:
+        provider_status = sorted(transient_provider)[0]
+        return {
+            "retryable": True,
+            "reason": f"upstream_provider_{provider_status.lower()}",
+            "http_status": None,
+            "provider_status": provider_status,
+        }
+    if _is_retryable_transport_error(exc):
+        return {
+            "retryable": True,
+            "reason": "upstream_transport_error",
+            "http_status": None,
+            "provider_status": provider_status,
+        }
+    return {
+        "retryable": False,
+        "reason": "non_retryable_api_error",
+        "http_status": None,
+        "provider_status": provider_status,
+    }
+
+
+def is_rate_limit_error(exc: BaseException) -> bool:
+    """Backward-compatible predicate for 429/quota-style rate limits."""
+    status = _exception_http_status(exc)
+    tokens = _exception_provider_tokens(exc)
+    return status == 429 or bool(
+        tokens
+        & {
+            "RATE_LIMIT",
+            "RATE_LIMITED",
+            "RESOURCE_EXHAUSTED",
+            "TOO_MANY_REQUESTS",
+        }
+    )
+
+
+def _retry_headers(exc: BaseException):
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) if response is not None else None
+    return headers or getattr(exc, "headers", None)
+
+
+def _retry_delay_seconds(
+    exc: BaseException,
+    retry_index: int,
+    backoff_seconds: tuple[float, ...],
+    max_retry_after_seconds: float,
+) -> tuple[float, str]:
+    headers = _retry_headers(exc)
+    raw = (
+        headers.get("Retry-After") or headers.get("retry-after")
+        if headers is not None
+        else None
+    )
+    parsed: float | None = None
+    if raw:
+        try:
+            parsed = float(raw)
+        except (TypeError, ValueError):
+            try:
+                parsed = parsedate_to_datetime(raw).timestamp() - time.time()
+            except (TypeError, ValueError, OverflowError):
+                parsed = None
+    if parsed is not None:
+        return (
+            round(max(0.0, min(max_retry_after_seconds, parsed)), 6),
+            "retry_after",
+        )
+    index = min(retry_index, len(backoff_seconds) - 1)
+    return backoff_seconds[index], "fixed_backoff"
+
+
+def call_with_transient_retry(
+    fn,
+    *,
+    tracer=None,
+    provider: str = "",
+    max_attempts: int = DIRECT_API_MAX_TRANSIENT_RETRIES + 1,
+    backoff_seconds: tuple[float, ...] = DIRECT_API_TRANSIENT_BACKOFF_SECONDS,
+    max_retry_after_seconds: float = DIRECT_API_MAX_RETRY_AFTER_SECONDS,
+):
+    """Call ``fn`` with bounded transparent retries for external transients."""
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be >= 1")
+    if not backoff_seconds or any(delay < 0 for delay in backoff_seconds):
+        raise ValueError("backoff_seconds must be non-empty and non-negative")
+    if max_retry_after_seconds < 0:
+        raise ValueError("max_retry_after_seconds must be non-negative")
+
+    for attempt in range(1, max_attempts + 1):
+        started = time.monotonic()
+        try:
+            result = fn()
+        except Exception as exc:
+            classification = classify_direct_api_error(exc)
+            will_retry = classification["retryable"] and attempt < max_attempts
+            delay = None
+            delay_source = None
+            if will_retry:
+                delay, delay_source = _retry_delay_seconds(
+                    exc,
+                    attempt - 1,
+                    backoff_seconds,
+                    max_retry_after_seconds,
+                )
+            routing_class = (
+                "transparent_transient"
+                if will_retry
+                else (
+                    "terminal_infrastructure"
+                    if classification["retryable"]
+                    else "api_error"
+                )
+            )
+            routing_reason = (
+                "provider_transient_exhausted"
+                if classification["retryable"] and not will_retry
+                else classification["reason"]
+            )
+            if tracer:
+                tracer.emit(
+                    "api_attempt",
+                    provider=provider,
+                    policy_id=DIRECT_API_TRANSIENT_POLICY_ID,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    outcome="error",
+                    duration_ms=round((time.monotonic() - started) * 1000.0, 3),
+                    error_type=type(exc).__name__,
+                    http_status=classification["http_status"],
+                    provider_status=classification["provider_status"],
+                    routing_class=routing_class,
+                    routing_reason=routing_reason,
+                    last_error_reason=classification["reason"],
+                    will_retry=will_retry,
+                    retry_delay_seconds=delay,
+                    retry_delay_source=delay_source,
+                )
+            if not will_retry:
+                raise
+            print(
+                f"[{provider or 'api'}] transient {classification['reason']}; "
+                f"retry {attempt}/{max_attempts} after {delay:g}s",
+                flush=True,
+            )
+            time.sleep(delay)
+        else:
+            if tracer:
+                tracer.emit(
+                    "api_attempt",
+                    provider=provider,
+                    policy_id=DIRECT_API_TRANSIENT_POLICY_ID,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    outcome="success",
+                    duration_ms=round((time.monotonic() - started) * 1000.0, 3),
+                    routing_class="upstream_success",
+                    routing_reason="upstream_success",
+                    will_retry=False,
+                )
+            return result
+    raise AssertionError("unreachable")
 
 
 def call_with_rate_limit_retry(
@@ -275,40 +749,14 @@ def call_with_rate_limit_retry(
     max_attempts: int = RATE_LIMIT_MAX_ATTEMPTS,
     backoff_seconds: tuple[float, ...] = RATE_LIMIT_BACKOFF_SECONDS,
 ):
-    """Call ``fn`` up to ``max_attempts`` times on rate-limit errors.
-
-    Non-rate-limit exceptions propagate immediately. After the final failed
-    rate-limit attempt the last exception is re-raised.
-    """
-    if max_attempts < 1:
-        raise ValueError("max_attempts must be >= 1")
-    last_exc: BaseException | None = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return fn()
-        except Exception as e:
-            last_exc = e
-            if not is_rate_limit_error(e) or attempt >= max_attempts:
-                raise
-            delay = backoff_seconds[min(attempt - 1, len(backoff_seconds) - 1)]
-            print(
-                f"[{provider or 'api'}] rate limit (429); "
-                f"retry {attempt}/{max_attempts} after {delay:.0f}s: {e}",
-                flush=True,
-            )
-            if tracer:
-                tracer.emit(
-                    "rate_limit_retry",
-                    provider=provider,
-                    attempt=attempt,
-                    max_attempts=max_attempts,
-                    delay_s=delay,
-                    error_type=type(e).__name__,
-                    error_message=str(e),
-                )
-            time.sleep(delay)
-    assert last_exc is not None
-    raise last_exc
+    """Compatibility wrapper; new code should use transient retry."""
+    return call_with_transient_retry(
+        fn,
+        tracer=tracer,
+        provider=provider,
+        max_attempts=max_attempts,
+        backoff_seconds=backoff_seconds,
+    )
 
 
 def _serialize_response(resp) -> dict:
@@ -374,7 +822,7 @@ def _respond_openai(client, model, input_items, text_format, tools=None, tool_ex
             tracer.emit("request", round=round_idx, provider="openai", kwargs=kwargs)
         t0 = time.monotonic()
         try:
-            resp = call_with_rate_limit_retry(
+            resp = call_with_transient_retry(
                 lambda: client.responses.create(**kwargs),
                 tracer=tracer,
                 provider="openai",
@@ -538,7 +986,7 @@ def generate_gemini_json(
 
     t0 = time.monotonic()
     try:
-        resp = call_with_rate_limit_retry(
+        resp = call_with_transient_retry(
             lambda: client.models.generate_content(
                 model=model,
                 contents=prompt,
@@ -587,6 +1035,171 @@ def _respond_gemini(client, model, input_items, text_format, tracer=None) -> str
     )
 
 
+def generate_deepseek_json(
+    client,
+    model: str,
+    input_items: list,
+    schema: dict,
+    *,
+    tracer=None,
+) -> str:
+    """Generate a JSON object through DeepSeek Chat Completions.
+
+    DeepSeek's JSON mode requires the prompt to explicitly request JSON. It
+    does not currently enforce arbitrary JSON Schema server-side, so the
+    schema is included verbatim in the system instruction and the caller
+    performs the existing parse/key checks.
+    """
+    json_instruction = (
+        "Return exactly one valid JSON object and no other text. Do not use "
+        "Markdown fences. The JSON object must conform to this JSON Schema:\n"
+        + json.dumps(schema, ensure_ascii=False, sort_keys=True)
+    )
+    messages = [{"role": "system", "content": json_instruction}, *input_items]
+    request = {
+        "model": model,
+        "messages": messages,
+        "response_format": {"type": "json_object"},
+    }
+    if tracer:
+        tracer.emit(
+            "request",
+            round=0,
+            provider=DEEPSEEK_PROVIDER,
+            backend=DEEPSEEK_BACKEND,
+            api_key_env=DEEPSEEK_API_KEY_ENV,
+            kwargs=request,
+        )
+
+    t0 = time.monotonic()
+    try:
+        resp = call_with_transient_retry(
+            lambda: client.chat.completions.create(**request),
+            tracer=tracer,
+            provider=DEEPSEEK_PROVIDER,
+        )
+    except Exception as e:
+        if tracer:
+            tracer.emit(
+                "api_error",
+                round=0,
+                provider=DEEPSEEK_PROVIDER,
+                elapsed_ms=(time.monotonic() - t0) * 1000.0,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
+        raise
+
+    elapsed_ms = (time.monotonic() - t0) * 1000.0
+    if tracer:
+        tracer.emit(
+            "response",
+            round=0,
+            provider=DEEPSEEK_PROVIDER,
+            elapsed_ms=elapsed_ms,
+            response=_serialize_response(resp),
+        )
+
+    choices = getattr(resp, "choices", None) or []
+    message = getattr(choices[0], "message", None) if choices else None
+    text = getattr(message, "content", None) if message is not None else None
+    if not text:
+        finish_reason = getattr(choices[0], "finish_reason", None) if choices else None
+        raise RuntimeError(
+            "DeepSeek returned empty JSON content "
+            f"(finish_reason={finish_reason or 'UNKNOWN'})"
+        )
+    return text
+
+
+def _respond_deepseek(client, model, input_items, text_format, tracer=None) -> str:
+    return generate_deepseek_json(
+        client,
+        model,
+        input_items,
+        text_format["schema"],
+        tracer=tracer,
+    )
+
+
+def generate_logits_json(
+    client,
+    model: str,
+    input_items: list,
+    schema: dict,
+    *,
+    tracer=None,
+) -> str:
+    """Generate schema-checked JSON through the public Logits REST protocol."""
+    upstream_model = model.split("/", 1)[1]
+    json_instruction = (
+        "Return exactly one valid JSON object and no other text. Do not use "
+        "Markdown fences. The JSON object must conform to this JSON Schema:\n"
+        + json.dumps(schema, ensure_ascii=False, sort_keys=True)
+    )
+    request = {
+        "model": upstream_model,
+        "messages": [{"role": "system", "content": json_instruction}, *input_items],
+        "response_format": {"type": "json_object"},
+        "logits_json_schema": schema,
+    }
+    if tracer:
+        tracer.emit(
+            "request",
+            round=0,
+            provider=LOGITS_PROVIDER,
+            backend=LOGITS_BACKEND,
+            api_key_env=LOGITS_API_KEY_ENV,
+            kwargs=request,
+        )
+    started = time.monotonic()
+    try:
+        response = call_with_transient_retry(
+            lambda: client.chat_completion(request),
+            tracer=tracer,
+            provider=LOGITS_PROVIDER,
+        )
+    except Exception as exc:
+        if tracer:
+            tracer.emit(
+                "api_error",
+                round=0,
+                provider=LOGITS_PROVIDER,
+                elapsed_ms=(time.monotonic() - started) * 1000.0,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+        raise
+    if tracer:
+        tracer.emit(
+            "response",
+            round=0,
+            provider=LOGITS_PROVIDER,
+            elapsed_ms=(time.monotonic() - started) * 1000.0,
+            response=response,
+        )
+    choices = response.get("choices") if isinstance(response, dict) else None
+    message = choices[0].get("message") if choices else None
+    text = message.get("content") if isinstance(message, dict) else None
+    if not text:
+        finish_reason = choices[0].get("finish_reason") if choices else None
+        raise RuntimeError(
+            "Logits returned empty JSON content "
+            f"(finish_reason={finish_reason or 'UNKNOWN'})"
+        )
+    return text
+
+
+def _respond_logits(client, model, input_items, text_format, tracer=None) -> str:
+    return generate_logits_json(
+        client,
+        model,
+        input_items,
+        text_format["schema"],
+        tracer=tracer,
+    )
+
+
 def respond_with_tools(provider: str, client, model, input_items, text_format,
                        tools=None, tool_executors=None, tool_choice="auto",
                        max_tool_rounds=8, tracer=None) -> str:
@@ -595,6 +1208,18 @@ def respond_with_tools(provider: str, client, model, input_items, text_format,
             # OpenAI-hosted tools are not available on the Gemini path.
             pass
         return _respond_gemini(client, model, input_items, text_format, tracer=tracer)
+    if provider == DEEPSEEK_PROVIDER:
+        if tools:
+            raise ValueError("DeepSeek Direct API baseline does not use hosted tools")
+        return _respond_deepseek(
+            client, model, input_items, text_format, tracer=tracer
+        )
+    if provider == LOGITS_PROVIDER:
+        if tools:
+            raise ValueError("Logits Direct API baseline does not use hosted tools")
+        return _respond_logits(
+            client, model, input_items, text_format, tracer=tracer
+        )
     return _respond_openai(
         client, model, input_items, text_format,
         tools=tools, tool_executors=tool_executors,

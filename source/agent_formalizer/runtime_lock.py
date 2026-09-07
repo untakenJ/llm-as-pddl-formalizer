@@ -11,6 +11,10 @@ from typing import Any
 
 from agent_formalizer.benchmark_profile import canonical_sha256
 from agent_formalizer.config import (
+    LOGITS_BRIDGE_ENV_PATH,
+    LOGITS_BRIDGE_SCRIPT,
+    LOGITS_GATEWAY_SCRIPT,
+    LOGITS_MODEL_ASSETS_ROOT,
     OPENCLAW_MODULE_DIR,
     OPENCLAW_NODE_BIN,
     ZEROCLAW_BIN,
@@ -243,6 +247,30 @@ def observe_runtime(adapter) -> dict[str, Any]:
     raise ValueError(f"No runtime-lock observer for {name}")
 
 
+def observe_logits_transport() -> dict[str, Any]:
+    python = LOGITS_BRIDGE_ENV_PATH / "bin" / "python"
+    digest, count = _python_manifest(python)
+    asset_files = [
+        path
+        for path in LOGITS_MODEL_ASSETS_ROOT.glob("**/*")
+        if path.is_file()
+        and ".cache" not in path.relative_to(LOGITS_MODEL_ASSETS_ROOT).parts
+    ]
+    assets_digest, assets_count = _tree_payload(
+        LOGITS_MODEL_ASSETS_ROOT, asset_files
+    )
+    return {
+        "python_version": _run_text([str(python), "--version"]),
+        "python_executable_sha256": _file_sha256(python.resolve()),
+        "python_distribution_manifest_sha256": digest,
+        "python_distribution_count": count,
+        "bridge_entrypoint_sha256": _file_sha256(LOGITS_BRIDGE_SCRIPT),
+        "gateway_entrypoint_sha256": _file_sha256(LOGITS_GATEWAY_SCRIPT),
+        "model_assets_manifest_sha256": assets_digest,
+        "model_assets_count": assets_count,
+    }
+
+
 def validate_runtime_lock(
     adapter, *, container_image_id: str | None = None
 ) -> dict[str, Any]:
@@ -256,6 +284,22 @@ def validate_runtime_lock(
     }
     container_expected = lock["container"]
     container_mismatches = {}
+    provider_transport = None
+    provider_mismatches = {}
+    if getattr(adapter, "raw_provider", getattr(adapter, "provider", None)) == "logits":
+        provider_observed = observe_logits_transport()
+        provider_expected = lock["provider_transports"]["logits"]
+        provider_mismatches = {
+            key: {"expected": value, "observed": provider_observed.get(key)}
+            for key, value in provider_expected.items()
+            if provider_observed.get(key) != value
+        }
+        provider_transport = {
+            "name": "logits",
+            "expected": provider_expected,
+            "observed": provider_observed,
+            "mismatches": provider_mismatches,
+        }
     dockerfile = Path(__file__).with_name("docker") / "Dockerfile"
     container_required = adapter.name != "minimum"
     observed_dockerfile_sha256 = (
@@ -281,7 +325,11 @@ def validate_runtime_lock(
     evidence = {
         "preset": "runtime-lock",
         "version": 1,
-        "status": "pass" if not mismatches and not container_mismatches else "fail",
+        "status": (
+            "pass"
+            if not mismatches and not container_mismatches and not provider_mismatches
+            else "fail"
+        ),
         "lock_id": lock["lock_id"],
         "lock_sha256": canonical_sha256(lock),
         "expected": expected,
@@ -296,10 +344,13 @@ def validate_runtime_lock(
             },
             "mismatches": container_mismatches,
         },
+        "provider_transport": provider_transport,
     }
-    if mismatches or container_mismatches:
+    if mismatches or container_mismatches or provider_mismatches:
         raise RuntimeLockMismatch(
             f"{adapter.name} runtime closure does not match {lock['lock_id']}: "
-            + ", ".join(sorted([*mismatches, *container_mismatches]))
+            + ", ".join(
+                sorted([*mismatches, *container_mismatches, *provider_mismatches])
+            )
         )
     return evidence

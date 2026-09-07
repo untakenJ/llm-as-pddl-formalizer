@@ -1,0 +1,196 @@
+{
+  "report": "preserved_random_spot_check",
+  "status": "PASS",
+  "cases_checked": 6,
+  "cases_passed": 6,
+  "cases_failed": 0,
+  "totals": {
+    "objects": {
+      "covered": 391,
+      "total": 391
+    },
+    "init": {
+      "covered": 782,
+      "total": 782
+    },
+    "goal": {
+      "covered": 126,
+      "total": 126
+    },
+    "semantic_items": {
+      "covered": 1299,
+      "total": 1299
+    }
+  },
+  "domain": {
+    "all_copies_identical": true,
+    "sha256": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f"
+  },
+  "criteria": {
+    "byte_identical": true,
+    "all_objects_covered": true,
+    "all_init_atoms_covered": true,
+    "all_goal_atoms_covered": true,
+    "all_correspondences_unique": true,
+    "deterministic_rules_expand_exactly": true,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "cases": {
+    "p02": {
+      "status": "PASS",
+      "counts": {
+        "objects": 15,
+        "init": 30,
+        "goal": 6,
+        "semantic_items": 51
+      },
+      "coverage": {
+        "objects": "15/15",
+        "init": "30/30",
+        "goal": "6/6"
+      },
+      "byte_identical": true,
+      "sha256": "17b0734003ccc33522bd01b9660b43687e50389af218a22ceef7f70a8cb15ecf",
+      "deterministic_evidence": "Two finite package groups and two explicit city/location groups expand exactly.",
+      "defects": {
+        "missing": 0,
+        "ambiguous": 0,
+        "contradictory": 0,
+        "over_generated": 0
+      },
+      "conclusion_en": "Preservation is correct; every golden item is uniquely supported.",
+      "conclusion_zh": "保留正确；每个黄金项都有唯一支持。"
+    },
+    "p20": {
+      "status": "PASS",
+      "counts": {
+        "objects": 37,
+        "init": 74,
+        "goal": 15,
+        "semantic_items": 126
+      },
+      "coverage": {
+        "objects": "37/37",
+        "init": "74/74",
+        "goal": "15/15"
+      },
+      "byte_identical": true,
+      "sha256": "97127c6eff6583ad5a8598cab33b5b0f1fa56aa8ffffe2bd4265fcfea151087e",
+      "deterministic_evidence": "Five explicit posX/aptX pairs uniquely expand the correspondence sentence to ten IN-CITY atoms.",
+      "defects": {
+        "missing": 0,
+        "ambiguous": 0,
+        "contradictory": 0,
+        "over_generated": 0
+      },
+      "conclusion_en": "Preservation is correct; grouped evidence expands exactly.",
+      "conclusion_zh": "保留正确；分组证据精确展开。"
+    },
+    "p40": {
+      "status": "PASS",
+      "counts": {
+        "objects": 58,
+        "init": 116,
+        "goal": 22,
+        "semantic_items": 196
+      },
+      "coverage": {
+        "objects": "58/58",
+        "init": "116/116",
+        "goal": "22/22"
+      },
+      "byte_identical": true,
+      "sha256": "25dabc48571e40bc10488ea0d0e790ab3b4dfb20a8dc8a7ef3890af1db4cca0c",
+      "deterministic_evidence": "None required; evidence is explicit.",
+      "defects": {
+        "missing": 0,
+        "ambiguous": 0,
+        "contradictory": 0,
+        "over_generated": 0
+      },
+      "conclusion_en": "Preservation is correct; all semantic items are explicit.",
+      "conclusion_zh": "保留正确；全部语义项均明确列出。"
+    },
+    "p55": {
+      "status": "PASS",
+      "counts": {
+        "objects": 73,
+        "init": 146,
+        "goal": 29,
+        "semantic_items": 248
+      },
+      "coverage": {
+        "objects": "73/73",
+        "init": "146/146",
+        "goal": "29/29"
+      },
+      "byte_identical": true,
+      "sha256": "62c5d7a86773f5cc084f3de5b83920f7b91cc5b9fb7b40f59410e3211d120547",
+      "deterministic_evidence": "None required; evidence is explicit.",
+      "defects": {
+        "missing": 0,
+        "ambiguous": 0,
+        "contradictory": 0,
+        "over_generated": 0
+      },
+      "conclusion_en": "Preservation is correct; all mappings match item for item.",
+      "conclusion_zh": "保留正确；所有映射逐项匹配。"
+    },
+    "p74": {
+      "status": "PASS",
+      "counts": {
+        "objects": 95,
+        "init": 190,
+        "goal": 37,
+        "semantic_items": 322
+      },
+      "coverage": {
+        "objects": "95/95",
+        "init": "190/190",
+        "goal": "37/37"
+      },
+      "byte_identical": true,
+      "sha256": "177a7dbe8de26b046c3d869a08bc1226eee3237fcc4a484e4391f1123e518b45",
+      "deterministic_evidence": "None required; evidence is explicit.",
+      "defects": {
+        "missing": 0,
+        "ambiguous": 0,
+        "contradictory": 0,
+        "over_generated": 0
+      },
+      "conclusion_en": "Preservation is correct; the full large case matches exactly.",
+      "conclusion_zh": "保留正确；该大型案例完整精确匹配。"
+    },
+    "p86": {
+      "status": "PASS",
+      "counts": {
+        "objects": 113,
+        "init": 226,
+        "goal": 17,
+        "semantic_items": 356
+      },
+      "coverage": {
+        "objects": "113/113",
+        "init": "226/226",
+        "goal": "17/17"
+      },
+      "byte_identical": true,
+      "sha256": "bd2f1b72ce16fa478598bf797ca7338de36631dbef4419879f38e4a6a63d63fd",
+      "deterministic_evidence": "None required; evidence is explicit.",
+      "defects": {
+        "missing": 0,
+        "ambiguous": 0,
+        "contradictory": 0,
+        "over_generated": 0
+      },
+      "conclusion_en": "Preservation is correct; all 356 semantic items match.",
+      "conclusion_zh": "保留正确；全部 356 个语义项均匹配。"
+    }
+  },
+  "failures": [],
+  "conclusion_en": "All six preserved cases pass independently; no case modification is warranted.",
+  "conclusion_zh": "六个保留案例均独立通过；无需修改任何案例。"
+}

@@ -1,0 +1,2 @@
+在物流游戏中，初始设置如下：有三个包裹 package1、package2、package3；五座城市 city1、city2、city3、city4、city5。每座城市都有一个记作 cityX-1 的普通地点和一个记作 cityX-2 的机场。另有五辆卡车 truck1 至 truck5 和两架飞机 plane1、plane2。truck1、truck2、truck3、truck4、truck5 分别从 city1-1、city2-1、city3-1、city4-1、city5-1 出发。plane2 和 plane1 分别停在 city1-2 和 city2-2。package3 初始位于 city1-1，package2 位于 city1-2，package1 位于 city4-1。目标是使 package3 到达 city1-2、package2 到达 city1-1、package1 到达 city3-2。
+

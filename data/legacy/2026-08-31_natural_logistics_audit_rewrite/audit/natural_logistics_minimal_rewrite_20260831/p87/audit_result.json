@@ -1,0 +1,86 @@
+{
+  "case": "p87",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 48,
+    "init": 96,
+    "goal": 8,
+    "semantic_items": 152
+  },
+  "before": {
+    "objects_covered": 46,
+    "init_covered": 57,
+    "goal_covered": 8,
+    "missing": 24,
+    "ambiguous": 17,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 48,
+    "init_covered": 96,
+    "goal_covered": 8,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "missing_rule",
+      "original_text": "Locations within these cities include designated areas (like city3-2 and city2-1) and airports (such as city1-3 and city2-3).",
+      "revised_text": "For each integer i from 1 through 3, the locations cityi-1, cityi-2, and cityi-3 are formed by concatenating city, i, and respectively -1, -2, and -3; all three locations are in cityi, and cityi-3 is an airport.",
+      "reason_en": "Examples did not enumerate or deterministically construct all nine locations, three airports, and nine in-city facts.",
+      "reason_zh": "示例不能枚举或确定性构造全部九个地点、三个机场以及九个地点—城市关系。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 8-9: nine location objects",
+        "golden_problem.pddl:lines 49-69: location, airport, and in-city atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "ambiguity",
+      "original_text": "Initially, the airplanes are positioned as follows: plane6 is at city2-3, plane5 and plane1 are both stationed at city1-3, and planes 4, 3, and 2 are at city3-3 or city2-3.",
+      "revised_text": "Initially, the airplanes are positioned as follows: plane6 is at city2-3, plane5 and plane1 are both stationed at city1-3, plane4 is at city3-3, and plane3 and plane2 are at city2-3.",
+      "reason_en": "The disjunction left the initial locations of Plane 4, Plane 3, and Plane 2 unresolved.",
+      "reason_zh": "析取表达使飞机 4、飞机 3 和飞机 2 的初始位置无法确定。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 70-75: all six airplane initial locations"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "irregular_mapping",
+      "original_text": "Regarding trucks: truck22 is at city3-2, trucks like truck21 and truck16 are at various city2 locations, whereas trucks 20, 18, and 13 are spread across city1 locations, and several others are in use around city3.",
+      "revised_text": "Regarding trucks: truck22 and truck4 are at city3-2; truck21 and truck16 are at city2-1; truck20, truck18, and truck13 are at city1-2; truck19, truck15, truck9, truck7, truck6, truck5, and truck1 are at city2-3; truck17, truck14, truck12, and truck3 are at city2-2; truck11 and truck8 are at city3-3; truck10 is at city3-1; and truck2 is at city1-1.",
+      "reason_en": "Vague examples and regional descriptions did not uniquely support 21 of the 22 irregular truck locations.",
+      "reason_zh": "模糊示例和区域性描述无法唯一支持 22 个不规则卡车位置中的 21 个。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 76-97: all 22 truck initial locations"
+      ]
+    },
+    {
+      "id": 4,
+      "category": "irregular_mapping",
+      "original_text": "Packages are spread across the cities too: for example, package8 is at city1-2, package7 is at city2-1, package6 is at city3-2, and package5 and package1 both start at city1-3.",
+      "revised_text": "Packages are spread across the cities too: package8 is at city1-2; package7 is at city2-1; package6 and package2 are at city3-2; package5 and package1 are at city1-3; package4 is at city3-3; and package3 is at city2-2.",
+      "reason_en": "The example-only sentence omitted the initial locations of Package 4, Package 3, and Package 2.",
+      "reason_zh": "仅含示例的句子遗漏了包裹 4、包裹 3 和包裹 2 的初始位置。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 98-105: all eight package initial locations"
+      ]
+    }
+  ],
+  "preserved": [
+    "The opening context, complete package/city/vehicle inventories, and complete eight-atom goal sentence were preserved verbatim."
+  ],
+  "verification": {
+    "ledger_rows": 152,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}
+

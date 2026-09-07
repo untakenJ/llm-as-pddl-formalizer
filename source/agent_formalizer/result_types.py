@@ -33,7 +33,7 @@ class FormalizerResult:
     """Outcome of formalizing one problem with an agent harness."""
 
     problem: str
-    status: str  # "ok" / "failed" / "infra_invalid"
+    status: str  # "ok" / "failed" / "infra_invalid" / "incomplete"
     domain_file: str | None = None
     problem_file: str | None = None
     extraction_source: str | None = None  # "file" / "parsed" / None

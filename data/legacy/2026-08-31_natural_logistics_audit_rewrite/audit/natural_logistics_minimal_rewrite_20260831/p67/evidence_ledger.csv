@@ -1,0 +1,52 @@
+section,pddl_item,evidence,evidence_kind,unique,status,notes
+objects,apn1,"Moreover, there is an airplane, apn1, located at apt1.",direct,true,covered,The exact identifier is explicitly named.
+objects,apt2,"Within these cities, there are locations: pos1 and apt1 are in cit1, and pos2 and apt2 are in cit2.",direct,true,covered,The exact identifier is explicitly named.
+objects,pos2,"Within these cities, there are locations: pos1 and apt1 are in cit1, and pos2 and apt2 are in cit2.",direct,true,covered,The exact identifier is explicitly named.
+objects,apt1,"Within these cities, there are locations: pos1 and apt1 are in cit1, and pos2 and apt2 are in cit2.",direct,true,covered,The exact identifier is explicitly named.
+objects,pos1,"Within these cities, there are locations: pos1 and apt1 are in cit1, and pos2 and apt2 are in cit2.",direct,true,covered,The exact identifier is explicitly named.
+objects,cit2,"We also have two trucks, tru1 and tru2, and two cities, cit1 and cit2.",direct,true,covered,The exact identifier is explicitly named.
+objects,cit1,"We also have two trucks, tru1 and tru2, and two cities, cit1 and cit2.",direct,true,covered,The exact identifier is explicitly named.
+objects,tru2,"We also have two trucks, tru1 and tru2, and two cities, cit1 and cit2.",direct,true,covered,The exact identifier is explicitly named.
+objects,tru1,"We also have two trucks, tru1 and tru2, and two cities, cit1 and cit2.",direct,true,covered,The exact identifier is explicitly named.
+objects,obj23,"Initially, we have the following setup: there are six packages named obj11, obj12, obj13, obj21, obj22, and obj23.",direct,true,covered,The exact identifier is explicitly named.
+objects,obj22,"Initially, we have the following setup: there are six packages named obj11, obj12, obj13, obj21, obj22, and obj23.",direct,true,covered,The exact identifier is explicitly named.
+objects,obj21,"Initially, we have the following setup: there are six packages named obj11, obj12, obj13, obj21, obj22, and obj23.",direct,true,covered,The exact identifier is explicitly named.
+objects,obj13,"Initially, we have the following setup: there are six packages named obj11, obj12, obj13, obj21, obj22, and obj23.",direct,true,covered,The exact identifier is explicitly named.
+objects,obj12,"Initially, we have the following setup: there are six packages named obj11, obj12, obj13, obj21, obj22, and obj23.",direct,true,covered,The exact identifier is explicitly named.
+objects,obj11,"Initially, we have the following setup: there are six packages named obj11, obj12, obj13, obj21, obj22, and obj23.",direct,true,covered,The exact identifier is explicitly named.
+init,(package obj11),"Initially, we have the following setup: there are six packages named obj11, obj12, obj13, obj21, obj22, and obj23.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(package obj12),"Initially, we have the following setup: there are six packages named obj11, obj12, obj13, obj21, obj22, and obj23.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(package obj13),"Initially, we have the following setup: there are six packages named obj11, obj12, obj13, obj21, obj22, and obj23.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(package obj21),"Initially, we have the following setup: there are six packages named obj11, obj12, obj13, obj21, obj22, and obj23.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(package obj22),"Initially, we have the following setup: there are six packages named obj11, obj12, obj13, obj21, obj22, and obj23.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(package obj23),"Initially, we have the following setup: there are six packages named obj11, obj12, obj13, obj21, obj22, and obj23.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(truck tru1),"We also have two trucks, tru1 and tru2, and two cities, cit1 and cit2.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(truck tru2),"We also have two trucks, tru1 and tru2, and two cities, cit1 and cit2.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(city cit1),"We also have two trucks, tru1 and tru2, and two cities, cit1 and cit2.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(city cit2),"We also have two trucks, tru1 and tru2, and two cities, cit1 and cit2.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(location pos1),"Within these cities, there are locations: pos1 and apt1 are in cit1, and pos2 and apt2 are in cit2.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(location apt1),"Within these cities, there are locations: pos1 and apt1 are in cit1, and pos2 and apt2 are in cit2.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(location pos2),"Within these cities, there are locations: pos1 and apt1 are in cit1, and pos2 and apt2 are in cit2.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(location apt2),"Within these cities, there are locations: pos1 and apt1 are in cit1, and pos2 and apt2 are in cit2.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(airport apt1),Both apt1 and apt2 are airports.,direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(airport apt2),Both apt1 and apt2 are airports.,direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(airplane apn1),"Moreover, there is an airplane, apn1, located at apt1.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(at apn1 apt1),"Moreover, there is an airplane, apn1, located at apt1.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(at tru1 pos1),"In terms of package locations, truck tru1 is stationed at pos1 along with packages obj11, obj12, and obj13.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(at obj11 pos1),"In terms of package locations, truck tru1 is stationed at pos1 along with packages obj11, obj12, and obj13.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(at obj12 pos1),"In terms of package locations, truck tru1 is stationed at pos1 along with packages obj11, obj12, and obj13.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(at obj13 pos1),"In terms of package locations, truck tru1 is stationed at pos1 along with packages obj11, obj12, and obj13.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(at tru2 pos2),"Meanwhile, truck tru2 is at pos2, accompanied by packages obj21, obj22, and obj23.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(at obj21 pos2),"Meanwhile, truck tru2 is at pos2, accompanied by packages obj21, obj22, and obj23.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(at obj22 pos2),"Meanwhile, truck tru2 is at pos2, accompanied by packages obj21, obj22, and obj23.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(at obj23 pos2),"Meanwhile, truck tru2 is at pos2, accompanied by packages obj21, obj22, and obj23.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(in-city pos1 cit1),"Within these cities, there are locations: pos1 and apt1 are in cit1, and pos2 and apt2 are in cit2.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(in-city apt1 cit1),"Within these cities, there are locations: pos1 and apt1 are in cit1, and pos2 and apt2 are in cit2.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(in-city pos2 cit2),"Within these cities, there are locations: pos1 and apt1 are in cit1, and pos2 and apt2 are in cit2.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+init,(in-city apt2 cit2),"Within these cities, there are locations: pos1 and apt1 are in cit1, and pos2 and apt2 are in cit2.",direct,true,covered,The exact atom is explicitly stated in this sentence.
+goal,(at obj12 apt2),"The objective is to rearrange these packages such that obj12 and obj21 are located at apt2, obj23 is moved to apt1, obj22 stays at pos2, obj13 is relocated to pos2, and obj11 is relocated to apt2.",direct,true,covered,The single objective sentence explicitly states this package-destination pair.
+goal,(at obj23 apt1),"The objective is to rearrange these packages such that obj12 and obj21 are located at apt2, obj23 is moved to apt1, obj22 stays at pos2, obj13 is relocated to pos2, and obj11 is relocated to apt2.",direct,true,covered,The single objective sentence explicitly states this package-destination pair.
+goal,(at obj21 apt2),"The objective is to rearrange these packages such that obj12 and obj21 are located at apt2, obj23 is moved to apt1, obj22 stays at pos2, obj13 is relocated to pos2, and obj11 is relocated to apt2.",direct,true,covered,The single objective sentence explicitly states this package-destination pair.
+goal,(at obj22 pos2),"The objective is to rearrange these packages such that obj12 and obj21 are located at apt2, obj23 is moved to apt1, obj22 stays at pos2, obj13 is relocated to pos2, and obj11 is relocated to apt2.",direct,true,covered,The single objective sentence explicitly states this package-destination pair.
+goal,(at obj13 pos2),"The objective is to rearrange these packages such that obj12 and obj21 are located at apt2, obj23 is moved to apt1, obj22 stays at pos2, obj13 is relocated to pos2, and obj11 is relocated to apt2.",direct,true,covered,The single objective sentence explicitly states this package-destination pair.
+goal,(at obj11 apt2),"The objective is to rearrange these packages such that obj12 and obj21 are located at apt2, obj23 is moved to apt1, obj22 stays at pos2, obj13 is relocated to pos2, and obj11 is relocated to apt2.",direct,true,covered,The single objective sentence explicitly states this package-destination pair.

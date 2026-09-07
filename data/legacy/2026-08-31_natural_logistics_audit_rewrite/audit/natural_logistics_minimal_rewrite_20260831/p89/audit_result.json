@@ -1,0 +1,75 @@
+{
+  "case": "p89",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 206,
+    "init": 412,
+    "goal": 8,
+    "semantic_items": 626
+  },
+  "before": {
+    "objects_covered": 100,
+    "init_covered": 104,
+    "goal_covered": 8,
+    "missing": 385,
+    "ambiguous": 29,
+    "contradictory": 0,
+    "over_generated": 1
+  },
+  "after": {
+    "objects_covered": 206,
+    "init_covered": 412,
+    "goal_covered": 8,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "missing_rule",
+      "original_text": "Each city has specific locations, including some designated as airports.",
+      "revised_text": "For each city index X from 1 to 29 and location index Y from 1 to 4, cityX-Y is a location in cityX, and cityX-4 is an airport.",
+      "reason_en": "Defines the complete 29-by-4 location family, city correspondence, and airport suffix.",
+      "reason_zh": "定义完整的 29×4 地点族、城市对应关系和机场后缀。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 14-31: all location objects",
+        "golden_problem.pddl:lines 122-382: location, airport, and in-city atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "irregular_mapping",
+      "original_text": "Currently, the planes and trucks are parked at specific city locations, and packages are scattered across different places. For example, package 23 is currently located at city 26, location 2, while package 22 is at city 1, location 1.",
+      "revised_text": "Currently, the planes are parked as follows: plane9 is at city28-4; plane8 is at city23-4; plane7 is at city27-4; plane6 is at city29-4; plane5 is at city13-4; plane4 is at city4-4; plane3 is at city14-4; plane2 is at city14-4; plane1 is at city13-4. The trucks are parked as follows: truck29 is at city29-1; truck28 is at city28-2; truck27 is at city27-3; truck26 is at city26-1; truck25 is at city25-2; truck24 is at city24-3; truck23 is at city23-3; truck22 is at city22-3; truck21 is at city21-1; truck20 is at city20-1; truck19 is at city19-3; truck18 is at city18-2; truck17 is at city17-3; truck16 is at city16-2; truck15 is at city15-3; truck14 is at city14-3; truck13 is at city13-2; truck12 is at city12-3; truck11 is at city11-1; truck10 is at city10-2; truck9 is at city9-3; truck8 is at city8-2; truck7 is at city7-3; truck6 is at city6-3; truck5 is at city5-3; truck4 is at city4-2; truck3 is at city3-2; truck2 is at city2-3; truck1 is at city1-1. The packages are located as follows: package23 is at city26-2; package22 is at city1-1; package21 is at city3-1; package20 is at city18-2; package19 is at city17-2; package18 is at city21-1; package17 is at city1-4; package16 is at city29-4; package15 is at city1-2; package14 is at city4-4; package13 is at city10-1; package12 is at city13-1; package11 is at city24-3; package10 is at city5-4; package9 is at city9-4; package8 is at city3-4; package7 is at city13-1; package6 is at city7-3; package5 is at city16-1; package4 is at city3-2; package3 is at city17-1; package2 is at city11-1; package1 is at city21-4.",
+      "reason_en": "Replaces two package examples and unspecified vehicle placements with every irregular airplane, truck, and package initial location.",
+      "reason_zh": "用全部不规则的飞机、卡车和包裹初始位置替换两个包裹示例和未指定的车辆位置。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 383-443: all 61 initial (AT ...) atoms"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "contradiction",
+      "original_text": "Your task is to efficiently coordinate the movement of vehicles and packages to achieve this desired outcome.",
+      "revised_text": "All eight listed package destinations must hold simultaneously.",
+      "reason_en": "Removes the unsupported efficiency objective and explicitly states the eight-way goal conjunction.",
+      "reason_zh": "删除未受支持的效率目标，并明确八个目标同时成立。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 444-451: conjunctive eight-atom goal"
+      ]
+    }
+  ],
+  "preserved": [
+    "Range declarations and complete original goal",
+    "Original narrative order"
+  ],
+  "verification": {
+    "ledger_rows": 626,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

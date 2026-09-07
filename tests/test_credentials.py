@@ -16,6 +16,18 @@ VERTEX_MODEL = "google-vertex/gemini-3.1-flash-lite"
 
 
 class CredentialProfileTests(unittest.TestCase):
+    def test_logits_provider_default_accepts_dynamic_explicit_model_ids(self):
+        registry = load_credential_registry()
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / ".env"
+            env_file.write_text("LOGITS_API_KEY=logits-secret\n")
+            credential = registry.resolve(
+                "logits/FutureOrg/Model-Added-By-Provider", env_file=env_file
+            )
+        self.assertEqual(credential.profile_name, "logits-default")
+        self.assertEqual(credential.api_key, "logits-secret")
+        self.assertNotIn("logits-secret", json.dumps(credential.metadata()))
+
     def test_default_and_fallback_resolve_as_bound_key_project_pairs(self):
         registry = load_credential_registry()
         with tempfile.TemporaryDirectory() as tmp:

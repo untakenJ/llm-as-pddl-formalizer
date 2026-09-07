@@ -1,0 +1,88 @@
+{
+  "case": "p26",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 100,
+    "init": 200,
+    "goal": 7,
+    "semantic_items": 307
+  },
+  "before": {
+    "objects_covered": 48,
+    "init_covered": 48,
+    "goal_covered": 0,
+    "missing": 0,
+    "ambiguous": 211,
+    "contradictory": 1,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 100,
+    "init_covered": 200,
+    "goal_covered": 7,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "missing_rule",
+      "original_text": "Each city has several locations and some also have airports.",
+      "revised_text": "For each N from 1 through 13, cityN has locations cityN-1, cityN-2, and cityN-3, plus the airport location cityN-4; all four locations are part of cityN.",
+      "reason_en": "A bounded rule is required to identify and type all 52 locations, all 13 airports, and all 52 city memberships.",
+      "reason_zh": "需要有界规则来标识并定型全部 52 个地点、13 个机场及 52 个城市归属关系。",
+      "golden_evidence": [
+        "golden_problem.pddl:9-16: 52 location objects",
+        "golden_problem.pddl:65-129: location and airport type atoms",
+        "golden_problem.pddl:130-181: all (in-city ...) atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "irregular_mapping",
+      "original_text": "For the initial setup, planes and trucks are stationed in different locations within their respective cities. For example, plane1 is currently located at the airport in city2, while truck23 is at a location in city13.",
+      "revised_text": "For the initial setup, the planes and trucks are stationed as follows. Plane5 is at city12-4, plane4 at city8-4, plane3 at city6-4, plane2 at city13-4, and plane1 at city2-4. Truck23 is at city13-2, truck22 at city12-3, truck21 at city11-3, truck20 at city10-1, truck19 at city9-1, truck18 at city8-2, truck17 at city7-3, truck16 at city6-3, truck15 at city5-2, truck14 at city4-1, truck13 at city3-3, truck12 at city2-1, truck11 at city1-1, truck10 at city10-3, truck9 at city8-1, truck8 at city2-2, truck7 at city9-4, truck6 at city9-2, truck5 at city8-2, truck4 at city7-3, truck3 at city7-1, truck2 at city8-1, and truck1 at city5-4.",
+      "reason_en": "The original examples do not determine the irregular five-plane and 23-truck placement mapping, and the different-locations claim conflicts with three truck co-locations.",
+      "reason_zh": "原有示例无法确定不规则的五架飞机和 23 辆卡车位置映射，且“不同地点”的说法与三组卡车共址事实冲突。",
+      "golden_evidence": [
+        "golden_problem.pddl:182-186: five plane placements",
+        "golden_problem.pddl:187-209: 23 truck placements, including three co-located truck pairs"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "ambiguity",
+      "original_text": "The packages are distributed as follows: package7 is at the airport in city1, package6 is at a location in city2, package5 is at the same location as truck20 in city10, package4 is at the airport in city5, package3 is at a location in city11, package2 is at the same location as truck21 in city11, and package1 is at a location in city4.",
+      "revised_text": "The packages are distributed as follows: package7 is at city1-4, package6 is at city2-3, package5 is at city10-1, package4 is at city5-4, package3 is at city11-1, package2 is at city11-3, and package1 is at city4-2.",
+      "reason_en": "The exact seven package-location identifiers cannot be recovered from vague city-only or relational wording.",
+      "reason_zh": "无法从模糊的仅城市或关系性措辞恢复七个精确的包裹—地点标识符。",
+      "golden_evidence": [
+        "golden_problem.pddl:210-216: seven package placements"
+      ]
+    },
+    {
+      "id": 4,
+      "category": "ambiguity",
+      "original_text": "My goal is to move these packages to specific destinations: package7 needs to reach a location in city12, package6 has to be delivered to a location in city9, package5 should be transported to the same location as package7 in city12, package4 is to be sent to the airport in city8, package3 needs to arrive at the airport in city13, package2 is to be delivered to a location in city7, and finally, package1 has to reach a location in city13.",
+      "revised_text": "My goal is to move these packages to specific destinations: package7 needs to reach city12-3, package6 has to be delivered to city9-3, package5 should be transported to city12-3, package4 is to be sent to city8-4, package3 needs to arrive at city13-4, package2 is to be delivered to city7-1, and finally, package1 has to reach city13-1.",
+      "reason_en": "Every conjunctive goal needs its exact destination because the mapping is irregular.",
+      "reason_zh": "由于映射不规则，每个合取目标都需要精确目的地。",
+      "golden_evidence": [
+        "golden_problem.pddl:217-223: all seven goal atoms"
+      ]
+    }
+  ],
+  "preserved": [
+    "The opening counts and all package, city, truck, and plane identifier ranges.",
+    "The availability sentence, list order, first-person tone, and paragraph structure."
+  ],
+  "verification": {
+    "ledger_rows": 307,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

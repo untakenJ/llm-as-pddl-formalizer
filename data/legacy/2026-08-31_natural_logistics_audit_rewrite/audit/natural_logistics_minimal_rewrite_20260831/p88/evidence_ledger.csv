@@ -1,0 +1,619 @@
+section,pddl_item,evidence,evidence_kind,unique,status,notes
+objects,PACKAGE5,package5,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PACKAGE4,package4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PACKAGE3,package3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PACKAGE2,package2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PACKAGE1,package1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY27,city27,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY26,city26,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY25,city25,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY24,city24,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY23,city23,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY22,city22,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY21,city21,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY20,city20,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY19,city19,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY18,city18,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY17,city17,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY16,city16,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY15,city15,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY14,city14,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY13,city13,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY12,city12,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY11,city11,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY10,city10,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY9,city9,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY8,city8,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY7,city7,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY6,city6,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY5,city5,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY4,city4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY3,city3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY2,city2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY1,city1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK55,truck55,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK54,truck54,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK53,truck53,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK52,truck52,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK51,truck51,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK50,truck50,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK49,truck49,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK48,truck48,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK47,truck47,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK46,truck46,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK45,truck45,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK44,truck44,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK43,truck43,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK42,truck42,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK41,truck41,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK40,truck40,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK39,truck39,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK38,truck38,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK37,truck37,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK36,truck36,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK35,truck35,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK34,truck34,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK33,truck33,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK32,truck32,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK31,truck31,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK30,truck30,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK29,truck29,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK28,truck28,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK27,truck27,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK26,truck26,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK25,truck25,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK24,truck24,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK23,truck23,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK22,truck22,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK21,truck21,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK20,truck20,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK19,truck19,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK18,truck18,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK17,truck17,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK16,truck16,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK15,truck15,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK14,truck14,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK13,truck13,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK12,truck12,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK11,truck11,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK10,truck10,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK9,truck9,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK8,truck8,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK7,truck7,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK6,truck6,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK5,truck5,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK4,truck4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK3,truck3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK2,truck2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,TRUCK1,truck1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PLANE9,plane9,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PLANE8,plane8,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PLANE7,plane7,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PLANE6,plane6,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PLANE5,plane5,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PLANE4,plane4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PLANE3,plane3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PLANE2,plane2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,PLANE1,plane1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY27-3,city27-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY27-2,city27-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY27-1,city27-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY26-3,city26-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY26-2,city26-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY26-1,city26-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY25-3,city25-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY25-2,city25-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY25-1,city25-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY24-3,city24-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY24-2,city24-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY24-1,city24-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY23-3,city23-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY23-2,city23-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY23-1,city23-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY22-3,city22-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY22-2,city22-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY22-1,city22-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY21-3,city21-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY21-2,city21-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY21-1,city21-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY20-3,city20-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY20-2,city20-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY20-1,city20-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY19-3,city19-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY19-2,city19-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY19-1,city19-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY18-3,city18-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY18-2,city18-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY18-1,city18-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY17-3,city17-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY17-2,city17-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY17-1,city17-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY16-3,city16-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY16-2,city16-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY16-1,city16-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY15-3,city15-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY15-2,city15-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY15-1,city15-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY14-3,city14-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY14-2,city14-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY14-1,city14-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY13-3,city13-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY13-2,city13-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY13-1,city13-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY12-3,city12-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY12-2,city12-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY12-1,city12-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY11-3,city11-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY11-2,city11-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY11-1,city11-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY10-3,city10-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY10-2,city10-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY10-1,city10-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY9-3,city9-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY9-2,city9-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY9-1,city9-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY8-3,city8-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY8-2,city8-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY8-1,city8-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY7-3,city7-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY7-2,city7-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY7-1,city7-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY6-3,city6-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY6-2,city6-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY6-1,city6-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY5-3,city5-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY5-2,city5-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY5-1,city5-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY4-3,city4-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY4-2,city4-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY4-1,city4-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY3-3,city3-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY3-2,city3-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY3-1,city3-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY2-3,city2-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY2-2,city2-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY2-1,city2-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY1-3,city1-3,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY1-2,city1-2,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY1-1,city1-1,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY27-4,city27-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY26-4,city26-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY25-4,city25-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY24-4,city24-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY23-4,city23-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY22-4,city22-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY21-4,city21-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY20-4,city20-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY19-4,city19-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY18-4,city18-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY17-4,city17-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY16-4,city16-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY15-4,city15-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY14-4,city14-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY13-4,city13-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY12-4,city12-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY11-4,city11-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY10-4,city10-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY9-4,city9-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY8-4,city8-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY7-4,city7-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY6-4,city6-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY5-4,city5-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY4-4,city4-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY3-4,city3-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY2-4,city2-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+objects,CITY1-4,city1-4,direct,true,covered,This label occurs in the description's explicit typed object inventory.
+init,(PACKAGE PACKAGE5),package5,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(PACKAGE PACKAGE4),package4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(PACKAGE PACKAGE3),package3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(PACKAGE PACKAGE2),package2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(PACKAGE PACKAGE1),package1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY27),city27,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY26),city26,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY25),city25,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY24),city24,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY23),city23,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY22),city22,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY21),city21,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY20),city20,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY19),city19,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY18),city18,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY17),city17,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY16),city16,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY15),city15,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY14),city14,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY13),city13,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY12),city12,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY11),city11,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY10),city10,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY9),city9,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY8),city8,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY7),city7,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY6),city6,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY5),city5,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY4),city4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY3),city3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY2),city2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(CITY CITY1),city1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK55),truck55,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK54),truck54,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK53),truck53,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK52),truck52,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK51),truck51,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK50),truck50,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK49),truck49,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK48),truck48,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK47),truck47,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK46),truck46,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK45),truck45,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK44),truck44,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK43),truck43,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK42),truck42,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK41),truck41,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK40),truck40,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK39),truck39,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK38),truck38,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK37),truck37,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK36),truck36,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK35),truck35,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK34),truck34,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK33),truck33,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK32),truck32,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK31),truck31,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK30),truck30,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK29),truck29,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK28),truck28,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK27),truck27,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK26),truck26,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK25),truck25,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK24),truck24,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK23),truck23,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK22),truck22,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK21),truck21,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK20),truck20,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK19),truck19,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK18),truck18,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK17),truck17,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK16),truck16,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK15),truck15,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK14),truck14,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK13),truck13,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK12),truck12,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK11),truck11,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK10),truck10,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK9),truck9,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK8),truck8,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK7),truck7,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK6),truck6,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK5),truck5,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK4),truck4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK3),truck3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK2),truck2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(TRUCK TRUCK1),truck1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPLANE PLANE9),plane9,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPLANE PLANE8),plane8,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPLANE PLANE7),plane7,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPLANE PLANE6),plane6,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPLANE PLANE5),plane5,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPLANE PLANE4),plane4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPLANE PLANE3),plane3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPLANE PLANE2),plane2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPLANE PLANE1),plane1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY27-3),city27-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY27-2),city27-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY27-1),city27-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY26-3),city26-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY26-2),city26-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY26-1),city26-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY25-3),city25-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY25-2),city25-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY25-1),city25-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY24-3),city24-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY24-2),city24-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY24-1),city24-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY23-3),city23-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY23-2),city23-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY23-1),city23-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY22-3),city22-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY22-2),city22-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY22-1),city22-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY21-3),city21-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY21-2),city21-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY21-1),city21-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY20-3),city20-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY20-2),city20-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY20-1),city20-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY19-3),city19-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY19-2),city19-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY19-1),city19-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY18-3),city18-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY18-2),city18-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY18-1),city18-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY17-3),city17-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY17-2),city17-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY17-1),city17-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY16-3),city16-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY16-2),city16-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY16-1),city16-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY15-3),city15-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY15-2),city15-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY15-1),city15-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY14-3),city14-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY14-2),city14-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY14-1),city14-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY13-3),city13-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY13-2),city13-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY13-1),city13-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY12-3),city12-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY12-2),city12-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY12-1),city12-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY11-3),city11-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY11-2),city11-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY11-1),city11-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY10-3),city10-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY10-2),city10-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY10-1),city10-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY9-3),city9-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY9-2),city9-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY9-1),city9-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY8-3),city8-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY8-2),city8-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY8-1),city8-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY7-3),city7-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY7-2),city7-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY7-1),city7-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY6-3),city6-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY6-2),city6-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY6-1),city6-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY5-3),city5-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY5-2),city5-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY5-1),city5-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY4-3),city4-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY4-2),city4-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY4-1),city4-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY3-3),city3-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY3-2),city3-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY3-1),city3-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY2-3),city2-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY2-2),city2-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY2-1),city2-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY1-3),city1-3,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY1-2),city1-2,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY1-1),city1-1,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY27-4),city27-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY27-4),city27-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY26-4),city26-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY26-4),city26-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY25-4),city25-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY25-4),city25-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY24-4),city24-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY24-4),city24-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY23-4),city23-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY23-4),city23-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY22-4),city22-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY22-4),city22-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY21-4),city21-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY21-4),city21-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY20-4),city20-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY20-4),city20-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY19-4),city19-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY19-4),city19-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY18-4),city18-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY18-4),city18-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY17-4),city17-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY17-4),city17-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY16-4),city16-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY16-4),city16-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY15-4),city15-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY15-4),city15-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY14-4),city14-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY14-4),city14-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY13-4),city13-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY13-4),city13-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY12-4),city12-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY12-4),city12-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY11-4),city11-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY11-4),city11-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY10-4),city10-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY10-4),city10-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY9-4),city9-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY9-4),city9-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY8-4),city8-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY8-4),city8-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY7-4),city7-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY7-4),city7-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY6-4),city6-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY6-4),city6-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY5-4),city5-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY5-4),city5-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY4-4),city4-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY4-4),city4-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY3-4),city3-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY3-4),city3-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY2-4),city2-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY2-4),city2-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(AIRPORT CITY1-4),city1-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(LOCATION CITY1-4),city1-4,direct,true,covered,This label occurs in the corresponding explicit typed inventory sentence.
+init,(IN-CITY CITY27-4 CITY27),city27-4 is in city27,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY27-3 CITY27),city27-3 is in city27,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY27-2 CITY27),city27-2 is in city27,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY27-1 CITY27),city27-1 is in city27,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY26-4 CITY26),city26-4 is in city26,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY26-3 CITY26),city26-3 is in city26,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY26-2 CITY26),city26-2 is in city26,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY26-1 CITY26),city26-1 is in city26,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY25-4 CITY25),city25-4 is in city25,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY25-3 CITY25),city25-3 is in city25,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY25-2 CITY25),city25-2 is in city25,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY25-1 CITY25),city25-1 is in city25,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY24-4 CITY24),city24-4 is in city24,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY24-3 CITY24),city24-3 is in city24,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY24-2 CITY24),city24-2 is in city24,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY24-1 CITY24),city24-1 is in city24,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY23-4 CITY23),city23-4 is in city23,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY23-3 CITY23),city23-3 is in city23,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY23-2 CITY23),city23-2 is in city23,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY23-1 CITY23),city23-1 is in city23,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY22-4 CITY22),city22-4 is in city22,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY22-3 CITY22),city22-3 is in city22,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY22-2 CITY22),city22-2 is in city22,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY22-1 CITY22),city22-1 is in city22,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY21-4 CITY21),city21-4 is in city21,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY21-3 CITY21),city21-3 is in city21,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY21-2 CITY21),city21-2 is in city21,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY21-1 CITY21),city21-1 is in city21,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY20-4 CITY20),city20-4 is in city20,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY20-3 CITY20),city20-3 is in city20,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY20-2 CITY20),city20-2 is in city20,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY20-1 CITY20),city20-1 is in city20,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY19-4 CITY19),city19-4 is in city19,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY19-3 CITY19),city19-3 is in city19,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY19-2 CITY19),city19-2 is in city19,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY19-1 CITY19),city19-1 is in city19,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY18-4 CITY18),city18-4 is in city18,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY18-3 CITY18),city18-3 is in city18,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY18-2 CITY18),city18-2 is in city18,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY18-1 CITY18),city18-1 is in city18,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY17-4 CITY17),city17-4 is in city17,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY17-3 CITY17),city17-3 is in city17,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY17-2 CITY17),city17-2 is in city17,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY17-1 CITY17),city17-1 is in city17,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY16-4 CITY16),city16-4 is in city16,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY16-3 CITY16),city16-3 is in city16,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY16-2 CITY16),city16-2 is in city16,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY16-1 CITY16),city16-1 is in city16,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY15-4 CITY15),city15-4 is in city15,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY15-3 CITY15),city15-3 is in city15,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY15-2 CITY15),city15-2 is in city15,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY15-1 CITY15),city15-1 is in city15,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY14-4 CITY14),city14-4 is in city14,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY14-3 CITY14),city14-3 is in city14,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY14-2 CITY14),city14-2 is in city14,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY14-1 CITY14),city14-1 is in city14,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY13-4 CITY13),city13-4 is in city13,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY13-3 CITY13),city13-3 is in city13,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY13-2 CITY13),city13-2 is in city13,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY13-1 CITY13),city13-1 is in city13,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY12-4 CITY12),city12-4 is in city12,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY12-3 CITY12),city12-3 is in city12,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY12-2 CITY12),city12-2 is in city12,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY12-1 CITY12),city12-1 is in city12,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY11-4 CITY11),city11-4 is in city11,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY11-3 CITY11),city11-3 is in city11,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY11-2 CITY11),city11-2 is in city11,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY11-1 CITY11),city11-1 is in city11,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY10-4 CITY10),city10-4 is in city10,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY10-3 CITY10),city10-3 is in city10,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY10-2 CITY10),city10-2 is in city10,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY10-1 CITY10),city10-1 is in city10,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY9-4 CITY9),city9-4 is in city9,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY9-3 CITY9),city9-3 is in city9,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY9-2 CITY9),city9-2 is in city9,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY9-1 CITY9),city9-1 is in city9,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY8-4 CITY8),city8-4 is in city8,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY8-3 CITY8),city8-3 is in city8,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY8-2 CITY8),city8-2 is in city8,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY8-1 CITY8),city8-1 is in city8,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY7-4 CITY7),city7-4 is in city7,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY7-3 CITY7),city7-3 is in city7,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY7-2 CITY7),city7-2 is in city7,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY7-1 CITY7),city7-1 is in city7,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY6-4 CITY6),city6-4 is in city6,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY6-3 CITY6),city6-3 is in city6,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY6-2 CITY6),city6-2 is in city6,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY6-1 CITY6),city6-1 is in city6,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY5-4 CITY5),city5-4 is in city5,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY5-3 CITY5),city5-3 is in city5,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY5-2 CITY5),city5-2 is in city5,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY5-1 CITY5),city5-1 is in city5,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY4-4 CITY4),city4-4 is in city4,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY4-3 CITY4),city4-3 is in city4,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY4-2 CITY4),city4-2 is in city4,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY4-1 CITY4),city4-1 is in city4,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY3-4 CITY3),city3-4 is in city3,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY3-3 CITY3),city3-3 is in city3,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY3-2 CITY3),city3-2 is in city3,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY3-1 CITY3),city3-1 is in city3,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY2-4 CITY2),city2-4 is in city2,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY2-3 CITY2),city2-3 is in city2,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY2-2 CITY2),city2-2 is in city2,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY2-1 CITY2),city2-1 is in city2,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY1-4 CITY1),city1-4 is in city1,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY1-3 CITY1),city1-3 is in city1,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY1-2 CITY1),city1-2 is in city1,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(IN-CITY CITY1-1 CITY1),city1-1 is in city1,direct,true,covered,This exact relation occurs in the complete location-to-city enumeration.
+init,(AT PLANE9 CITY7-4),plane9 is at city7-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PLANE8 CITY2-4),plane8 is at city2-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PLANE7 CITY14-4),plane7 is at city14-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PLANE6 CITY25-4),plane6 is at city25-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PLANE5 CITY23-4),plane5 is at city23-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PLANE4 CITY2-4),plane4 is at city2-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PLANE3 CITY13-4),plane3 is at city13-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PLANE2 CITY1-4),plane2 is at city1-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PLANE1 CITY23-4),plane1 is at city23-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK55 CITY27-2),truck55 is at city27-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK54 CITY26-3),truck54 is at city26-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK53 CITY25-2),truck53 is at city25-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK52 CITY24-3),truck52 is at city24-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK51 CITY23-1),truck51 is at city23-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK50 CITY22-2),truck50 is at city22-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK49 CITY21-1),truck49 is at city21-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK48 CITY20-2),truck48 is at city20-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK47 CITY19-1),truck47 is at city19-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK46 CITY18-3),truck46 is at city18-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK45 CITY17-1),truck45 is at city17-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK44 CITY16-3),truck44 is at city16-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK43 CITY15-1),truck43 is at city15-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK42 CITY14-3),truck42 is at city14-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK41 CITY13-1),truck41 is at city13-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK40 CITY12-3),truck40 is at city12-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK39 CITY11-2),truck39 is at city11-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK38 CITY10-1),truck38 is at city10-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK37 CITY9-2),truck37 is at city9-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK36 CITY8-1),truck36 is at city8-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK35 CITY7-2),truck35 is at city7-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK34 CITY6-1),truck34 is at city6-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK33 CITY5-1),truck33 is at city5-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK32 CITY4-1),truck32 is at city4-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK31 CITY3-3),truck31 is at city3-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK30 CITY2-2),truck30 is at city2-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK29 CITY1-2),truck29 is at city1-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK28 CITY10-4),truck28 is at city10-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK27 CITY7-3),truck27 is at city7-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK26 CITY12-4),truck26 is at city12-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK25 CITY7-1),truck25 is at city7-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK24 CITY11-3),truck24 is at city11-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK23 CITY15-3),truck23 is at city15-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK22 CITY8-4),truck22 is at city8-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK21 CITY8-3),truck21 is at city8-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK20 CITY10-1),truck20 is at city10-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK19 CITY22-4),truck19 is at city22-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK18 CITY25-2),truck18 is at city25-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK17 CITY14-2),truck17 is at city14-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK16 CITY15-3),truck16 is at city15-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK15 CITY25-3),truck15 is at city25-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK14 CITY2-3),truck14 is at city2-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK13 CITY12-3),truck13 is at city12-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK12 CITY19-4),truck12 is at city19-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK11 CITY14-2),truck11 is at city14-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK10 CITY11-3),truck10 is at city11-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK9 CITY24-2),truck9 is at city24-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK8 CITY3-3),truck8 is at city3-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK7 CITY22-2),truck7 is at city22-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK6 CITY25-2),truck6 is at city25-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK5 CITY23-3),truck5 is at city23-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK4 CITY8-4),truck4 is at city8-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK3 CITY3-4),truck3 is at city3-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK2 CITY3-3),truck2 is at city3-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT TRUCK1 CITY15-4),truck1 is at city15-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PACKAGE5 CITY12-1),package5 is at city12-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PACKAGE4 CITY7-2),package4 is at city7-2,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PACKAGE3 CITY8-1),package3 is at city8-1,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PACKAGE2 CITY23-3),package2 is at city23-3,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+init,(AT PACKAGE1 CITY1-4),package1 is at city1-4,direct,true,covered,This exact relation occurs in the corresponding complete initial-position enumeration.
+goal,(AT PACKAGE5 CITY18-4),package5 must be at city18-4,direct,true,covered,This exact goal clause occurs in the complete goal enumeration.
+goal,(AT PACKAGE4 CITY10-3),package4 must be at city10-3,direct,true,covered,This exact goal clause occurs in the complete goal enumeration.
+goal,(AT PACKAGE3 CITY1-4),package3 must be at city1-4,direct,true,covered,This exact goal clause occurs in the complete goal enumeration.
+goal,(AT PACKAGE2 CITY14-3),package2 must be at city14-3,direct,true,covered,This exact goal clause occurs in the complete goal enumeration.
+goal,(AT PACKAGE1 CITY9-2),package1 must be at city9-2,direct,true,covered,This exact goal clause occurs in the complete goal enumeration.
+

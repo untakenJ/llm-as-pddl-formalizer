@@ -3,8 +3,17 @@ import subprocess
 import pandas as pd
 import re
 import argparse
+from pathlib import Path
 
 from batch_utils import format_problem_name, run_parallel
+from agent_formalizer.execution_validity import (
+    cell_dir_for_model_dir,
+    refresh_cell_state,
+    selected_attempt,
+    selected_execution_record,
+    validity_is_managed_for_model_dir,
+    validity_metadata,
+)
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -24,6 +33,8 @@ Parser.add_argument("--workers", type=int, default=1,
                     help="parallel worker threads for independent problems (default 1 = sequential)")
 
 def _model_output_name(model):
+    if model.startswith("logits/"):
+        return model.replace("/", "__")
     if "/" not in model:
         return model
     if "meta" in model or "google" in model or "deepseek-ai" in model:
@@ -81,9 +92,43 @@ def _problem_file_path(domain, problem_name):
     return f'{ROOT_DIR}/data/textual_logistics/Logistics-100_PDDL/{problem_name}.pddl'
 
 
-def _validate_one_problem(problem_number, domain, data, model_name, prediction_type, out_root):
+def _validate_one_problem(
+    problem_number,
+    domain,
+    data,
+    model_name,
+    prediction_type,
+    out_root,
+    validity_state=None,
+    validity_attempt_index=1,
+):
     problem_name = format_problem_name(problem_number)
     print(f"Running {problem_name}", flush=True)
+
+    if validity_state is not None:
+        attempt = selected_attempt(
+            validity_state, problem_name, validity_attempt_index
+        )
+        execution = selected_execution_record(
+            validity_state, problem_name, validity_attempt_index
+        )
+        if (
+            attempt is None
+            or execution is None
+            or execution.get("generation_success") is not True
+        ):
+            return {
+                "problem_name": problem_name,
+                "plan_found": "no",
+                "pddl_error": (
+                    "no selected effective-valid execution with complete PDDL artifacts"
+                ),
+                "plan": "",
+                "val_result": "",
+                "is_plan_correct": "",
+                "solv_inc": 0,
+                "correct_inc": 0,
+            }
 
     if prediction_type in ("llm-as-formalizer", "llm-as-formalizer-api", "llm-as-formalizer-antigravity", "llm-as-formalizer-agent"):
         plan_file = f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{problem_name}/{problem_name}_{model_name}_plan.txt'
@@ -136,9 +181,32 @@ def validate_plan_batch(domain, data, model, problem_numbers, prediction_type, c
 
     out_root = out_dir_root or f'{ROOT_DIR}/output'
     total = len(problem_numbers)
+    validity_state = None
+    validity_attempt_index = 1
+    validity_summary = None
+    if prediction_type == "llm-as-formalizer-agent":
+        model_dir = Path(out_root) / prediction_type / domain / data / model_name
+        if any(
+            validity_is_managed_for_model_dir(
+                model_dir, format_problem_name(problem_number)
+            )
+            for problem_number in problem_numbers
+        ):
+            cell_dir, validity_attempt_index = cell_dir_for_model_dir(model_dir)
+            validity_state = refresh_cell_state(cell_dir)
+            validity_summary = validity_metadata(validity_state)
 
     def _worker(problem_number):
-        return _validate_one_problem(problem_number, domain, data, model_name, prediction_type, out_root)
+        return _validate_one_problem(
+            problem_number,
+            domain,
+            data,
+            model_name,
+            prediction_type,
+            out_root,
+            validity_state,
+            validity_attempt_index,
+        )
 
     rows = run_parallel(problem_numbers, _worker, workers=workers)
 
@@ -153,6 +221,20 @@ def validate_plan_batch(domain, data, model, problem_numbers, prediction_type, c
 
     if csv_result:
         all_results_dict = {"problem_number": problem_names, "plan_found": plan_found, "error, if not found": pddl_errors, "plan, if found": plans, "val_result": val_results, "is_plan_correct": is_plan_correct}
+        if validity_summary is not None:
+            all_results_dict.update(
+                {
+                    "execution_validity_revision": [
+                        validity_summary["revision"]
+                    ] * len(rows),
+                    "execution_validity_state_sha256": [
+                        validity_summary["state_sha256"]
+                    ] * len(rows),
+                    "execution_validity_complete": [
+                        validity_summary["complete"]
+                    ] * len(rows),
+                }
+            )
         all_results = pd.DataFrame(all_results_dict)
         result_path = f'{out_root}/{prediction_type}/{domain}/{data}/{model_name}/{prediction_type}_{domain}_{data}_{model_name}_results.csv'
         os.makedirs(os.path.dirname(result_path), exist_ok=True)

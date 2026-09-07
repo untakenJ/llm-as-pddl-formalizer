@@ -87,6 +87,7 @@
   "condition_profile": {
     "id": "temperature-0.1",
     "overrides": {
+      "solver_backend": "local",
       "generation": {
         "temperature": 0.1
       }

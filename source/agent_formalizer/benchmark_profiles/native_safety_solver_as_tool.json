@@ -107,6 +107,8 @@
   "condition_profile": {
     "id": "solver-as-tool",
     "overrides": {
+      "solver_backend": "local",
+      "solver_error_routing": "solver-transient-v1",
       "agent_tools": [
         "pddl_solver"
       ]

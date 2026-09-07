@@ -1,0 +1,84 @@
+{
+  "case": "p22",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 32,
+    "init": 64,
+    "goal": 6,
+    "semantic_items": 102
+  },
+  "before": {
+    "objects_covered": 28,
+    "init_covered": 32,
+    "goal_covered": 6,
+    "missing": 6,
+    "ambiguous": 30,
+    "contradictory": 1,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 32,
+    "init_covered": 64,
+    "goal_covered": 6,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "contradiction",
+      "original_text": "There are six packages, named package1 through package6, and each is located in different places across six cities, labeled city1 through city6.",
+      "revised_text": "There are six packages, named package1 through package6, and six cities, labeled city1 through city6.",
+      "reason_en": "Removes the unsupported implication that the six packages occupy different places; package3 and package4 are co-located.",
+      "reason_zh": "删除六个包裹位于不同地点这一无依据的含义；package3 与 package4 位于同一地点。",
+      "golden_evidence": [
+        "golden_problem.pddl:68: (at package4 city1-1)",
+        "golden_problem.pddl:69: (at package3 city1-1)"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "Each city has a distinct location labeled city]-1 and an airport labeled city]-2 (for example, city1-1 and city1-2 for city1).",
+      "revised_text": "For each N from 1 through 6, cityN has a distinct location cityN-1 and an airport location cityN-2 (for example, city1-1 and city1-2 for city1).",
+      "reason_en": "Replaces malformed placeholders with a complete bounded construction rule and states both type facts for each airport location.",
+      "reason_zh": "用完整的有界构造规则替换错误占位符，并说明每个机场地点的两项类型事实。",
+      "golden_evidence": [
+        "golden_problem.pddl:3-7: cityN-1 and cityN-2 objects for N=1..6",
+        "golden_problem.pddl:28-45: location and airport type atoms",
+        "golden_problem.pddl:46-57: in-city atoms"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "ambiguity",
+      "original_text": "The trucks are initially located at their corresponding city]-1 locations, and both airplanes are initially stationed at city4-2.",
+      "revised_text": "For each N from 1 through 6, truckN is initially located at cityN-1, and both airplanes are initially stationed at city4-2.",
+      "reason_en": "Makes the finite truck-to-location index correspondence explicit and uniquely expandable.",
+      "reason_zh": "明确有限的卡车到地点索引对应关系，使其可唯一展开。",
+      "golden_evidence": [
+        "golden_problem.pddl:60: (at truck6 city6-1)",
+        "golden_problem.pddl:61: (at truck5 city5-1)",
+        "golden_problem.pddl:62: (at truck4 city4-1)",
+        "golden_problem.pddl:63: (at truck3 city3-1)",
+        "golden_problem.pddl:64: (at truck2 city2-1)",
+        "golden_problem.pddl:65: (at truck1 city1-1)"
+      ]
+    }
+  ],
+  "preserved": [
+    "The opening setup phrase and overall single-paragraph organization.",
+    "The exact airplane initial locations.",
+    "All six package initial locations and all six goal mappings.",
+    "The city1 illustration after the new complete bounded rule."
+  ],
+  "verification": {
+    "ledger_rows": 102,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

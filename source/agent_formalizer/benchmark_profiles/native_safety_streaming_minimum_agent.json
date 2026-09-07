@@ -1,0 +1,106 @@
+{
+  "schema_version": 3,
+  "profile_id": "pddl-minimum-agent-r1-streaming-no-solver-host-v1",
+  "native_clean": {
+    "id": "benchmark-minimum-agent-v1",
+    "mode": "benchmark-owned-fixed-reflection-loop"
+  },
+  "benchmark_envelope": {
+    "id": "native-safety-v5-streaming",
+    "control_model": "google-vertex/gemini-3.1-flash-lite",
+    "safety_guards": {
+      "harness_execution_timeout_seconds": {"limit": 1800, "role": "safety_guard", "scope": "per_attempt"},
+      "control_model_request_attempts": {"limit": 50, "role": "safety_guard", "scope": "per_attempt"},
+      "action_steps": {"limit": 200, "role": "safety_guard", "scope": "per_attempt", "cross_harness_comparable": true}
+    },
+    "network": {"mode": "model_only", "controlled_web_allowlist": []},
+    "model_error_routing": {
+      "id": "external-transient-v2",
+      "max_retries": 5,
+      "backoff_seconds": [1, 2, 4, 8, 16],
+      "max_retry_after_seconds": 60,
+      "retryable_http_statuses": [408, 429, 502, 503, 504, 520, 521, 522, 523, 524, 525, 529]
+    },
+    "model_response_delivery": {
+      "mode": "native_streaming",
+      "first_event_commit": true,
+      "action_step_admission": "soft_complete_batch"
+    },
+    "interaction": {"mode": "noninteractive"},
+    "state_isolation": {"scope": "per_attempt", "personal_harness_state": "excluded", "cross_attempt_reuse": false},
+    "environment": {
+      "inherit": [],
+      "fixed": {"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "UTC", "NO_COLOR": "1"}
+    },
+    "container_resources": {"pids_limit": 300, "memory": "8g", "memory_swap": "8g"},
+    "artifact_contract": {
+      "workspace_domain_file": "domain.pddl",
+      "workspace_problem_file": "problem.pddl",
+      "allow_final_message_recovery": false,
+      "preserve_bytes": true
+    },
+    "validations": [
+      {"preset": "runtime-lock", "version": 1, "required": true},
+      {"preset": "network-model-only", "version": 2, "required": true},
+      {"preset": "environment-isolation", "version": 1, "required": true},
+      {"preset": "action-step-guard", "version": 2, "required": true},
+      {"preset": "state-isolation", "version": 1, "required": true}
+    ],
+    "required_evidence": [
+      "resolved_config_sha256",
+      "task_input_sha256",
+      "runtime_lock",
+      "execution_timing",
+      "model_gateway_summary",
+      "actions",
+      "model_call_ledger",
+      "generation_result",
+      "completion_record"
+    ]
+  },
+  "condition_profile": {
+    "id": "minimum-agent-reflection-1-no-solver-host",
+    "overrides": {
+      "solver_backend": "local",
+      "skills_mode": "none",
+      "minimum_agent": {
+        "execution_backend": "host",
+        "reflection_count": 1,
+        "solver_feedback": {"enabled": false, "solver": "dual-bfws-ffparser", "max_chars": 16000},
+        "prompt_template": {
+          "before_task": "You are the control model in Minimum Formalizer Agent, a fixed-sequence PDDL baseline. You do not have tools and you must not read or write workspace files. The harness will parse PDDL strings directly from your response. After the initial generation, the harness performs exactly {reflection_count} reflection round(s). A reflection means critically checking the latest domain and problem for syntax, typing, action semantics, object declarations, initial state, goal consistency, and solvability, then returning a complete replacement for both files. Solver feedback enabled for each reflection: {solver_feedback_enabled}.\n\nTranslate the following task independently. Do not reference existing datasets.\n",
+          "after_task": "\n\nRESPONSE CONTRACT:\nReturn exactly one JSON object and no markdown fences or surrounding commentary. The object must contain exactly three string fields named reasoning, domain_file, and problem_file. reasoning must explain the checks and choices that produced this version. domain_file and problem_file must each contain the complete PDDL text, not a diff. The harness appends this complete assistant response to later conversation context. On every reflection it asks for the same three-field object again. Only the final reflection response (or the initial response when reflection_count is zero) is parsed into the official delivery files; a final parse failure produces no delivery.",
+          "reflection": "Reflection {reflection_index} of {reflection_count}. Review the latest reasoning, domain_file, and problem_file already present in the conversation, together with any solver feedback immediately above this instruction. Identify concrete defects or missed consistency checks, then return a complete improved replacement. Follow the same exact three-field JSON response contract. Put the new reasoning in the reasoning field and include the full domain and problem strings even when you decide no change is needed."
+        }
+      }
+    }
+  },
+  "sampling": {"attempts_per_case": 1},
+  "infra_retry": {
+    "max_execution_tries_per_attempt": 5,
+    "selection": "first_valid_execution",
+    "invalidators": [
+      "container_start_failed",
+      "gateway_start_failed",
+      "task_seed_failed",
+      "runtime_lock_mismatch",
+      "runner_internal_error",
+      "required_evidence_failed",
+      "gateway_pause_failed",
+      "provider_transient_exhausted",
+      "solver_gateway_start_failed",
+      "post_commit_stream_failure"
+    ]
+  },
+  "providers": {
+    "google_vertex": {"project": null, "location": "global", "origin": "https://aiplatform.googleapis.com"}
+  },
+  "harness_overrides": {
+    "openclaw": {},
+    "hermes": {},
+    "nanobot": {},
+    "zeroclaw": {},
+    "generic": {},
+    "minimum": {}
+  }
+}

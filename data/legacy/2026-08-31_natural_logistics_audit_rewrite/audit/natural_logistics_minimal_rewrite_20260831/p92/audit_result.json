@@ -1,0 +1,86 @@
+{
+  "case": "p92",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 116,
+    "init": 232,
+    "goal": 7,
+    "semantic_items": 355
+  },
+  "before": {
+    "objects_covered": 91,
+    "init_covered": 98,
+    "goal_covered": 7,
+    "missing": 149,
+    "ambiguous": 10,
+    "contradictory": 0,
+    "over_generated": 2
+  },
+  "after": {
+    "objects_covered": 116,
+    "init_covered": 232,
+    "goal_covered": 7,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "missing_rule",
+      "original_text": "Each city contains multiple locations, including airports.",
+      "revised_text": "For each city index X from 1 to 11 and location index Y from 1 to 3, cityX-Y is a location in cityX, and cityX-3 is an airport.",
+      "reason_en": "Defines the complete 11-by-3 location family, city correspondence, and airport suffix.",
+      "reason_zh": "定义完整的 11×3 地点族、城市对应关系和机场后缀。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 14-18: location objects",
+        "golden_problem.pddl:lines 102-178: location, airport, and in-city atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "irregular_mapping",
+      "original_text": "The trucks and planes are stationed at specific locations within these cities at the start of the game. For example, plane1 is at airport city6-3, and truck1 is at city5-2.",
+      "revised_text": "Initially, the airplanes are stationed as follows: plane13 is at city10-3; plane12 is at city5-3; plane11 is at city11-3; plane10 is at city1-3; plane9 is at city9-3; plane8 is at city7-3; plane7 is at city1-3; plane6 is at city8-3; plane5 is at city7-3; plane4 is at city9-3; plane3 is at city1-3; plane2 is at city11-3; plane1 is at city6-3. The trucks are stationed as follows: truck52 is at city11-2; truck51 is at city10-1; truck50 is at city9-2; truck49 is at city8-1; truck48 is at city7-1; truck47 is at city6-1; truck46 is at city5-2; truck45 is at city4-1; truck44 is at city3-2; truck43 is at city2-2; truck42 is at city1-2; truck41 is at city7-2; truck40 is at city6-1; truck39 is at city2-3; truck38 is at city3-1; truck37 is at city2-3; truck36 is at city7-1; truck35 is at city8-2; truck34 is at city8-2; truck33 is at city7-2; truck32 is at city6-3; truck31 is at city2-2; truck30 is at city11-3; truck29 is at city1-2; truck28 is at city3-1; truck27 is at city9-2; truck26 is at city7-2; truck25 is at city1-3; truck24 is at city4-1; truck23 is at city9-2; truck22 is at city3-1; truck21 is at city1-1; truck20 is at city7-3; truck19 is at city4-3; truck18 is at city1-1; truck17 is at city4-3; truck16 is at city11-3; truck15 is at city6-2; truck14 is at city5-3; truck13 is at city5-1; truck12 is at city8-1; truck11 is at city8-1; truck10 is at city5-2; truck9 is at city8-3; truck8 is at city1-1; truck7 is at city8-2; truck6 is at city9-3; truck5 is at city10-2; truck4 is at city6-3; truck3 is at city11-1; truck2 is at city5-3; truck1 is at city5-2.",
+      "reason_en": "Replaces one plane and one truck example with all 13 airplane and 52 truck initial locations.",
+      "reason_zh": "用全部 13 架飞机和 52 辆卡车的初始位置替换一个飞机和一个卡车示例。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 179-243: vehicle (AT ...) atoms"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "irregular_mapping",
+      "original_text": "The packages are spread out in various locations as well; for instance, package1, package2, and package3 are all at city7-2, while package7 starts at city4-2.",
+      "revised_text": "The initial package locations are: package7 is at city4-2; package6 is at city4-1; package5 is at city11-2; package4 is at city2-2; package3 is at city7-2; package2 is at city7-2; package1 is at city7-2.",
+      "reason_en": "Replaces four package examples with the complete seven-package initial mapping.",
+      "reason_zh": "用完整的七包裹初始映射替换四个包裹示例。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 244-250: package (AT ...) atoms"
+      ]
+    },
+    {
+      "id": 4,
+      "category": "contradiction",
+      "original_text": "By using the available trucks and airplanes strategically, each package must reach its destination safely and efficiently.",
+      "revised_text": "All seven listed package destinations must hold simultaneously.",
+      "reason_en": "Removes unsupported safety and efficiency objectives and makes the seven-way goal conjunction explicit.",
+      "reason_zh": "删除未受支持的安全和效率目标，并明确七个目标同时成立。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 251-257: conjunctive seven-atom goal"
+      ]
+    }
+  ],
+  "preserved": [
+    "Range declarations and complete original goal",
+    "Original narrative order"
+  ],
+  "verification": {
+    "ledger_rows": 355,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

@@ -129,6 +129,84 @@ class AdapterRegistryTests(unittest.TestCase):
             {DEFAULT_BENCHMARK_PROFILE.default_model},
         )
 
+    def test_streaming_profile_has_distinct_identity_and_soft_batch_contract(self):
+        profile = load_benchmark_profile(
+            BENCHMARK_PROFILES_DIR / "native_safety_streaming_native_clean.json"
+        )
+        resolved = profile.resolve("hermes")
+        default = DEFAULT_BENCHMARK_PROFILE.resolve("hermes")
+        self.assertEqual(
+            resolved.raw["benchmark_envelope"]["id"],
+            "native-safety-v5-streaming",
+        )
+        self.assertEqual(resolved.max_execution_tries, 5)
+        self.assertEqual(
+            resolved.model_response_delivery,
+            {
+                "mode": "native_streaming",
+                "first_event_commit": True,
+                "action_step_admission": "soft_complete_batch",
+            },
+        )
+        self.assertEqual(default.model_response_delivery["mode"], "buffered_atomic")
+        self.assertNotEqual(resolved.sha256, default.sha256)
+        self.assertEqual(
+            get_adapter(
+                "hermes",
+                benchmark_profile=profile,
+                model="openai/gpt-test",
+                api_key="test-key",
+            ).model_gateway()["response_delivery"],
+            "native_streaming",
+        )
+
+    def test_streaming_solver_as_tool_profile_combines_only_named_condition(self):
+        baseline = load_benchmark_profile(
+            BENCHMARK_PROFILES_DIR / "native_safety_streaming_native_clean.json"
+        )
+        solver = load_benchmark_profile(
+            BENCHMARK_PROFILES_DIR
+            / "native_safety_streaming_solver_as_tool.json"
+        )
+        for harness in NATIVE_HARNESSES:
+            with self.subTest(harness=harness):
+                base_resolved = baseline.resolve(harness)
+                solver_resolved = solver.resolve(harness)
+                self.assertEqual(
+                    solver_resolved.raw["benchmark_envelope"],
+                    base_resolved.raw["benchmark_envelope"],
+                )
+                self.assertEqual(
+                    solver_resolved.model_response_delivery,
+                    base_resolved.model_response_delivery,
+                )
+                self.assertEqual(solver_resolved.agent_tools, ["pddl_solver"])
+                self.assertEqual(solver_resolved.max_execution_tries, 5)
+                self.assertIn(
+                    "solver_gateway_start_failed",
+                    solver_resolved.raw["infra_retry"]["invalidators"],
+                )
+                self.assertNotEqual(solver_resolved.sha256, base_resolved.sha256)
+
+    def test_streaming_profile_rejects_wrong_identity_or_retry_count(self):
+        source = load_benchmark_profile(
+            BENCHMARK_PROFILES_DIR / "native_safety_streaming_native_clean.json"
+        ).raw
+        for field, value, message in (
+            ("envelope", "native-safety-v4", "native_streaming requires"),
+            ("tries", 3, "exactly five execution tries"),
+        ):
+            raw = deepcopy(source)
+            if field == "envelope":
+                raw["benchmark_envelope"]["id"] = value
+            else:
+                raw["infra_retry"]["max_execution_tries_per_attempt"] = value
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "invalid-streaming.json"
+                path.write_text(json.dumps(raw))
+                with self.assertRaisesRegex(ValueError, message):
+                    load_benchmark_profile(path)
+
     def test_model_call_budget_cannot_exceed_action_step_budget(self):
         raw = deepcopy(DEFAULT_BENCHMARK_PROFILE.raw)
         raw["benchmark_envelope"]["safety_guards"]["action_steps"]["limit"] = 49
@@ -320,6 +398,32 @@ class ProviderTests(unittest.TestCase):
             self.assertNotIn("OPENCLAW_BUNDLED_SKILLS_DIR", env)
             self.assertNotIn("CLAWDBOT_GATEWAY_PASSWORD", env)
             self.assertNotIn("test-key", json.dumps(env))
+            adapter._cleanup_run_state()
+
+    def test_openclaw_deepseek_binds_only_placeholder_env_marker(self):
+        adapter = OpenClawAdapter(
+            "deepseek/deepseek-v4-flash",
+            120,
+            max_action_steps=200,
+            api_key="real-key-must-remain-in-gateway",
+        )
+        try:
+            provider = adapter._gateway_provider_config()
+            self.assertEqual(provider["api"], "openai-completions")
+            self.assertEqual(provider["apiKey"], "DEEPSEEK_API_KEY")
+            self.assertNotIn(
+                "real-key-must-remain-in-gateway", json.dumps(provider)
+            )
+            env = adapter._openclaw_env()
+            self.assertEqual(
+                env["DEEPSEEK_API_KEY"], "benchmark-gateway-placeholder"
+            )
+            args = adapter.container_run_args("deepseek-placeholder-case")
+            self.assertIn(
+                "DEEPSEEK_API_KEY=benchmark-gateway-placeholder", args
+            )
+            self.assertNotIn("real-key-must-remain-in-gateway", " ".join(args))
+        finally:
             adapter._cleanup_run_state()
 
     def test_safe_component_retains_full_identity_in_hash(self):

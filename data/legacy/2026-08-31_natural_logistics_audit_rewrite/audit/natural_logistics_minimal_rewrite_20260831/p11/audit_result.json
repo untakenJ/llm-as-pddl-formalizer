@@ -1,0 +1,53 @@
+{
+  "case": "p11",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 29,
+    "init": 58,
+    "goal": 11,
+    "semantic_items": 98
+  },
+  "before": {
+    "objects_covered": 29,
+    "init_covered": 51,
+    "goal_covered": 11,
+    "missing": 0,
+    "ambiguous": 7,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 29,
+    "init_covered": 58,
+    "goal_covered": 11,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "missing_rule",
+      "original_text": "",
+      "revised_text": "The positions pos1 through pos4 and the airports apt1 through apt4 are all locations.",
+      "reason_en": "Adds exact bounded typing evidence for four location atoms and three airport atoms that were only generically or indirectly suggested.",
+      "reason_zh": "为原文仅笼统或间接暗示的四个地点原子和三个机场原子增加精确有界的类型证据。",
+      "golden_evidence": [
+        "golden_problem.pddl:8-10: location and airport atoms for pos1 through pos4 and apt1 through apt4"
+      ]
+    }
+  ],
+  "preserved": [
+    "All package and truck type/location statements and the complete city-membership mapping.",
+    "The airplane statement and all eleven irregular goal pairs."
+  ],
+  "verification": {
+    "ledger_rows": 98,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}
+

@@ -5,13 +5,21 @@ Supports:
   hosted tools (``web_search``, ``code_interpreter``).
 - **Gemini** via Google GenAI SDK on **Gemini Enterprise Agent Platform / Vertex**
   using ``GOOGLE_CLOUD_API_KEY``.
+- **DeepSeek** via the OpenAI-compatible Chat Completions API using JSON mode.
+- **Logits** via its public sampling REST API and an audited model-family chat
+  convention (currently Qwen3.5).
 
 Credentials in ``_private/.env`` (python-dotenv) or shell env:
 - OpenAI: ``_private/key.txt``
 - Gemini Vertex: ``GOOGLE_CLOUD_API_KEY``, ``GOOGLE_CLOUD_PROJECT``,
   ``GOOGLE_CLOUD_LOCATION``. This path does not use browser/ADC auth.
+- DeepSeek: ``DEEPSEEK_API_KEY``.
+- Logits: ``LOGITS_API_KEY``. Use an explicit dynamic model route such as
+  ``logits/Qwen/Qwen3.5-4B``.
 
-Note: DeepSeek has no Responses endpoint -- use ``llm-as-formalizer.py`` instead.
+External provider transients use the standalone, bounded
+``external-transient-v2`` retry policy. Each application-level attempt is
+recorded in the per-problem trace.
 
 Example:
     python3 source/llm-as-formalizer-api.py \\
@@ -21,6 +29,10 @@ Example:
     python3 source/llm-as-formalizer-api.py \\
         --domain blocksworld --model gemini-2.5-flash \\
         --data Heavily_Templated_BlocksWorld-100 --indices 1,2,3
+
+    python3 source/llm-as-formalizer-api.py \\
+        --domain barman --model deepseek-v4-flash \\
+        --data Heavily_Templated_Barman-100 --indices 1,2,3
 """
 
 from env_loader import load_project_dotenv
@@ -34,19 +46,21 @@ import time
 
 from batch_utils import format_problem_name, run_parallel
 from api_providers import (
-    API_MODELS,
     Tracer,
     build_provider_client,
     default_tools_for_model,
+    direct_api_transient_policy,
     is_reasoning_model,
     respond_with_tools,
+    sanitize_model_name,
+    validate_api_model,
 )
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 Parser = argparse.ArgumentParser()
 Parser.add_argument("--domain", help="which domain to evaluate", choices=["blocksworld", "mystery_blocksworld", "barman", "logistics"])
-Parser.add_argument("--model", help="which API-served model to use", choices=API_MODELS)
+Parser.add_argument("--model", help="which API-served model to use", type=validate_api_model)
 Parser.add_argument("--data", help="which data to formalize", choices=["Heavily_Templated_BlocksWorld-100", "Moderately_Templated_BlocksWorld-100", "Natural_BlocksWorld-100", "Heavily_Templated_Mystery_BlocksWorld-100", "Heavily_Templated_Barman-100", "Heavily_Templated_Logistics-100", "Moderately_Templated_Logistics-100", "Natural_Logistics-100"])
 Parser.add_argument("--index_start", help="index to start generating result from (inclusive)")
 Parser.add_argument("--index_end", help="index to end generating result from (exclusive)")
@@ -94,9 +108,10 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
     }
 
     out_root = out_dir_root or f'{ROOT_DIR}/output'
-    out_dir = f'{out_root}/llm-as-formalizer-api/{domain}/{data}/{model}/{problem}'
+    model_label = sanitize_model_name(model)
+    out_dir = f'{out_root}/llm-as-formalizer-api/{domain}/{data}/{model_label}/{problem}'
     os.makedirs(out_dir, exist_ok=True)
-    trace_path = f'{out_dir}/{problem}_{model}_trace.jsonl' if record_trace else None
+    trace_path = f'{out_dir}/{problem}_{model_label}_trace.jsonl' if record_trace else None
     tracer = Tracer(trace_path)
 
     t_start = time.monotonic()
@@ -108,6 +123,7 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
                     is_reasoning_model=is_reasoning_model(model),
                     tools=tools if provider == "openai" else [],
                     tool_executors=list(tool_executors.keys()) if tool_executors else [],
+                    transient_error_policy=direct_api_transient_policy(),
                     text_format=text_format,
                     prompt=prompt,
                     domain_description=domain_description,
@@ -128,8 +144,8 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
         domain_file = return_dict["domain file"]
         problem_file = return_dict["problem file"]
 
-        df_path = f'{out_dir}/{problem}_{model}_df.pddl'
-        pf_path = f'{out_dir}/{problem}_{model}_pf.pddl'
+        df_path = f'{out_dir}/{problem}_{model_label}_df.pddl'
+        pf_path = f'{out_dir}/{problem}_{model_label}_pf.pddl'
 
         with open(df_path, 'w') as df:
             df.write(domain_file)
@@ -160,9 +176,10 @@ def run_gpt_batch(provider, client, domain, model, data, problem_numbers, tools=
     def _run_one(problem_number):
         problem_name = format_problem_name(problem_number)
         out_root = out_dir_root or f'{ROOT_DIR}/output'
-        problem_dir = f'{out_root}/llm-as-formalizer-api/{domain}/{data}/{model}/{problem_name}'
-        df_path = f'{problem_dir}/{problem_name}_{model}_df.pddl'
-        pf_path = f'{problem_dir}/{problem_name}_{model}_pf.pddl'
+        model_label = sanitize_model_name(model)
+        problem_dir = f'{out_root}/llm-as-formalizer-api/{domain}/{data}/{model_label}/{problem_name}'
+        df_path = f'{problem_dir}/{problem_name}_{model_label}_df.pddl'
+        pf_path = f'{problem_dir}/{problem_name}_{model_label}_pf.pddl'
         if resume and os.path.isfile(df_path) and os.path.isfile(pf_path):
             print(f"Skipping {problem_name} (complete PDDL pair exists)", flush=True)
             return

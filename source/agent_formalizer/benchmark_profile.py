@@ -22,6 +22,8 @@ KNOWN_HARNESSES = {
     "minimum",
 }
 NETWORK_MODES = {"model_only", "controlled_web"}
+SOLVER_BACKENDS = {"public", "local"}
+MODEL_RESPONSE_DELIVERY_MODES = {"buffered_atomic", "native_streaming"}
 VALIDATION_PRESETS = {
     "runtime-lock",
     "network-model-only",
@@ -134,6 +136,7 @@ def _validate_profile(raw: dict[str, Any], path: Path) -> None:
             "validations",
             "required_evidence",
         },
+        optional={"model_response_delivery"},
         path="benchmark_envelope",
     )
     _string(envelope["id"], "benchmark_envelope.id")
@@ -233,6 +236,43 @@ def _validate_profile(raw: dict[str, Any], path: Path) -> None:
         )
     if len(set(statuses)) != len(statuses):
         raise ValueError("model_error_routing.retryable_http_statuses must be unique")
+
+    delivery = envelope.get(
+        "model_response_delivery",
+        {
+            "mode": "buffered_atomic",
+            "first_event_commit": False,
+            "action_step_admission": "exact_complete_batch",
+        },
+    )
+    delivery = _object(delivery, "benchmark_envelope.model_response_delivery")
+    _keys(
+        delivery,
+        required={"mode", "first_event_commit", "action_step_admission"},
+        path="benchmark_envelope.model_response_delivery",
+    )
+    if delivery["mode"] not in MODEL_RESPONSE_DELIVERY_MODES:
+        raise ValueError("model_response_delivery.mode is not supported")
+    if not isinstance(delivery["first_event_commit"], bool):
+        raise ValueError("model_response_delivery.first_event_commit must be boolean")
+    expected_delivery = {
+        "buffered_atomic": (False, "exact_complete_batch"),
+        "native_streaming": (True, "soft_complete_batch"),
+    }[delivery["mode"]]
+    if (
+        delivery["first_event_commit"],
+        delivery["action_step_admission"],
+    ) != expected_delivery:
+        raise ValueError(
+            "model_response_delivery fields do not match the selected mode"
+        )
+    if delivery["mode"] == "native_streaming" and envelope["id"] != (
+        "native-safety-v5-streaming"
+    ):
+        raise ValueError(
+            "native_streaming requires benchmark_envelope.id "
+            "native-safety-v5-streaming"
+        )
 
     interaction = _object(envelope["interaction"], "benchmark_envelope.interaction")
     _keys(interaction, required={"mode"}, path="benchmark_envelope.interaction")
@@ -338,6 +378,16 @@ def _validate_profile(raw: dict[str, Any], path: Path) -> None:
         isinstance(item, str) and item for item in retry["invalidators"]
     ):
         raise ValueError("infra_retry.invalidators must be a list of strings")
+    if delivery["mode"] == "native_streaming":
+        if retry["max_execution_tries_per_attempt"] != 5:
+            raise ValueError(
+                "native_streaming requires exactly five execution tries per attempt"
+            )
+        if "post_commit_stream_failure" not in retry["invalidators"]:
+            raise ValueError(
+                "native_streaming requires post_commit_stream_failure as an "
+                "infra invalidator"
+            )
     minimum_agent = condition["overrides"].get("minimum_agent")
     if minimum_agent is not None:
         required_calls = int(minimum_agent["reflection_count"]) + 1
@@ -407,6 +457,9 @@ def _validate_condition_overrides(value: Any, path: str) -> None:
             "allow_final_message_recovery",
             "skills_mode",
             "agent_tools",
+            "solver_backend",
+            "solver_error_routing",
+            "external_call_timing",
             "generation",
             "minimum_agent",
         },
@@ -433,6 +486,24 @@ def _validate_condition_overrides(value: Any, path: str) -> None:
         overrides["agent_tools"] = _validate_agent_tools(
             overrides["agent_tools"], f"{path}.agent_tools"
         )
+    if (
+        "solver_backend" in overrides
+        and overrides["solver_backend"] not in SOLVER_BACKENDS
+    ):
+        raise ValueError(
+            f"{path}.solver_backend must be one of "
+            + ", ".join(sorted(SOLVER_BACKENDS))
+        )
+    if "solver_error_routing" in overrides:
+        from .external_calls.solver import POLICY_ID
+
+        if overrides["solver_error_routing"] != POLICY_ID:
+            raise ValueError(f"{path}.solver_error_routing must be {POLICY_ID!r}")
+    if "external_call_timing" in overrides:
+        if overrides["external_call_timing"] not in {"logical-deadline-v1", "call-checkpoint-v1"}:
+            raise ValueError(f"{path}.external_call_timing must be 'logical-deadline-v1' or 'call-checkpoint-v1'")
+        if "pddl_solver" in overrides.get("agent_tools", []) and not overrides.get("solver_error_routing"):
+            raise ValueError("logical solver deadlines require explicit solver recovery")
     if "generation" in overrides:
         generation = _object(overrides["generation"], f"{path}.generation")
         _keys(
@@ -605,6 +676,14 @@ class ResolvedBenchmarkConfig:
         return list(self.raw["resolved"].get("agent_tools", []))
 
     @property
+    def solver_backend(self) -> str:
+        """Backend used by the agent tool and post-generation evaluator."""
+        # Historical frozen profiles omitted this field and used the public
+        # service. New bundled profiles state ``local`` explicitly, so legacy
+        # study identity remains stable without weakening the new default.
+        return str(self.raw["resolved"].get("solver_backend", "public"))
+
+    @property
     def attempts_per_case(self) -> int:
         return self.raw["sampling"]["attempts_per_case"]
 
@@ -636,6 +715,10 @@ class ResolvedBenchmarkConfig:
     @property
     def model_error_routing(self) -> dict[str, Any]:
         return deepcopy(self.raw["resolved"]["model_error_routing"])
+
+    @property
+    def model_response_delivery(self) -> dict[str, Any]:
+        return deepcopy(self.raw["resolved"]["model_response_delivery"])
 
     def metadata(self) -> dict[str, Any]:
         return {"label": self.label, "sha256": self.sha256, "raw": deepcopy(self.raw)}
@@ -712,6 +795,7 @@ class BenchmarkProfile:
         max_execution_tries: int | None = None,
         allow_final_message_recovery: bool | None = None,
         skills_mode: str | None = None,
+        solver_backend: str | None = None,
         provider_options: dict[str, Any] | None = None,
         harness_overrides: dict[str, Any] | None = None,
     ) -> ResolvedBenchmarkConfig:
@@ -727,6 +811,8 @@ class BenchmarkProfile:
             overrides["allow_final_message_recovery"] = allow_final_message_recovery
         if skills_mode is not None:
             overrides["skills_mode"] = skills_mode
+        if solver_backend is not None:
+            overrides["solver_backend"] = solver_backend
         experimental = dict(overrides.get("experimental_budgets", {}))
         if timeout is not None:
             experimental["harness_execution_timeout_seconds"] = timeout
@@ -739,6 +825,16 @@ class BenchmarkProfile:
         _validate_condition_overrides(overrides, "resolved condition overrides")
 
         envelope = deepcopy(self.raw["benchmark_envelope"])
+        model_response_delivery = deepcopy(
+            envelope.get(
+                "model_response_delivery",
+                {
+                    "mode": "buffered_atomic",
+                    "first_event_commit": False,
+                    "action_step_admission": "exact_complete_batch",
+                },
+            )
+        )
         resolved_budgets = deepcopy(envelope["safety_guards"])
         for key, limit in experimental.items():
             resolved_budgets[key] = {
@@ -832,6 +928,15 @@ class BenchmarkProfile:
                 attempts_per_case, "attempts_per_case"
             )
         retry = deepcopy(self.raw["infra_retry"])
+        if "solver_error_routing" in overrides or "external_call_timing" in overrides:
+            # This semantic policy is part of the resolved hash, never an
+            # operational knob retroactively applied to a frozen experiment.
+            for invalidator in (
+                "external_call_unrecoverable", "external_call_control_failed",
+                "external_call_stream_overlap",
+            ):
+                if invalidator not in retry["invalidators"]:
+                    retry["invalidators"].append(invalidator)
         if max_execution_tries is not None:
             retry["max_execution_tries_per_attempt"] = _positive_int(
                 max_execution_tries, "max_execution_tries"
@@ -849,6 +954,7 @@ class BenchmarkProfile:
                 "budgets": resolved_budgets,
                 "network": resolved_network,
                 "model_error_routing": deepcopy(envelope["model_error_routing"]),
+                "model_response_delivery": model_response_delivery,
                 "interaction": deepcopy(envelope["interaction"]),
                 "state_isolation": deepcopy(envelope["state_isolation"]),
                 "environment": deepcopy(envelope["environment"]),
@@ -866,6 +972,15 @@ class BenchmarkProfile:
             "infra_retry": retry,
             "providers": providers,
         }
+        # New bundled profiles always enter this branch. The conditional is
+        # retained solely so an old frozen profile without the field preserves
+        # its historical public-backend hash and resume semantics.
+        if "solver_backend" in overrides:
+            resolved["resolved"]["solver_backend"] = overrides["solver_backend"]
+        if "solver_error_routing" in overrides:
+            resolved["resolved"]["solver_error_routing"] = overrides["solver_error_routing"]
+        if "external_call_timing" in overrides:
+            resolved["resolved"]["external_call_timing"] = overrides["external_call_timing"]
         return ResolvedBenchmarkConfig(resolved)
 
     def metadata(self) -> dict[str, Any]:

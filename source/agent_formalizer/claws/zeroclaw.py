@@ -29,6 +29,7 @@ ZEROCLAW_PROVIDER_MAP = {
     # preserves Gemini extra_content/thought signatures across tool exchanges.
     "google-vertex": "custom",
     "deepseek": "deepseek",
+    "logits": "custom",
     "dashscope": "qwen",
 }
 
@@ -272,6 +273,36 @@ strict_tool_parsing = false
             if workspace.copy_from_container(candidate, str(costs_path)):
                 break
         return _parse_costs(costs_path)
+
+    def raw_evidence_roots(self, artifact_dir: Path) -> list[Path]:
+        # Cost rows are usage evidence, not a native conversation transcript.
+        return [
+            artifact_dir / "costs.jsonl",
+            artifact_dir / "sessions",
+            artifact_dir / "gateway",
+        ]
+
+    def analysis_evidence_spec(self) -> dict:
+        return {
+            "schema_version": 1,
+            "analysis_source": {
+                "kind": "native_runtime_reasoning_content",
+                "native_harness_exposure": "structured",
+                "absence_is_model_attributable": False,
+                "text_fields": ["reasoning_content"],
+                "opaque_fields": [],
+            },
+            "raw_session": {
+                "adapter_persistence": "not_implemented",
+                "collector": "none",
+            },
+            "normalized_analysis": {
+                "status": "not_implemented",
+                "known_loss_modes": [
+                    "adapter_collects_usage_but_no_native_conversation"
+                ],
+            },
+        }
 
 
 def _parse_costs(path: Path) -> dict:

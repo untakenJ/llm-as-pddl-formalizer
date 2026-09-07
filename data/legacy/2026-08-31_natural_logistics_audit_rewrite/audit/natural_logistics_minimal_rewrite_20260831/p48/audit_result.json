@@ -1,0 +1,56 @@
+{
+  "case": "p48",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 66,
+    "init": 132,
+    "goal": 25,
+    "semantic_items": 223
+  },
+  "before": {
+    "objects_covered": 57,
+    "init_covered": 79,
+    "goal_covered": 25,
+    "missing": 18,
+    "ambiguous": 44,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 66,
+    "init_covered": 132,
+    "goal_covered": 25,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "missing_rule",
+      "original_text": "Each city from cit1 to cit9 has a position and an airport location (apt1 to apt9) with corresponding vehicles and packages.",
+      "revised_text": "For each integer X from 1 through 9, citX is a city, posX and aptX are locations in citX, aptX is an airport, truX is a truck, and objX1, objX2, and objX3 are packages; initially, truX and those three packages are at posX.",
+      "reason_en": "The original correspondence was undefined; the bounded X=1..9 rule uniquely supplies every required object, type, initial position, and city membership.",
+      "reason_zh": "\u539f\u5bf9\u5e94\u5173\u7cfb\u672a\u5b9a\u4e49\uff1b\u6709\u9650\u7684 X=1..9 \u89c4\u5219\u552f\u4e00\u7ed9\u51fa\u6bcf\u4e2a\u5fc5\u9700\u5bf9\u8c61\u3001\u7c7b\u578b\u3001\u521d\u59cb\u4f4d\u7f6e\u548c\u57ce\u5e02\u96b6\u5c5e\u5173\u7cfb\u3002",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 4-69: object families",
+        "golden_problem.pddl:lines 72-146: unary type facts",
+        "golden_problem.pddl:lines 150-185: truck/package initial positions",
+        "golden_problem.pddl:lines 186-203: location-city facts"
+      ]
+    }
+  ],
+  "preserved": [
+    "Introductory sentence and exact cit1/cit2 examples",
+    "Exact ordered airplane mapping",
+    "Complete irregular 25-atom goal"
+  ],
+  "verification": {
+    "ledger_rows": 223,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

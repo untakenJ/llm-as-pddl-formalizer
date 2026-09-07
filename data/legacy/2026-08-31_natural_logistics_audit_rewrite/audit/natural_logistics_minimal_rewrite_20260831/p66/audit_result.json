@@ -1,0 +1,52 @@
+{
+  "case": "p66",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 87,
+    "init": 174,
+    "goal": 34,
+    "semantic_items": 295
+  },
+  "before": {
+    "objects_covered": 87,
+    "init_covered": 126,
+    "goal_covered": 34,
+    "missing": 0,
+    "ambiguous": 48,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 87,
+    "init_covered": 174,
+    "goal_covered": 34,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "The trucks (tru1 through tru12) and their corresponding packages are positioned at locations pos1 through pos12.",
+      "revised_text": "For every integer X from 1 through 12, truck truX and packages objX1, objX2, and objX3 are positioned at posX initially, where X is replaced by the same decimal numeral in every identifier (so X = 10 yields tru10, obj101, obj102, obj103, and pos10).",
+      "reason_en": "Replaces an undefined ‘corresponding packages’ relation with a finite same-index construction that expands to exactly 12 truck and 36 package placements.",
+      "reason_zh": "用有限的同索引构造替换未定义的“对应包裹”关系，该规则恰好展开为 12 个卡车位置和 36 个包裹位置。",
+      "golden_evidence": [
+        "golden_problem.pddl:195-242: all 48 truck/package initial AT atoms"
+      ]
+    }
+  ],
+  "preserved": [
+    "All object inventories, type wording, airplane starts, and city-membership wording.",
+    "The complete 34-pair irregular goal paragraph and original two-paragraph organization."
+  ],
+  "verification": {
+    "ledger_rows": 295,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

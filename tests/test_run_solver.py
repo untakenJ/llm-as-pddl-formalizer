@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -11,18 +12,15 @@ if str(SOURCE_DIR) not in sys.path:
     sys.path.insert(0, str(SOURCE_DIR))
 
 import run_solver as solver_module
+from agent_formalizer.execution_validity import append_manual_event
 
 
-class FakeResponse:
-    def __init__(self, payload, *, status_code=200, text=""):
-        self.payload = payload
-        self.status_code = status_code
-        self.text = text
-
-    def json(self):
-        if isinstance(self.payload, Exception):
-            raise self.payload
-        return self.payload
+class RunSolverModelLabelTests(unittest.TestCase):
+    def test_logits_model_id_uses_direct_api_filesystem_label(self):
+        self.assertEqual(
+            solver_module._model_output_name("logits/Qwen/Qwen3.5-4B"),
+            "logits__Qwen__Qwen3.5-4B",
+        )
 
 
 class RunSolverFailureHandlingTests(unittest.TestCase):
@@ -55,18 +53,15 @@ class RunSolverFailureHandlingTests(unittest.TestCase):
     def test_terminal_error_without_result_is_recorded_per_problem(self):
         with tempfile.TemporaryDirectory() as root:
             problem_dir = self._write_pddl(root)
-            responses = [
-                FakeResponse({"result": "/check/task-1"}),
-                FakeResponse(
-                    {
-                        "error": (
-                            "There was a server-side error trying to run "
-                            "a planutils package."
-                        )
-                    }
-                ),
-            ]
-            with patch.object(solver_module.requests, "post", side_effect=responses):
+            diagnostic = (
+                "solver request failed\n"
+                "stage: terminal\n"
+                "terminal response missing top-level 'result'\n"
+                'response_json:\n{"error": "server-side error"}'
+            )
+            with patch.object(
+                solver_module, "solve_pddl", return_value=(False, diagnostic)
+            ):
                 passed = solver_module._run_solver_one(
                     1,
                     self.domain,
@@ -90,8 +85,15 @@ class RunSolverFailureHandlingTests(unittest.TestCase):
     def test_invalid_json_becomes_a_single_solver_failure(self):
         with tempfile.TemporaryDirectory() as root:
             self._write_pddl(root)
-            response = FakeResponse(ValueError("bad json"), text="upstream proxy error")
-            with patch.object(solver_module.requests, "post", return_value=response):
+            diagnostic = (
+                "solver request failed\n"
+                "stage: submit\n"
+                "response was not valid JSON\n"
+                "response_body:\nupstream proxy error"
+            )
+            with patch.object(
+                solver_module, "solve_pddl", return_value=(False, diagnostic)
+            ):
                 passed, diagnostic = solver_module.run_solver(
                     self.domain,
                     self.dataset,
@@ -110,22 +112,14 @@ class RunSolverFailureHandlingTests(unittest.TestCase):
     def test_empty_plan_with_killed_stdout_is_not_a_success(self):
         with tempfile.TemporaryDirectory() as root:
             self._write_pddl(root)
-            responses = [
-                FakeResponse({"result": "/check/task-oom"}),
-                FakeResponse(
-                    {
-                        "status": "ok",
-                        "result": {
-                            "stdout": "Killed\n",
-                            "stderr": "",
-                            "call": "timeout 20 planutils run dual-bfws-ffparser",
-                            "output": {"plan": ""},
-                            "output_type": "generic",
-                        },
-                    }
-                ),
-            ]
-            with patch.object(solver_module.requests, "post", side_effect=responses):
+            diagnostic = (
+                "solver request failed\n"
+                "stage: solver-result\n"
+                "dual-bfws-ffparser returned no plan; stdout: Killed"
+            )
+            with patch.object(
+                solver_module, "solve_pddl", return_value=(False, diagnostic)
+            ):
                 passed, diagnostic = solver_module.run_solver(
                     self.domain,
                     self.dataset,
@@ -143,7 +137,16 @@ class RunSolverFailureHandlingTests(unittest.TestCase):
     def test_exhausted_exceptions_do_not_abort_the_remaining_batch(self):
         calls = []
 
-        def fake_run_solver(domain, data, problem, model, solver, prediction_type, out_dir_root):
+        def fake_run_solver(
+            domain,
+            data,
+            problem,
+            model,
+            solver,
+            prediction_type,
+            out_dir_root,
+            solver_base_url,
+        ):
             calls.append(problem)
             if problem == "p01":
                 raise RuntimeError("simulated transport failure")
@@ -169,6 +172,77 @@ class RunSolverFailureHandlingTests(unittest.TestCase):
             self.assertIn("all 3 attempt(s)", diagnostic)
             self.assertIn("RuntimeError: simulated transport failure", diagnostic)
             self.assertEqual(p02_plan.read_text(), "(noop)")
+
+    def test_agent_evaluation_reads_selected_frozen_execution_artifacts(self):
+        with tempfile.TemporaryDirectory() as root:
+            problem_dir = self._write_pddl(root)
+            (problem_dir / f"p01_{self.model}_df.pddl").write_text("stale-domain")
+            execution = problem_dir / "executions" / "execution-001"
+            frozen = execution / "frozen_workspace"
+            frozen.mkdir(parents=True)
+            (frozen / "domain.pddl").write_text("selected-domain")
+            (frozen / "problem.pddl").write_text("selected-problem")
+            completion = {
+                "complete": True,
+                "attempt_valid": True,
+                "problem": "p01",
+                "model_label": self.model,
+                "attempt_index": 1,
+                "selected_execution_try": 1,
+                "generation_success": True,
+                "resolved_config_sha256": "config",
+                "runtime_identity_sha256": "runtime",
+                "evidence": {"frozen_workspace_artifacts": {}},
+            }
+            completion_path = problem_dir / "completion.json"
+            completion_path.write_text(json.dumps(completion))
+
+            with patch.object(
+                solver_module,
+                "solve_pddl",
+                return_value=(False, "expected diagnostic"),
+            ) as solve:
+                passed, diagnostic = solver_module.run_solver(
+                    self.domain,
+                    self.dataset,
+                    "p01",
+                    self.model,
+                    self.solver,
+                    self.prediction_type,
+                    out_dir_root=root,
+                )
+
+            self.assertFalse(passed)
+            self.assertEqual(diagnostic, "expected diagnostic")
+            self.assertEqual(solve.call_args.args[:2], ("selected-domain", "selected-problem"))
+
+            cell = problem_dir.parent
+            append_manual_event(
+                cell,
+                action="invalidate",
+                problem="p01",
+                attempt_index=1,
+                execution_try=1,
+                operator="benchmark-owner",
+                reason_code="tool_infra.solver_transport",
+                reason="agent-visible solver transport error",
+                evidence_paths=[completion_path],
+                result_visibility="blind",
+                timestamp="2026-09-01T00:00:00Z",
+            )
+            with patch.object(solver_module, "solve_pddl") as solve:
+                passed, diagnostic = solver_module.run_solver(
+                    self.domain,
+                    self.dataset,
+                    "p01",
+                    self.model,
+                    self.solver,
+                    self.prediction_type,
+                    out_dir_root=root,
+                )
+            self.assertFalse(passed)
+            self.assertIn("selected effective-valid execution", diagnostic)
+            solve.assert_not_called()
 
 
 if __name__ == "__main__":

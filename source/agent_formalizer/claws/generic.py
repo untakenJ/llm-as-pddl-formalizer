@@ -24,6 +24,7 @@ from agent_formalizer.config import (
     GENERIC_ENV_PATH,
     GENERIC_REPO_PATH,
 )
+from agent_formalizer.optional_evidence import inspect_tagged_response_logs
 from agent_formalizer.result_types import AgentResult
 
 logger = logging.getLogger(__name__)
@@ -462,20 +463,85 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         session_id: str | None = None,
         session_file: str | None = None,
         container_name: str | None = None,
-    ) -> None:
+    ) -> dict:
         state = self._agent_states.get(agent_id)
         if not state:
-            return
+            return {
+                "status": "failed",
+                "collector": "genericagent-state-copy",
+                "reason": "attempt_state_unavailable",
+                "files_copied": 0,
+            }
         source = state / "temp" / agent_id
         output = dest / "sessions" / "generic"
         output.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        failures: list[str] = []
         for name in ("input.txt", "output.txt", "stdout.log", "stderr.log", "_history.json"):
             path = source / name
             if path.is_file():
-                shutil.copy2(path, output / name)
+                try:
+                    shutil.copy2(path, output / name)
+                    copied += 1
+                except OSError as exc:
+                    failures.append(type(exc).__name__)
         responses = state / "temp" / "model_responses"
         if responses.is_dir():
-            shutil.copytree(responses, output / "model_responses", dirs_exist_ok=True)
+            try:
+                shutil.copytree(
+                    responses, output / "model_responses", dirs_exist_ok=True
+                )
+                copied += sum(
+                    1
+                    for path in (output / "model_responses").glob("**/*")
+                    if path.is_file()
+                )
+            except OSError as exc:
+                failures.append(type(exc).__name__)
+        if copied and failures:
+            status = "failed_partial"
+        elif copied:
+            status = "persisted"
+        elif failures:
+            status = "failed"
+        else:
+            status = "missing"
+        return {
+            "status": status,
+            "collector": "genericagent-state-copy",
+            "files_copied": copied,
+            "copy_failures": len(failures),
+            "error_types": sorted(set(failures)),
+        }
+
+    def analysis_evidence_spec(self) -> dict:
+        return {
+            "schema_version": 1,
+            "analysis_source": {
+                "kind": "native_model_response_log_blocks",
+                "native_harness_exposure": "conditional",
+                "absence_is_model_attributable": False,
+                "text_fields": ["thinking"],
+                "opaque_fields": [],
+            },
+            "raw_session": {
+                "adapter_persistence": "implemented",
+                "collector": "genericagent-state-copy",
+            },
+            "normalized_analysis": {
+                "status": "partial",
+                "known_loss_modes": [
+                    "only_final_output_text_is_projected_to_agent_steps"
+                ],
+            },
+        }
+
+    def inspect_analysis_evidence(self, artifact_dir: Path) -> dict:
+        response_dir = artifact_dir / "sessions" / "generic" / "model_responses"
+        return inspect_tagged_response_logs(
+            sorted(response_dir.glob("model_responses_*.txt")),
+            artifact_dir=artifact_dir,
+        )
 
     def iter_agent_steps(
         self,

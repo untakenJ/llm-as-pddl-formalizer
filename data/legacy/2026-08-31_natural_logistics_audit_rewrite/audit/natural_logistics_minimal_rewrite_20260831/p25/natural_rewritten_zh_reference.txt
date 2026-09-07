@@ -1,0 +1,25 @@
+在 Logistics 游戏中，我们从以下初始条件开始：有九个包裹，标记为 package1 到 package9。有 14 座城市，命名为 city1 到 city14；每座城市都有特定地点，编号为 location1 和 location2，另有一座机场，称为 location3。此外，还有 14 辆卡车，标记为 truck1 到 truck14，以及四架飞机，标记为 plane1 到 plane4。
+
+城市布局如下：每座城市都有一组独有的三个地点。Location1 和 location2 位于城内，而 location3 是机场，也属于该城市。
+
+当前位置如下：
+- 飞机分配：plane4 停在 city10 的机场，plane3 停在 city1 的机场，plane2 和 plane1 都停在 city11 的机场。
+- 卡车分配：truck14、truck13、truck12、truck11、truck10、truck7、truck5、truck2 和 truck1 位于与其编号相同城市的第一个地点；truck9、truck8、truck6、truck4 和 truck3 则位于与其编号相同城市的第二个地点。
+
+接下来是包裹：
+- Package9 位于 city4 的第二个地点。
+- Package8 和 package6 目前都位于 city9 的第一个地点。
+- Package7 位于 city1 的第二个地点。
+- Package5 和 package2 都位于 city12 的第二个地点。
+- Package4 位于 city8 的第一个地点。
+- Package3 正在 city12 的机场等待。
+- 最后，package1 位于 city8 的机场。
+
+本物流任务的目标是将这些包裹成功转移到各自指定的目标地点：
+- Package9 应送到 city11 的第二个地点。
+- Package8 需要到达 city5 的机场。
+- Package7 的目的地是 city10 的机场。
+- Package6 应位于 city9 的机场。
+- Package5 需要送到 city10 的第一个地点。
+- Package4 应到达 city13 的第一个地点。
+- 最后，package3 的目的地是 city1 的机场。

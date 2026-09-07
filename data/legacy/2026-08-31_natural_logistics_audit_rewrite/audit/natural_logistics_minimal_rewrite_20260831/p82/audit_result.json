@@ -1,0 +1,57 @@
+{
+  "case": "p82",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {"objects": 102, "init": 204, "goal": 41, "semantic_items": 347},
+  "before": {"objects_covered": 45, "init_covered": 80, "goal_covered": 7, "missing": 34, "ambiguous": 181, "contradictory": 0, "over_generated": 1},
+  "after": {"objects_covered": 102, "init_covered": 204, "goal_covered": 41, "missing": 0, "ambiguous": 0, "contradictory": 0, "over_generated": 0},
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "This pattern continues up to packages obj141, obj142, and obj143 at location pos14 with truck tru14.",
+      "revised_text": "For every integer X from 1 through 14, truck truX and packages objX1, objX2, and objX3 are initially at posX, where X is replaced by the same decimal numeral in every identifier (so X = 10 yields tru10, obj101, obj102, obj103, and pos10).",
+      "reason_en": "Replaces an undefined continuation with the exact object construction and all 56 truck/package placements.",
+      "reason_zh": "用精确的对象构造和全部 56 个卡车/包裹位置替换未定义的续写。",
+      "golden_evidence": ["golden_problem.pddl:8-10,16-18,23-25,30-32,37-39,45-47,52-54,59-61,66-68,74-76,81-83,88-90,95-97,103-105: package objects", "golden_problem.pddl:150-163: trucks", "golden_problem.pddl:228-283: placements"]
+    },
+    {
+      "id": 2,
+      "category": "ambiguity",
+      "original_text": "Each location is associated with a specific city, so pos1 and airport apt1 are in city cit1, pos2 and airport apt2 are in city cit2, and so forth, up to pos14 and airport apt14 in city cit14.",
+      "revised_text": "For every integer X from 1 through 14, posX is a location in citX and aptX is an airport location in citX.",
+      "reason_en": "Replaces ‘and so forth’ with the complete bounded location/type/city rule.",
+      "reason_zh": "用完整的有界地点、类型和城市规则替换“等等”。",
+      "golden_evidence": ["golden_problem.pddl:164-219: CITY, LOCATION, AIRPORT atoms", "golden_problem.pddl:284-311: IN-CITY atoms"]
+    },
+    {
+      "id": 3,
+      "category": "contradiction",
+      "original_text": "Our objective is to transport these packages to new destinations.",
+      "revised_text": "Our objective is for the packages listed below to reach their target destinations.",
+      "reason_en": "Restricts the goal to the listed conjunction and avoids claiming that goal atoms already true initially require new destinations.",
+      "reason_zh": "把目标限定为列出的合取式，并避免声称初始时已经成立的目标原子必须是新目的地。",
+      "golden_evidence": ["golden_problem.pddl:313-355: exact 41-atom goal conjunction", "golden_problem.pddl:250 and 323: OBJ62 is initially and finally at POS6", "golden_problem.pddl:269 and 348: OBJ111 is initially and finally at POS11"]
+    },
+    {
+      "id": 4,
+      "category": "irregular_mapping",
+      "original_text": "Specifically, we want obj52 at airport apt13, obj101 at airport apt10, obj42 at location apt11, obj83 at pos14, obj143 at pos11, obj91 at pos5, obj41 at apt14, and continue this relocation for all listed packages.",
+      "revised_text": "Specifically, we want obj52 at apt13; obj101 at apt10; obj42 at apt11; obj83 at pos14; obj143 at pos11; obj91 at pos5; obj41 at apt14; obj22 at apt12; obj131 at apt12; obj62 at pos6; obj71 at apt13; obj141 at apt9; obj61 at pos13; obj13 at pos3; obj82 at pos14; obj63 at pos13; obj11 at apt3; obj102 at pos14; obj123 at apt12; obj12 at apt10; obj21 at apt11; obj72 at apt2; obj122 at apt10; obj121 at pos6; obj92 at pos12; obj103 at apt3; obj43 at pos3; obj73 at pos14; obj53 at apt9; obj133 at pos10; obj23 at apt4; obj31 at pos11; obj81 at pos13; obj132 at pos2; obj111 at pos11; obj113 at pos6; obj93 at pos1; obj32 at pos10; obj142 at pos12; obj112 at apt1; and obj51 at apt14.",
+      "reason_en": "Replaces seven examples and vague continuation with all 41 irregular goal pairs.",
+      "reason_zh": "用全部 41 个不规则目标对替换七个示例和模糊续写。",
+      "golden_evidence": ["golden_problem.pddl:314-354: complete goal atom list"]
+    },
+    {
+      "id": 5,
+      "category": "contradiction",
+      "original_text": "Each package has a specific new target location",
+      "revised_text": "Each listed package has a specific target location",
+      "reason_en": "Limits the claim to the 41 listed packages and removes ‘new’ because two golden goals equal their initial locations.",
+      "reason_zh": "把表述限定为列出的 41 个包裹，并删除“新”，因为两个黄金目标与其初始位置相同。",
+      "golden_evidence": ["golden_problem.pddl:313-355: exact goal scope", "golden_problem.pddl:250,269,323,348: unchanged OBJ62 and OBJ111 locations"]
+    }
+  ],
+  "preserved": ["Opening and explicit index-1 through index-3 placement examples.", "Complete ordered airplane starts.", "Goal introduction and closing classification of destinations apart from necessary scope/newness repairs."],
+  "verification": {"ledger_rows": 347, "all_items_covered": true, "all_correspondences_unique": true, "no_over_generation": true}
+}

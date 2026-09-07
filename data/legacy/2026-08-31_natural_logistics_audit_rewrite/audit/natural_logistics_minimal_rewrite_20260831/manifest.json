@@ -1,0 +1,937 @@
+{
+  "audit": "Natural Logistics minimal rewrite audit",
+  "date": "2026-08-31",
+  "source_dataset": "data/textual_logistics/Natural_Logistics-100",
+  "golden_pddl": "data/textual_logistics/Logistics-100_PDDL",
+  "principles": ".cache/reporting/NATURAL_LOGISTICS_MINIMAL_REWRITE_PRINCIPLES.md",
+  "status": "complete",
+  "cases": [
+    {
+      "case": "p01",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "958494812acc9fc77edcacac168a9a64a9435797eb399bb34d385ae0f5695d34",
+        "natural_original": "5baf0723731b8fb54f68aa65b9de337050f57f1237668d0a64cbaff88db7802d"
+      },
+      "directory": "p01"
+    },
+    {
+      "case": "p02",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "eb9beb284c8a866fe9ce7c9c58f53dc5b2a2fc9af36e9ce8f6259000c280acd9",
+        "natural_original": "17b0734003ccc33522bd01b9660b43687e50389af218a22ceef7f70a8cb15ecf"
+      },
+      "directory": "p02"
+    },
+    {
+      "case": "p03",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "2f38ce1a7c8c87db83d377476bfffac566afd6aa690d759235099c7eaa283ebf",
+        "natural_original": "e7b0405ba9d04be6381c84c82d7c9c4208fac58057a2fa4b074bf740ee1d8479"
+      },
+      "directory": "p03"
+    },
+    {
+      "case": "p04",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "ef187f1783f01d7a17ec39f6f41e9ee620db2d6887b8fff60b27cf907a9303bc",
+        "natural_original": "0a7a55fc55088530606af6f33ee91b9a00706355761d322696974e7293ddcc91"
+      },
+      "directory": "p04"
+    },
+    {
+      "case": "p05",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "c04a28d59cca197f4e2182a22a20df1dcf8a7436298cff02be5853785aba6f82",
+        "natural_original": "793e1492353c8d7b955f68e9e47a696aa3e023184aa19ada7c62fee9680364c0"
+      },
+      "directory": "p05"
+    },
+    {
+      "case": "p06",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "f1196396c01638b87b57268d031a399b0eb195c04562c0b044507ab2bd19127c",
+        "natural_original": "eda44aee9d165ab8eb4cf204cc647240d0c1d2199603e2a9a7b7f1b6a2c1e4f1"
+      },
+      "directory": "p06"
+    },
+    {
+      "case": "p07",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "91e07eff41521c201d34da23b7447ddb023d7b462dba1d0bda99152d5ca99494",
+        "natural_original": "101c4a84b514aef8294d3aa7e486aa0570fc0488568d06a35fc6b3478f2f3c47"
+      },
+      "directory": "p07"
+    },
+    {
+      "case": "p08",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "38046b0997a234472d76297796bb248dce54dd9f0f0f2059b98dd03a486c9e56",
+        "natural_original": "7c1f9dad6d2766cae329a98cd60003151636ffce52e84842224d74c89f1dfbf1"
+      },
+      "directory": "p08"
+    },
+    {
+      "case": "p09",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "e287e31919e9f913c5574a18b01eb41165bdee0dd1d14681127255a4605a7e93",
+        "natural_original": "c02140171b3ae3fec3c2ae51807017190c54ba5356a354f808b69b688b791200"
+      },
+      "directory": "p09"
+    },
+    {
+      "case": "p10",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "05426c11de24329f94233180813fcc80b2cf5934af3e694909173953174af5cf",
+        "natural_original": "791502053b518c5739f14302cc84feb609ffeafb6d0eb6dad3201ff86e3984ac"
+      },
+      "directory": "p10"
+    },
+    {
+      "case": "p11",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "893de38cdd8f09f17438a968d8bac82d7d06beee1775a0712803baaa9be1880e",
+        "natural_original": "4be3ca97582b79f231ac13a4e915ad67aec1ac23859b5a8396c4c51e5160ded3"
+      },
+      "directory": "p11"
+    },
+    {
+      "case": "p12",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "c85a2b2ccee4ba536e7a51f799976a8ddc021a5f679edc4f31fe108572baf7ce",
+        "natural_original": "a753ade0b45daab83d7d1de8b2ecee12bdac29b67b5fc904dc4355be40ecbffc"
+      },
+      "directory": "p12"
+    },
+    {
+      "case": "p13",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "ad8ff5d63c78e5c9171d904ab92540078790eedf7e22afc43b802ba931867168",
+        "natural_original": "f369189ce845fdf6998718d56cccc9e9e0db9e0e097c16251a685585a7327975"
+      },
+      "directory": "p13"
+    },
+    {
+      "case": "p14",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "41770f110600f0b4f661b5cc25eca3a87caf1fdad9afd5763c6b0dd9d86e0e8f",
+        "natural_original": "e35ce48797fe88dc7cb0b3ac5de4e410eeb88f32c88227013ac98e11c7590575"
+      },
+      "directory": "p14"
+    },
+    {
+      "case": "p15",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "08bee3be912c927dfa564e0603b3eb494420e9c4a7f70676e68810e789e592c4",
+        "natural_original": "8ee5005897fd9ac2b4a7d74bc530d4c5772897e75bd3146ac9943f4a507414ab"
+      },
+      "directory": "p15"
+    },
+    {
+      "case": "p16",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "53b1c86aa0ea31173d9bfd65c328da621ed8d62bd648160f21e84b09074bb6f9",
+        "natural_original": "73b84db6d26d6c68d5cacf1f68507426a35d37b514813a238aa35a87890ca5f9"
+      },
+      "directory": "p16"
+    },
+    {
+      "case": "p17",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "8548f5e747f444f247ac17fe9fc231c65b127c96405d51de9f51ef623a829791",
+        "natural_original": "28be8f9e6c36251b7c1b05d3705a69b8242af28c2510eaec89bdaa9d7977e591"
+      },
+      "directory": "p17"
+    },
+    {
+      "case": "p18",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "404b57afdbc1867c45ee83cd513cfdc5db289a4af367a92a47a531fd98fbd3d6",
+        "natural_original": "b524459c49e01b877b4add662e852c17c4e619f691ecc80861ea7c4c44bf1f12"
+      },
+      "directory": "p18"
+    },
+    {
+      "case": "p19",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "c39d1ed42252f82337dc4d24d3597219363aedec2a6b7403aba43daa27d3837b",
+        "natural_original": "8666c12f38c6f5ca0c8e28245493169aba6ab4585e1206152cf449dd3ad1f683"
+      },
+      "directory": "p19"
+    },
+    {
+      "case": "p20",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "d6fa3752d1dc85f456c03294ea7ce37d0b3c8c816731c3a342355e72f886facc",
+        "natural_original": "97127c6eff6583ad5a8598cab33b5b0f1fa56aa8ffffe2bd4265fcfea151087e"
+      },
+      "directory": "p20"
+    },
+    {
+      "case": "p21",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "652cd2eb1cc85395bc4edf57e762d67cca01d553f38520838fab3dc5c4777572",
+        "natural_original": "bffdced867dd9415e7510c13cab1d14d0b3efb89f293a8aad77c0c28da1df0fd"
+      },
+      "directory": "p21"
+    },
+    {
+      "case": "p22",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "de85263a78f1bdd4c16852f08520c2f30d7d04ae09fe77ce21fd4988c66e1882",
+        "natural_original": "c7983badacf39c6bb1934940e948a7d47a1b9787d9b5d4d0585a339852014a6d"
+      },
+      "directory": "p22"
+    },
+    {
+      "case": "p23",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "09e84600df394d13eebabd39aa254c7ea9f690daaf53066c3be0fa053f189ff0",
+        "natural_original": "055b096d704574597bd168fe2828ff9bd877b1c6407dfc4e2cfd2181adf1e8c7"
+      },
+      "directory": "p23"
+    },
+    {
+      "case": "p24",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "b2a935b1db876c93f18ce61c015f51681de42bcdc297f7d9ffa123ddc7e6dd0b",
+        "natural_original": "54cf09c1fbbe0d0f6253ce83da509cb4fd3616d028654d58f917fae82dcf368d"
+      },
+      "directory": "p24"
+    },
+    {
+      "case": "p25",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "2f3502eb4e45b0c1c516a4631fcfa40d067f346a7899cb3314bfd913aa4dd04e",
+        "natural_original": "5fee09277d6255da0eff0809a24f9db456674e1724f7e62787e87245f45404b0"
+      },
+      "directory": "p25"
+    },
+    {
+      "case": "p26",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "ca1c490c07aaff536e285fe46764db426612e4f0c617f431e403c6100197ca5b",
+        "natural_original": "490b76746a020e7fa1d40142135f192eac4c8806d1836d40833a2894191ac69d"
+      },
+      "directory": "p26"
+    },
+    {
+      "case": "p27",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "1325094fb74c0c4dc160ee7c544da8bc7e5ff07ae6f12a25ffde500558f509fb",
+        "natural_original": "e6cfa233a85947b9da531db2ff75821d378653ca601fc2886b959420562e3c4a"
+      },
+      "directory": "p27"
+    },
+    {
+      "case": "p28",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "4fa2ecb9de65b6ba2c7d530985b0af1ff1ba573e2c62610964b9913f02c1ed63",
+        "natural_original": "cca0f9776eeb5bc0f29bf4cc13bd3f63421af84601949d42c4a396e593d3a13d"
+      },
+      "directory": "p28"
+    },
+    {
+      "case": "p29",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "4bd3a8850cc1593ac83faeb02cadd7a033bcc5c1aa4a728d558cae4203fbe78a",
+        "natural_original": "63add8365974c1f01522fc7046998099866ebcff8ebc6cdc978ab94f3874ecc8"
+      },
+      "directory": "p29"
+    },
+    {
+      "case": "p30",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "da20b199ce09ff09bda8c36faf67ffafd839d3cb6ea21391efd9d246da9d3aa8",
+        "natural_original": "9e93f8c6f9309040ece40698341b615715da97381106a1418aa5f2da872a2e4b"
+      },
+      "directory": "p30"
+    },
+    {
+      "case": "p31",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "86e5b2f685ef79608e845946016a9f2bae3b5f8bad80a27ee2f4a9d9e8fb4773",
+        "natural_original": "a06f2f5fd9c09ffc58f86bb563510e971914bbf1690e562eae27fb1ff387af68"
+      },
+      "directory": "p31"
+    },
+    {
+      "case": "p32",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "1a1edcca51d1ef9b0298165584c778bc524b1c01c6377d9490c5a38b20da3745",
+        "natural_original": "f20cd905e4983bdc56ad206ad44eb518e638dcfe26e98544751daa67d08b6b6d"
+      },
+      "directory": "p32"
+    },
+    {
+      "case": "p33",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "dce7055d1fa35fd9101cadd4bb8fa6c77b66dc3989ffd29510e3e637e51a9b44",
+        "natural_original": "9329d85dbf5f7fed63ee393ace545f9ea3dc470af2ae08ef07df45d0d65da8cd"
+      },
+      "directory": "p33"
+    },
+    {
+      "case": "p34",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "4b452919324e7ee378af092d668cbdd51e55560c267cd5fd2385055a9dc7988d",
+        "natural_original": "8d88829544d46b9baca618efb311afa6838ea8709a2b8fd5ea4a8724953b9055"
+      },
+      "directory": "p34"
+    },
+    {
+      "case": "p35",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "3a03920dfe9f74da7458aefd9a9836e736be31160a0e6ca594cc9fb28729c9ab",
+        "natural_original": "116f8e1aafbf892bd489c472b0b4da54ea5bce9cf8f96c1e56e48549459abce7"
+      },
+      "directory": "p35"
+    },
+    {
+      "case": "p36",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "4c4b0c07a83026ffe28477ae817906d552009c7827574b0a64e8851ba22ebc14",
+        "natural_original": "16a2d5daef11ae844e7ad65641938b469d9575b2a39c3b9c6d99c270556fd6fd"
+      },
+      "directory": "p36"
+    },
+    {
+      "case": "p37",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "89649f25ef57d0ef5b3fda2fdb67ef79ce8ec9fac41dfa6209dcedd4fb5039b2",
+        "natural_original": "dcb333d3872606c109068446833913711ffed7603063c581865938837910f4a7"
+      },
+      "directory": "p37"
+    },
+    {
+      "case": "p38",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "4489a8a80447553aed74a16ec8abf3e002d807fbb3f8258ea7fff2b742ecb255",
+        "natural_original": "8b3fc9db52d845ed8ea12ec95d90e565deac8bea473f7baa73ffb619bab3b710"
+      },
+      "directory": "p38"
+    },
+    {
+      "case": "p39",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "91c69ee48c1bcee182895c7921f89bf57e8b6f0c475b387dd273a22985864ce9",
+        "natural_original": "ce3652e76918f2a06b850bad4a42a9b724a2c1e46e0362fdf60519b7f5516185"
+      },
+      "directory": "p39"
+    },
+    {
+      "case": "p40",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "54ae1b3482381d4ca80a88b2970d0d8603156c64210b02c0d97d3bf85665d797",
+        "natural_original": "25dabc48571e40bc10488ea0d0e790ab3b4dfb20a8dc8a7ef3890af1db4cca0c"
+      },
+      "directory": "p40"
+    },
+    {
+      "case": "p41",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "3a60fd6a212f941dfbb34ebf51c246bbb4a33db46763337521056aa6eb1098e3",
+        "natural_original": "16e9db60f0f4a13aa9ca7eb74217ccab6ed2be339b2a0a3084bef918ffd7812f"
+      },
+      "directory": "p41"
+    },
+    {
+      "case": "p42",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "ee1a8ee6ab0b2e31bd746e5a9f371669643e0f7978b9e7591f87099f665d7fc6",
+        "natural_original": "1bb606776434416d3e66bae57350150d0b181e361eefd5eae87f1654d1218386"
+      },
+      "directory": "p42"
+    },
+    {
+      "case": "p43",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "6c3752f9b6461774bd59de9e329c6ddca71954b095589bbdacd7a3309969092b",
+        "natural_original": "7949613ff5e43d4324ad5c113842a9ed33c24c3ca695266dc18238bb08198e18"
+      },
+      "directory": "p43"
+    },
+    {
+      "case": "p44",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "e638bb9484414de669ded57e284d3b8ced6e9646e4bf5e52b3898b3dc878cf15",
+        "natural_original": "98f3d5f09cff2fc25ef60f29af3711daf818ad3eff14274c1847d73bff47eb6f"
+      },
+      "directory": "p44"
+    },
+    {
+      "case": "p45",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "b2c96d62871ca423f86efb58c9298e7fbdcee90040a82f5836f85647fb1a994a",
+        "natural_original": "4c2ff82b3889b6b5fa4bfaab06565205b4e608f04d25bbb0ffbf27b5b3d1fd32"
+      },
+      "directory": "p45"
+    },
+    {
+      "case": "p46",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "756e695b45dd3f353211227474f1cd0d06640b0dabc7c5750783c19340e9b0d4",
+        "natural_original": "4236ef73edfcbc03e80218004e792020af5b8e1c20a7cc6b0124ab0ac958343f"
+      },
+      "directory": "p46"
+    },
+    {
+      "case": "p47",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "715e5bc8c39dd849a1749b9cbde365a0c71da74825d4c9d85c099b69b0be1f94",
+        "natural_original": "c02bbe97fee346533577ed8ba6625fc9f6021ffc788e68a82c53515457756c7c"
+      },
+      "directory": "p47"
+    },
+    {
+      "case": "p48",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "f66a14736a08cf228ad576e3090e594a0f4ce4aaf76e785a695bad136e84a9a2",
+        "natural_original": "a6f2120a2eb1f0a5524c7bbf4559c0e3a75454ff97d6a0ecfcdbe89ca1a75de3"
+      },
+      "directory": "p48"
+    },
+    {
+      "case": "p49",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "8cc151553f443c7d796915e5d91de34a2703cf5d273f416ff6723cae7a77eb8b",
+        "natural_original": "f3e32785570383f9081d81a9c011c909628e8d5d1c12ba65e589bd5e229d869d"
+      },
+      "directory": "p49"
+    },
+    {
+      "case": "p50",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "2295eb8ceb5bbc9a1042303b74610ff446658fdd13e1dfaea73ac3c92cd77900",
+        "natural_original": "5662dbeab4dac067a8b8ceeb2adc3ec5262d76b89b5054993de2f020704bfb29"
+      },
+      "directory": "p50"
+    },
+    {
+      "case": "p51",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "9617c61de3bca05ee8eb372df87fd5a564ee7550aad94a7a16773019c563eb5b",
+        "natural_original": "dc505523dc5383b8198bb29c4a67f82c7341f2aa548b7e762593bddc38208d84"
+      },
+      "directory": "p51"
+    },
+    {
+      "case": "p52",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "6da9419580b288810e7033309433d19c30eababc893a74cb35e5becb9c317a50",
+        "natural_original": "f6559b0524735c58dc8941c11b0bbe6039da875c4a0cd4267e52798f48cf6cf7"
+      },
+      "directory": "p52"
+    },
+    {
+      "case": "p53",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "26219952ed6b19ce9f63f83db232c643984ed5adbc79a31210add066bf81a49d",
+        "natural_original": "4e8a68cf51f56250a29962e100cca1b914c00d515496f5eaf58ce393f01a65bd"
+      },
+      "directory": "p53"
+    },
+    {
+      "case": "p54",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "f337bed58e48b3750ace68892d1bac2b2ac58c0768b4f587f8cdbf78916902b4",
+        "natural_original": "686ed20a7f996ef2740fee66754241cd281ef6e078bc71900b2baba33f0c439e"
+      },
+      "directory": "p54"
+    },
+    {
+      "case": "p55",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "ac2763e334ce60d21c3a490f1d8e8fd86e7ebe3226b3a6c4b21da88c6228fddc",
+        "natural_original": "62c5d7a86773f5cc084f3de5b83920f7b91cc5b9fb7b40f59410e3211d120547"
+      },
+      "directory": "p55"
+    },
+    {
+      "case": "p56",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "3190eb2067d0aa60243613ff3a598c21ea5fec0de1ee924757ff21635880f12c",
+        "natural_original": "4e55895919fc4ffc9a431a3f8c8d7411c971f457b63e35f4db288ab591c70192"
+      },
+      "directory": "p56"
+    },
+    {
+      "case": "p57",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "3534607d2be4ff9e51f63832e32822e8f9382d778dec7417e82d3ecdbbb3a2ef",
+        "natural_original": "57826a012a2bcfb44fa80943823ead6938f332a324e0fe699ee7e8e0d9f88a9c"
+      },
+      "directory": "p57"
+    },
+    {
+      "case": "p58",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "ddd4bb5b70765c94ae77517fb04fc0c7e4b9a8fc5b49ce229c1ec746fea43fbd",
+        "natural_original": "7348352c15ddc6602348a81a422495e6ce758e8326d653e9764ea0a1fe8d3ee5"
+      },
+      "directory": "p58"
+    },
+    {
+      "case": "p59",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "ee846f8bd2afa6528389c2765f58c61a4677d65c1c785d737f0424a95e621780",
+        "natural_original": "eeed0348fc9326944893b44bda5655ffdb74de74b97fcab6d28f770f31e91297"
+      },
+      "directory": "p59"
+    },
+    {
+      "case": "p60",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "2953fcd0845daa7e7c87d31661045cc9c7f84fb1cecb44234b34c077e9c2b254",
+        "natural_original": "253bf868dcff0ad58ec02c0d0500430572671525e2ff4ed706e00ec0b05e3e86"
+      },
+      "directory": "p60"
+    },
+    {
+      "case": "p61",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "54d03770d42b409e554c3f43225e4912ab851eff9ec61757881a645ed25f0575",
+        "natural_original": "cbca34b4e319e91f3ca06c34cd9c0b3692a4c56c4157c2c71c2e8107de61b1af"
+      },
+      "directory": "p61"
+    },
+    {
+      "case": "p62",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "9158f823811f9b80b047fa20bd8ddcf18e86ed30bdd03e855f6782c90418def5",
+        "natural_original": "1ddf2e442a972a53bf252f3ae156b413e0977816a1d3ac1e9eff76b4431a6d53"
+      },
+      "directory": "p62"
+    },
+    {
+      "case": "p63",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "48600fff3c7f40bbafe704e7dac22fb7623ce4e177cddcbd57a0a824643874bd",
+        "natural_original": "9cb4a7fb1660085dc13ee960365a6bfb0ef010e2949f4d1bb78f41759685485e"
+      },
+      "directory": "p63"
+    },
+    {
+      "case": "p64",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "3f8c56a95d4ea52136ce153dc969e1eda4c063dac725417be307efb7390cd1d0",
+        "natural_original": "ccd7e735e9bae81d913802c382b8e75f974d0d376308eae39b220a24edcba291"
+      },
+      "directory": "p64"
+    },
+    {
+      "case": "p65",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "65b09680bfcc360d52117d7c4ddc095f2ccdfd1343302246cd3b1f7acb414561",
+        "natural_original": "e6a89411d4b7a2b92ff3cbe6432af8fbf35292a7500b6ea65cd2f393be32c928"
+      },
+      "directory": "p65"
+    },
+    {
+      "case": "p66",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "06292a1ff2a86e44fce0e108385086b67333bb0839b2c9f47451f07871956be4",
+        "natural_original": "3db9558f5422ac0f434ba3c47aee7c7c644bb2bba6b0236e3d46724ee1a26b11"
+      },
+      "directory": "p66"
+    },
+    {
+      "case": "p67",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "bf00667ba9328d6bb226abe7941176f5ce2e97811ef49d2644aab6669420e0d9",
+        "natural_original": "90dbea8a6dfa5c75444bbb2ed65d5b6052d5f83b6448ca9fbbb7ba5c536acaf5"
+      },
+      "directory": "p67"
+    },
+    {
+      "case": "p68",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "59cfe04ef0db03dd0b728ec15483323aa3925cb4d3a062803d3fde9aa95136fd",
+        "natural_original": "eafa77b11ea7a483636fd01028967d1e4b7ab7572284d1d97ee2b8edf99c65a1"
+      },
+      "directory": "p68"
+    },
+    {
+      "case": "p69",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "88eb713f08fa80b6b315869221d42c7113c3c3b41c7aec73497032b053437206",
+        "natural_original": "60158862748982c38a1f0a59241218a6e0cc34921f000bb15ca045c517fcd9f1"
+      },
+      "directory": "p69"
+    },
+    {
+      "case": "p70",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "6d189974c27e7d14f26dea92da052fb72b56c755a66e684555b5122063fc0fa2",
+        "natural_original": "ae3d6bd646e76351016a5a6ba763c2ae842bf57ecce77e3c1328c0e3028eb738"
+      },
+      "directory": "p70"
+    },
+    {
+      "case": "p71",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "3b2839632a16e4282053464475c2868a46075dfdd161e3d4bf99c1eacad6d93b",
+        "natural_original": "32f4a249188ffc362c86dd55469688f1927de7036f0b8240d7826305ab50e41f"
+      },
+      "directory": "p71"
+    },
+    {
+      "case": "p72",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "f135ba741599945670960c3ede75c65b001ba94ee760a7e91c56797488f307eb",
+        "natural_original": "2c91c62bc1401d671acc2e54c63aa5b8ec97179a84fc0e4ecf7ff454e41a8c7c"
+      },
+      "directory": "p72"
+    },
+    {
+      "case": "p73",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "e4a1a7b9645b0195dd00ec73a17747ed2010f152164120f2c711923f4e9ce7c1",
+        "natural_original": "c91bd332273106c3877d82ea7722d54c2177f282cbc3f729d264263a393aee6b"
+      },
+      "directory": "p73"
+    },
+    {
+      "case": "p74",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "2f21ec7909a4025f50c8aeeb55d2da8086ea5f5f0f5f88bc85bba01c1bd4cf81",
+        "natural_original": "177a7dbe8de26b046c3d869a08bc1226eee3237fcc4a484e4391f1123e518b45"
+      },
+      "directory": "p74"
+    },
+    {
+      "case": "p75",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "ae40e874597d28c8140a9883a08503859e81ca0c487d33decf8bfce1c3ad360f",
+        "natural_original": "31283de719398e274c2487632adf6891ef25004743f830c82e2c45e9a9ecf561"
+      },
+      "directory": "p75"
+    },
+    {
+      "case": "p76",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "ea85c33506c73384c2e20cc78348f6bfc8c63aa05960275f8779ea08667b7c74",
+        "natural_original": "aae58ddb3bb2843bd60ce6e416322abf533ecdc062c26da40828fba76f695cc0"
+      },
+      "directory": "p76"
+    },
+    {
+      "case": "p77",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "40c484c196a33aea14e2100c15d124b0ad721fd7a487c563d375f1a7645e7cfe",
+        "natural_original": "8769cea4bb36dfdecc8e8c167431e053cd787e249a24a67588ba94f92412ea5b"
+      },
+      "directory": "p77"
+    },
+    {
+      "case": "p78",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "d2aa35fc9f34a3699c7df85b8f6e812aac7a57b8fb1e093c6be43ca2f05481ed",
+        "natural_original": "4eae1581c5c586836a310b062c38f1b0c7461542008f58fb4c7eb4b9b1c3cf8d"
+      },
+      "directory": "p78"
+    },
+    {
+      "case": "p79",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "9e4854f39f6e6c42adc6c884b560725e371fdd1c91d5ae8d44c7321970043e3c",
+        "natural_original": "1b65c78d3881c0f2b415a5103bebc0c54ca7770c926c172af7cfedfa1ac4b5f3"
+      },
+      "directory": "p79"
+    },
+    {
+      "case": "p80",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "4372d308e420cb4d0e1a54c4b881e0949e5c0e9e70c317b899851076aa72c778",
+        "natural_original": "eb26ec54545cff69335988cc4894bd5ac78676b6df4dbfb412daa5800fae2800"
+      },
+      "directory": "p80"
+    },
+    {
+      "case": "p81",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "59f589c6dab893351512335cfc45973d46bbf93e654d19500d570dc5008a2a41",
+        "natural_original": "722546a079ac949db1a37f97dd4951bc93eaac634ec69d8068acb79d88fa83fb"
+      },
+      "directory": "p81"
+    },
+    {
+      "case": "p82",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "709b1132ae549c10efc971d5c6acac7ddc7f425429bea4f6a227b9eca0be8004",
+        "natural_original": "0766d2d892bc2d0f07e701e998c824c65e6273cfc00383f9f01e6e2f84a8c683"
+      },
+      "directory": "p82"
+    },
+    {
+      "case": "p83",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "823b63e35c889f2e63f51d1ebc6ac74c94932c6d10bbf14e10e16ec9fe7e40fb",
+        "natural_original": "670f9cfa8f89b096c712c95cb331f1df2dd17015b371f1841a5c5db9428ceeb8"
+      },
+      "directory": "p83"
+    },
+    {
+      "case": "p84",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "e39f09b07d17a0f9d982ccedf971d003d3bd41abdca41e482eb582620df0b3f6",
+        "natural_original": "7ca8150c87e65f1c76cb51b9615aef81661a93526355ad7eb2a7bfe15dc06f2c"
+      },
+      "directory": "p84"
+    },
+    {
+      "case": "p85",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "7529af8f50d6f14f5ee654e0ec626e530957dd9564d48c5ac5d59294eff69664",
+        "natural_original": "e2be69142998f9931f6653d35fc4aef32797b1224fae2532684a4d691852994c"
+      },
+      "directory": "p85"
+    },
+    {
+      "case": "p86",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "a0e1b4081936012029527faa3ac82ae89d936e7240d917850eff7ff79d9269b1",
+        "natural_original": "bd2f1b72ce16fa478598bf797ca7338de36631dbef4419879f38e4a6a63d63fd"
+      },
+      "directory": "p86"
+    },
+    {
+      "case": "p87",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "b620ccc1fd7fbe9878d97bb4087815cf4ab1de2fc746b9ca46ab4fb0ae7aa2c0",
+        "natural_original": "6f23b9b5c5c5f68859dc5f652e6de5bf6795bacd203840f3022b99fdc9d760f6"
+      },
+      "directory": "p87"
+    },
+    {
+      "case": "p88",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "bee8bf7935a0df863ec41fc71df041608e3798694bf4f4c391768c5d82c26877",
+        "natural_original": "ffad6b32d87e071b27607d3a602662f968bdbd61a4a389276e59d2983b973d68"
+      },
+      "directory": "p88"
+    },
+    {
+      "case": "p89",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "f3831ff847945e7e157c32aecc05cd0821a95251ba6f7e80b4a063160a7c9104",
+        "natural_original": "49dd2f8d3ec7393e580aa8a20ae7b443d9c86149423feae91455315fcdafe944"
+      },
+      "directory": "p89"
+    },
+    {
+      "case": "p90",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "ad899d82bdab388d1bf8ff12a01fb588d093df607518b4a7499ef6c97a3cebcf",
+        "natural_original": "805d6089bd9cec994fc4badab701a11bb411830b5214d6cc278a01989d689d20"
+      },
+      "directory": "p90"
+    },
+    {
+      "case": "p91",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "3e87393222c5bf340cca493304f8483879ed5379638368aeeda3c588135db818",
+        "natural_original": "5d8feb78c76bac08f50870d444d034e2b6bd2f4bd26ec30dfd841c7b0a3544cf"
+      },
+      "directory": "p91"
+    },
+    {
+      "case": "p92",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "7c92afb5d57e2cfbd1404ee5588f2a9a49c508cc72b8dacbbcbe00ec2bcd0559",
+        "natural_original": "58a110b46b84bd439132c9a84e60f444e82c8c656b77b1e2e49ac238195a38e8"
+      },
+      "directory": "p92"
+    },
+    {
+      "case": "p93",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "1bec9f79e65cf7954f5bd94ed3c83cc3f0c8dfb86ed97587983cd24592ee32bb",
+        "natural_original": "b73638889ded56f1cef0c4c3c3415dff1b1554ac9144972f30f3d2abbe9d91ec"
+      },
+      "directory": "p93"
+    },
+    {
+      "case": "p94",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "12d4e4a12a85676ef04257e7450c5dddb896a6536a0bd10ae2fc08522fc7e559",
+        "natural_original": "a33094cfed8ae5f1384e9e768164c20fd1a976e07af3d1b3cdbeacb2f6a72b05"
+      },
+      "directory": "p94"
+    },
+    {
+      "case": "p95",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "5835b5e4867fd2a190a03637a6a63871927e6959d221c8d62efc3493b770edcc",
+        "natural_original": "d725daa8c8ecd7292cdcf62f0e2609e0fa9660d8281fa95b7aa9858de195221d"
+      },
+      "directory": "p95"
+    },
+    {
+      "case": "p96",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "5da3d772caef5d7cc54180fa99cadd6278b616df36eed3efc24a62bb0252a837",
+        "natural_original": "fb480e83a7f5c90ddc66627c7173e36a257b5aacbb620875869524d9795f0354"
+      },
+      "directory": "p96"
+    },
+    {
+      "case": "p97",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "e108c20c1d215891789494938b1b5de345213329e0c7ef897a71002aa53799ca",
+        "natural_original": "272ed8f1b6c8ec3d518dd22427867c722c7f37bad54e628acd63d2f7b7e186eb"
+      },
+      "directory": "p97"
+    },
+    {
+      "case": "p98",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "9e2730778ae44dec41ab1d675866b4e3d4bc067789fa9cd8110959d33f79e3f3",
+        "natural_original": "300fe067e80aae61ef3f93963f2ca113215ab71eb606f4ceda9340f11ce146a6"
+      },
+      "directory": "p98"
+    },
+    {
+      "case": "p99",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "5ddc453cc38f3324a0b9b1ee1075672891a2c678e6980f06b24ae88146055933",
+        "natural_original": "814b7fe607356bf1bf139e4e3ac7c5cc56967100a0e1ee8d79f86099d16d2f39"
+      },
+      "directory": "p99"
+    },
+    {
+      "case": "p100",
+      "source_hashes": {
+        "golden_domain": "fa50210f8e39e7a38baf4c780f5370520466c67b6bee70b35c03fc93da2f5f2f",
+        "golden_problem": "992513d331023a5c435c7494d832f8b22556f3a838f1f547e1aa16208c4fa2db",
+        "natural_original": "f8ff26a437886174ffbeb422c366c20d65ce0264a37875ed22dbbf71af03c306"
+      },
+      "directory": "p100"
+    }
+  ],
+  "aggregate": {
+    "problems": 100,
+    "rewrites_required": 49,
+    "preserved_verbatim": 51,
+    "objects": 5940,
+    "init": 11880,
+    "goal": 1898,
+    "semantic_items": 19718,
+    "final_missing": 0,
+    "final_ambiguous": 0,
+    "final_contradictory": 0,
+    "final_over_generated": 0
+  },
+  "top_level_artifacts": {
+    "REWRITE_PRINCIPLES.md": "589488c7145dd2ed1406e0043ea11536b700859d44d89b0887e5ac91601382a5",
+    "CASE_AGENT_INSTRUCTIONS.md": "1d9568a4aeee7f5d423e09474268f13a04699c149447bbc704ce7d224c9f6ec6",
+    "audit_summary.md": "73f5a285d3ed1257cd39ce86585ac44f24d8429620123b3caf73edb3e4f2fb4d",
+    "case_summary.csv": "b8cdf59adde297b697ffc39713618efa49edb7f99cb092d25daced915c467829",
+    "change_catalog.csv": "ec3eab5ed9f654fe7de462284e8bca5982e5f394eed1455e8c873bf33ef4eb55",
+    "rewrite_explanations_compendium.md": "67cef2c463544dae852cf2cc1936ce62ca98a4e8717c4902f95250c805d920a4",
+    "final_descriptions_compendium.md": "bf125521e1014ab16d041fbcc3de5a8262c5221b023de3c4b165511c9a8682bc",
+    "validation_report.json": "a794480306bda17b9a11250258d8fd7513043dc3a9bcbe5ddd75daae933a4216",
+    "spot_checks/high_risk_spot_check.md": "aed4a977c272ebd9b2842934e6a2dc72f0e20725538e1e053c25ac2c0ec2b1ff",
+    "spot_checks/high_risk_spot_check.json": "2a4b6330479c8eb01ef1b691f11deeade89af30b9898922ae0e7f4dca08cca1b",
+    "spot_checks/preserved_random_spot_check.md": "80758ff5723b2c21057ecc5a1a7996e79cd7908b3266e981d71d553b6aa19c02",
+    "spot_checks/preserved_random_spot_check.json": "b686e77f42f91136f7af2bdf7f3afc6c93e7c40618aca16dc065eb6d0e8a8678"
+  }
+}

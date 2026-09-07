@@ -1,0 +1,53 @@
+{
+  "case": "p10",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 29,
+    "init": 58,
+    "goal": 10,
+    "semantic_items": 97
+  },
+  "before": {
+    "objects_covered": 29,
+    "init_covered": 57,
+    "goal_covered": 10,
+    "missing": 1,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 29,
+    "init_covered": 58,
+    "goal_covered": 10,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "missing_rule",
+      "original_text": "",
+      "revised_text": "The locations apt1 through apt4 are airports.",
+      "reason_en": "Adds the missing airport typing for apt3 through a bounded rule that expands to exactly the four golden airport atoms.",
+      "reason_zh": "通过一条恰好展开为四个黄金机场原子的有界规则，补充 apt3 缺失的机场类型。",
+      "golden_evidence": [
+        "golden_problem.pddl:8-10: location and airport atoms for apt1 through apt4"
+      ]
+    }
+  ],
+  "preserved": [
+    "All original object, vehicle, city, and initial-location wording.",
+    "The complete irregular goal mapping and closing challenge sentence."
+  ],
+  "verification": {
+    "ledger_rows": 97,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}
+

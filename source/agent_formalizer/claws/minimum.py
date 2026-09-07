@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Iterable
 
 from agent_formalizer.claws.common import EnvConfiguredAdapter, run_captured_agent
+from agent_formalizer.optional_evidence import inspect_json_analysis_fields
 from agent_formalizer.result_types import AgentResult
 from agent_formalizer.tools.solver import TOOL_ID as SOLVER_TOOL_ID
 
@@ -226,6 +227,60 @@ class MinimumAgentAdapter(EnvConfiguredAdapter):
         except (OSError, json.JSONDecodeError):
             return {}
         return value if isinstance(value, dict) else {}
+
+    def backup_session(
+        self,
+        agent_id: str,
+        dest: Path,
+        *,
+        session_id: str | None = None,
+        session_file: str | None = None,
+        container_name: str | None = None,
+    ) -> dict:
+        transcript = dest / SESSION_DIR_NAME / "transcript.json"
+        return {
+            "status": (
+                "persisted"
+                if transcript.is_file() and transcript.stat().st_size
+                else "empty" if transcript.is_file() else "missing"
+            ),
+            "collector": "minimum-runtime-direct-transcript",
+            "files_copied": 0,
+            "files_generated_directly": 1 if transcript.is_file() else 0,
+        }
+
+    def raw_evidence_roots(self, artifact_dir: Path) -> list[Path]:
+        return [artifact_dir / SESSION_DIR_NAME]
+
+    def analysis_evidence_spec(self) -> dict:
+        return {
+            "schema_version": 1,
+            "analysis_source": {
+                "kind": "explicit_model_output_rationale_field",
+                "native_harness_exposure": "explicit_response_field",
+                "absence_is_model_attributable": False,
+                "text_fields": ["reasoning"],
+                "opaque_fields": [],
+                "interpretation": (
+                    "explicit answer rationale; not hidden provider chain-of-thought"
+                ),
+            },
+            "raw_session": {
+                "adapter_persistence": "runtime_direct",
+                "collector": "minimum-runtime-direct-transcript",
+            },
+            "normalized_analysis": {
+                "status": "complete_for_explicit_rationale",
+                "known_loss_modes": [],
+            },
+        }
+
+    def inspect_analysis_evidence(self, artifact_dir: Path) -> dict:
+        return inspect_json_analysis_fields(
+            [artifact_dir / SESSION_DIR_NAME / "transcript.json"],
+            artifact_dir=artifact_dir,
+            text_fields={"reasoning"},
+        )
 
     def collect_usage(self, workspace, artifact_dir: Path) -> dict:
         transcript = self._transcript(artifact_dir)

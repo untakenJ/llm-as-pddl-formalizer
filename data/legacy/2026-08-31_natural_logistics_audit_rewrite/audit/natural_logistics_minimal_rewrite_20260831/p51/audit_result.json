@@ -1,0 +1,78 @@
+{
+  "case": "p51",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 66,
+    "init": 132,
+    "goal": 27,
+    "semantic_items": 225
+  },
+  "before": {
+    "objects_covered": 60,
+    "init_covered": 90,
+    "goal_covered": 27,
+    "missing": 0,
+    "ambiguous": 48,
+    "contradictory": 0,
+    "over_generated": 115
+  },
+  "after": {
+    "objects_covered": 66,
+    "init_covered": 132,
+    "goal_covered": 27,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "Packages are labeled from obj11 to obj93, with various trucks from tru1 to tru9, and cities from cit1 to cit9.",
+      "revised_text": "Packages are labeled objX1, objX2, and objX3 for each integer X from 1 through 9, with trucks tru1 through tru9 and cities cit1 through cit9.",
+      "reason_en": "Replace the package pseudo-range and weakened truck inventory with exact bounded constructions.",
+      "reason_zh": "用精确的有限构造替换包裹伪范围和被弱化的卡车清单。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 4-69: exact object inventory",
+        "golden_problem.pddl:lines 72-116: package, truck, and city type atoms"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "Each city contains specific locations, named as pos1 to pos9, and airports apt1 to apt9, with apt1 to apt9 designated as airports containing airplanes apn1 to apn3.",
+      "revised_text": "The locations are pos1 through pos9 and apt1 through apt9, with apt1 through apt9 designated as airports and apn1 through apn3 designated as airplanes.",
+      "reason_en": "State the exact location, airport, and airplane families without implying containment.",
+      "reason_zh": "明确地点、机场和飞机对象族，且不暗示包含关系。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 117-134: (LOCATION ...) atoms",
+        "golden_problem.pddl:lines 135-146: (AIRPORT ...) and (AIRPLANE ...) atoms"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "missing_rule",
+      "original_text": "Trucks and packages are placed at the corresponding positions: tru1 is at pos1 with packages obj11, obj12, and obj13; tru2 is at pos2 with obj21, obj22, and obj23, and so forth up to tru9 at pos9 containing obj91, obj92, and obj93.",
+      "revised_text": "Trucks and packages are placed at the corresponding positions: for each integer X from 1 through 9, truX and packages objX1, objX2, and objX3 are at posX.",
+      "reason_en": "Replace vague continuation and containment wording with a finite same-index initial-position rule.",
+      "reason_zh": "用有限的同索引初始位置规则替换模糊续写和包含关系措辞。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 150-185: exact truck and package (AT ...) atoms"
+      ]
+    }
+  ],
+  "preserved": [
+    "Opening inventory-category sentence",
+    "Exact airplane-location sentence",
+    "Bounded respectively rule for all 18 city memberships",
+    "Complete irregular 27-atom goal"
+  ],
+  "verification": {
+    "ledger_rows": 225,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

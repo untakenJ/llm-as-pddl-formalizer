@@ -1,0 +1,81 @@
+{
+  "case": "p73",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 95,
+    "init": 190,
+    "goal": 37,
+    "semantic_items": 322
+  },
+  "before": {
+    "objects_covered": 92,
+    "init_covered": 106,
+    "goal_covered": 37,
+    "missing": 9,
+    "ambiguous": 78,
+    "contradictory": 0,
+    "over_generated": 84
+  },
+  "after": {
+    "objects_covered": 95,
+    "init_covered": 190,
+    "goal_covered": 37,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "There are packages named obj11 through obj133 and these are located across various positions labeled pos1, pos2, ..., pos13.",
+      "revised_text": "There are exactly 39 packages: for each integer i from 1 through 13, the three package names are formed by concatenating obj, i, and each of 1, 2, and 3, and all three packages are initially located at the position named by concatenating pos and the same i.",
+      "reason_en": "The pseudo-range over-generated 84 package labels and 'across various positions' did not define the initial package-to-position mapping.",
+      "reason_zh": "该伪范围会多生成 84 个包裹标签，而“分布在各种位置”没有定义包裹初始位置的对应关系。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 9-11,16-18,23-25,30-32,38-40,45-47,52-54,59-61,67-69,74-76,81-83,88-90,96-98: package objects",
+        "golden_problem.pddl:lines 101-139: package type atoms",
+        "golden_problem.pddl:lines 214-216,218-220,222-224,226-228,230-232,234-236,238-240,242-244,246-248,250-252,254-256,258-260,262-264: package initial positions"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "We also have a series of trucks, tru1 through tru13, which are stationed at these positions.",
+      "revised_text": "We also have a series of trucks, tru1 through tru13; for each integer i from 1 through 13, the truck named by concatenating tru and i is initially stationed at the position named by concatenating pos and the same i.",
+      "reason_en": "The phrase 'these positions' did not uniquely pair each truck with its initial position.",
+      "reason_zh": "“这些位置”没有唯一确定每辆卡车与其初始位置的配对。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 140-152: (TRUCK TRU1) through (TRUCK TRU13)",
+        "golden_problem.pddl:lines 213,217,221,225,229,233,237,241,245,249,253,257,261: truck initial positions"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "missing_rule",
+      "original_text": "The setting includes cities cit1 through cit13, each containing a position and an airport, creating a map of interrelated locations.",
+      "revised_text": "The setting includes cities cit1 through cit13; for each integer i from 1 through 13, the names citi, posi, and apti are formed by concatenating cit, pos, and apt respectively with i, posi and apti are locations, apti is an airport, and both posi and apti are in citi, creating a map of interrelated locations.",
+      "reason_en": "The original did not name every position/airport or define the shared-index city correspondence and unary location/airport facts.",
+      "reason_zh": "原文没有给出全部位置与机场名称，也没有定义共享索引的城市对应关系及地点/机场类型事实。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 153-165: city atoms",
+        "golden_problem.pddl:lines 166-204: location and airport atoms",
+        "golden_problem.pddl:lines 265-290: in-city atoms"
+      ]
+    }
+  ],
+  "preserved": [
+    "The opening sentence was preserved verbatim because it is compatible context.",
+    "The complete ordered airplane mapping was preserved verbatim.",
+    "The complete 37-atom goal sentence and closing sentence were preserved verbatim."
+  ],
+  "verification": {
+    "ledger_rows": 322,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}
+

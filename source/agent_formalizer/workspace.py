@@ -18,8 +18,10 @@ since here the agent produces two PDDL files rather than a code patch.
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
+import os
 import shutil
 import shlex
 import subprocess
@@ -33,10 +35,23 @@ from agent_formalizer.config import (
     BASE_IMAGE,
     CONTAINER_WORKSPACE,
     DOMAIN_OUTPUT_NAME,
+    EXTERNAL_CALLS_CONTAINER_PATH,
+    EXTERNAL_CALLS_PACKAGE,
+    INFRA_DIAGNOSTICS_CONTAINER_PATH,
+    INFRA_DIAGNOSTICS_PACKAGE,
     MODEL_GATEWAY_CONTAINER_PATH,
     MODEL_GATEWAY_HOST,
     MODEL_GATEWAY_PORT,
     MODEL_GATEWAY_SCRIPT,
+    PROVIDER_REASONING_CONTAINER_PATH,
+    PROVIDER_REASONING_MODULE,
+    LOGITS_BRIDGE_CONTAINER_PATH,
+    LOGITS_BRIDGE_ENV_PATH,
+    LOGITS_BRIDGE_PORT,
+    LOGITS_BRIDGE_SCRIPT,
+    LOGITS_GATEWAY_CONTAINER_PATH,
+    LOGITS_GATEWAY_SCRIPT,
+    LOGITS_MODEL_ASSETS_ROOT,
     PROBLEM_OUTPUT_NAME,
     related_docker_resource_name,
     WEB_GATEWAY_CONTAINER_PATH,
@@ -45,6 +60,8 @@ from agent_formalizer.config import (
     WEB_GATEWAY_SCRIPT,
 )
 from agent_formalizer.tools import resolve_agent_tools
+from agent_formalizer.external_calls.control import ToolControlMonitor, read_json
+from agent_formalizer import deadline_integration
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +78,21 @@ class ExecResult:
 class AgentWorkspace:
     """Manages a single Docker container for one formalization problem."""
 
-    def __init__(self, instance_id: str, container_name: str, adapter,
-                 image: str | None = None):
+    def __init__(
+        self,
+        instance_id: str,
+        container_name: str,
+        adapter,
+        image: str | None = None,
+        artifact_dir: Path | None = None,
+        diagnostics_plan=None,
+    ):
         self.instance_id = instance_id
         self.adapter = adapter
         self.image_name = image or BASE_IMAGE
         self.container_name = container_name
+        self.artifact_dir = Path(artifact_dir) if artifact_dir is not None else None
+        self.diagnostics_plan = diagnostics_plan
         # Hash the complete parent name into every related resource.  Prefix
         # slicing used to discard the per-problem/attempt suffix and made
         # concurrent sweeps remove one another's containers.
@@ -88,11 +114,17 @@ class AgentWorkspace:
         self._gateway_secret_dir: Path | None = None
         self._gateway_control_dir: Path | None = None
         self._gateway_control_path: Path | None = None
+        self._gateway_cancel_path: Path | None = None
         self._gateway_monitor_stop: threading.Event | None = None
         self._gateway_monitor_thread: threading.Thread | None = None
         self._gateway_terminal_error: dict | None = None
         self._gateway_monitor_error: str | None = None
         self._gateway_action_step_limit_reached = False
+        self._gateway_evidence_dir: Path | None = None
+        self._solver_control_monitor: ToolControlMonitor | None = None
+        self._deadline_broker = None
+        self._deadline_bundle = None
+        self._deadline_directory = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -100,6 +132,7 @@ class AgentWorkspace:
 
     def start(self) -> str:
         """Start the Docker container. Returns the container name."""
+        deadline_integration.validate(self.adapter)
         self._remove_stale_resources()
         self._create_network()
         self._start_model_gateway()
@@ -153,6 +186,8 @@ class AgentWorkspace:
                 ),
             ])
         cmd.extend(self.adapter.container_run_args(self.instance_id))
+        if deadline_integration.selected(self.adapter):
+            cmd.extend(deadline_integration.prepare(self))
         cmd.extend([self.image_name, "tail", "-f", "/dev/null"])
 
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -167,6 +202,9 @@ class AgentWorkspace:
     def cleanup(self) -> None:
         """Force-remove the container (best effort)."""
         self.stop_model_gateway_monitor()
+        if self._deadline_broker is not None:
+            self._deadline_broker.close()
+            self._deadline_broker = None
         subprocess.run(
             ["docker", "rm", "-f", "-v", self.container_name],
             capture_output=True,
@@ -196,6 +234,11 @@ class AgentWorkspace:
 
     def enforce_agent_deadline(self) -> None:
         """Freeze actions, cut the model route, then stop the complete tree."""
+        if self._gateway_cancel_path is not None:
+            try:
+                self._gateway_cancel_path.write_text("benchmark_deadline\n")
+            except OSError:
+                pass
         if self._started:
             try:
                 subprocess.run(
@@ -273,6 +316,7 @@ class AgentWorkspace:
         directory.chmod(0o700)
         self._gateway_control_dir = directory
         self._gateway_control_path = directory / "state.json"
+        self._gateway_cancel_path = directory / "benchmark-cancelled"
         return self._gateway_control_path
 
     def _cleanup_gateway_control(self) -> None:
@@ -280,6 +324,7 @@ class AgentWorkspace:
             shutil.rmtree(self._gateway_control_dir, ignore_errors=True)
         self._gateway_control_dir = None
         self._gateway_control_path = None
+        self._gateway_cancel_path = None
 
     def _read_gateway_control(self) -> dict | None:
         path = self._gateway_control_path
@@ -301,15 +346,64 @@ class AgentWorkspace:
         self._gateway_monitor_error = None
         self._gateway_action_step_limit_reached = False
 
+        if self._deadline_broker is not None:
+            thread = threading.Thread(target=deadline_integration.monitor,
+                                      args=(self, attempt_clock, stop), daemon=True,
+                                      name=f"logical-deadline-{self.container_name[:32]}")
+            self._gateway_monitor_thread = thread
+            thread.start()
+            return
+
         def monitor() -> None:
             paused = False
+
+            def run_control(command, **kwargs):
+                if self._solver_control_monitor is not None:
+                    kwargs["timeout"] = 5
+                return subprocess.run(command, **kwargs)
+
+            streaming_mode = (
+                getattr(getattr(self.adapter, "resolved_config", None),
+                        "model_response_delivery", {}).get("mode")
+                == "native_streaming"
+            )
+            last_gateway_liveness_check = 0.0
             try:
                 while not stop.is_set():
                     control = self._read_gateway_control()
+                    if self._solver_control_monitor is not None:
+                        control = self._solver_control_monitor.merge(control or {}, attempt_clock)
                     if control is None:
                         stop.wait(0.05)
                         continue
                     terminal = control.get("terminal_infra_error")
+                    now = time.monotonic()
+                    if (
+                        terminal is None
+                        and streaming_mode
+                        and control.get("active_committed_streams", 0) > 0
+                        and now - last_gateway_liveness_check >= 0.25
+                    ):
+                        last_gateway_liveness_check = now
+                        gateway_state = run_control(
+                            [
+                                "docker", "inspect", "--format",
+                                "{{.State.Running}}", self.gateway_name,
+                            ],
+                            capture_output=True,
+                            text=True,
+                        )
+                        if (
+                            gateway_state.returncode != 0
+                            or gateway_state.stdout.strip() != "true"
+                        ):
+                            terminal = {
+                                "reason": "post_commit_stream_failure",
+                                "stream_error_type": "GatewaySidecarExit",
+                                "recorded_at": datetime.datetime.now(
+                                    datetime.timezone.utc
+                                ).isoformat().replace("+00:00", "Z"),
+                            }
                     action_limit_reached = bool(
                         control.get("action_step_limit_reached")
                     )
@@ -322,24 +416,26 @@ class AgentWorkspace:
                             else 0.0
                         )
                         attempt_clock.pause(retroactive_seconds=retroactive)
-                        result = subprocess.run(
+                        result = run_control(
                             ["docker", "pause", self.container_name],
                             capture_output=True,
                         )
                         if result.returncode != 0:
                             attempt_clock.resume()
                             self._gateway_monitor_error = "gateway_pause_failed"
-                            subprocess.run(
+                            run_control(
                                 ["docker", "kill", self.container_name],
                                 capture_output=True,
                             )
                             return
                         paused = True
                     elif not pause_requested and paused:
-                        subprocess.run(
+                        unpause = run_control(
                             ["docker", "unpause", self.container_name],
                             capture_output=True,
                         )
+                        if self._solver_control_monitor is not None and unpause.returncode != 0:
+                            raise RuntimeError("solver recovery could not unpause the agent")
                         attempt_clock.resume()
                         paused = False
 
@@ -349,31 +445,53 @@ class AgentWorkspace:
                         # terminal response: freeze it before ending execution.
                         if not paused:
                             attempt_clock.pause()
-                            subprocess.run(
+                            run_control(
                                 ["docker", "pause", self.container_name],
                                 capture_output=True,
                             )
                             paused = True
-                        subprocess.run(
+                        run_control(
                             ["docker", "kill", self.container_name],
                             capture_output=True,
                         )
                         return
                     if action_limit_reached:
                         self._gateway_action_step_limit_reached = True
-                        subprocess.run(
+                        run_control(
                             ["docker", "kill", self.container_name],
                             capture_output=True,
                         )
                         return
+                    if self._solver_control_monitor is not None:
+                        if self._solver_control_monitor.acknowledge(paused=paused, clock=attempt_clock):
+                            self.enforce_agent_deadline()
+                            return
                     stop.wait(0.05)
+            except Exception:
+                logger.exception("External call monitor failed for %s", self.container_name)
+                self._gateway_monitor_error = (
+                    "external_call_control_failed" if self._solver_control_monitor is not None
+                    else "gateway_pause_failed"
+                )
+                if self._solver_control_monitor is not None:
+                    attempt_clock.cancel("external_call_control_failed")
+                if not paused:
+                    attempt_clock.resume()  # A Docker pause may have timed out after clock.pause().
+                try:
+                    run_control(["docker", "kill", self.container_name], capture_output=True)
+                except subprocess.TimeoutExpired:
+                    logger.error("Docker kill timed out after external-call control failure")
             finally:
                 if paused:
-                    subprocess.run(
-                        ["docker", "unpause", self.container_name],
-                        capture_output=True,
-                    )
-                    attempt_clock.resume()
+                    try:
+                        run_control(
+                            ["docker", "unpause", self.container_name],
+                            capture_output=True,
+                        )
+                    except subprocess.TimeoutExpired:
+                        logger.error("Docker unpause timed out after external-call control failure")
+                    finally:
+                        attempt_clock.resume()
 
         thread = threading.Thread(
             target=monitor,
@@ -399,6 +517,10 @@ class AgentWorkspace:
             terminal = control.get("terminal_infra_error") if control else None
             if isinstance(terminal, dict):
                 self._gateway_terminal_error = dict(terminal)
+            elif self._solver_control_monitor is not None:
+                state = read_json(self._solver_control_monitor.path) or {}
+                if isinstance(state.get("terminal_infra_error"), dict):
+                    self._gateway_terminal_error = dict(state["terminal_infra_error"])
         return (
             dict(self._gateway_terminal_error)
             if self._gateway_terminal_error is not None
@@ -419,10 +541,147 @@ class AgentWorkspace:
     def _start_model_gateway(self) -> None:
         if not MODEL_GATEWAY_SCRIPT.is_file():
             raise RuntimeError(f"Model gateway script missing: {MODEL_GATEWAY_SCRIPT}")
+        if not PROVIDER_REASONING_MODULE.is_file():
+            raise RuntimeError(
+                f"Provider reasoning module missing: {PROVIDER_REASONING_MODULE}"
+            )
+        if not INFRA_DIAGNOSTICS_PACKAGE.is_dir():
+            raise RuntimeError(
+                f"Infrastructure diagnostics package missing: {INFRA_DIAGNOSTICS_PACKAGE}"
+            )
         gateway = self.adapter.model_gateway()
         control_path = self._stage_gateway_control()
         container_control_dir = "/run/benchmark-control"
         container_control_path = f"{container_control_dir}/state.json"
+        container_cancel_path = f"{container_control_dir}/benchmark-cancelled"
+        evidence_dir = (
+            self.artifact_dir / "gateway"
+            if self.artifact_dir is not None
+            else control_path.parent / "evidence"
+        )
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        evidence_dir.chmod(0o700)
+        for name in (
+            "provider_reasoning.jsonl",
+            "reasoning_capture_status.json",
+        ):
+            evidence_path = evidence_dir / name
+            evidence_path.touch(exist_ok=True)
+            evidence_path.chmod(0o600)
+        self._gateway_evidence_dir = evidence_dir
+        diagnostics_args: list[str] = [
+            "-v",
+            (
+                f"{INFRA_DIAGNOSTICS_PACKAGE}:"
+                f"{INFRA_DIAGNOSTICS_CONTAINER_PATH}:ro"
+            ),
+        ]
+        if self.diagnostics_plan is not None:
+            try:
+                diagnostics_run_root = self.diagnostics_plan.run_root
+                diagnostics_execution_dir = self.diagnostics_plan.execution_dir
+                diagnostics_run_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+                diagnostics_execution_dir.mkdir(
+                    parents=True, exist_ok=True, mode=0o700
+                )
+                diagnostics_run_root.chmod(0o700)
+                diagnostics_execution_dir.chmod(0o700)
+                container_diagnostics_root = "/run/infra-diagnostics"
+                relative_execution = diagnostics_execution_dir.relative_to(
+                    diagnostics_run_root
+                )
+                runtime_config = {
+                    **self.diagnostics_plan.runtime_config,
+                    "event_path": str(
+                        Path(container_diagnostics_root)
+                        / relative_execution
+                        / "events.jsonl"
+                    ),
+                    "manifest_path": str(
+                        Path(container_diagnostics_root)
+                        / relative_execution
+                        / "diagnostics_manifest.json"
+                    ),
+                    "run_budget_path": str(
+                        Path(container_diagnostics_root) / ".run-bytes"
+                    ),
+                }
+                diagnostics_config_path = (
+                    control_path.parent / "infra-diagnostics.json"
+                )
+                diagnostics_config_path.write_text(
+                    json.dumps(runtime_config, indent=2, ensure_ascii=False) + "\n"
+                )
+                diagnostics_config_path.chmod(0o600)
+                container_diagnostics_config = (
+                    f"{container_control_dir}/infra-diagnostics.json"
+                )
+                diagnostics_args.extend(
+                    [
+                        "-e",
+                        (
+                            "PDDL_GATEWAY_INFRA_DIAGNOSTICS_CONFIG="
+                            f"{container_diagnostics_config}"
+                        ),
+                        "--mount",
+                        (
+                            f"type=bind,source={diagnostics_run_root},"
+                            f"target={container_diagnostics_root}"
+                        ),
+                    ]
+                )
+            except OSError as exc:
+                logger.warning(
+                    "Infrastructure diagnostics disabled for %s: %s",
+                    self.container_name,
+                    exc,
+                )
+        container_evidence_dir = "/run/benchmark-evidence"
+        transport = gateway.get("transport")
+        entrypoint_host = MODEL_GATEWAY_SCRIPT
+        entrypoint_container = MODEL_GATEWAY_CONTAINER_PATH
+        runtime_command = ["python3", MODEL_GATEWAY_CONTAINER_PATH]
+        transport_args: list[str] = []
+        if transport == "logits-rest-openai-v1":
+            runtime_python = LOGITS_BRIDGE_ENV_PATH / "bin" / "python"
+            required = [LOGITS_GATEWAY_SCRIPT, LOGITS_BRIDGE_SCRIPT, runtime_python]
+            missing = [str(path) for path in required if not path.is_file()]
+            if missing or not LOGITS_MODEL_ASSETS_ROOT.is_dir():
+                raise RuntimeError(
+                    "Logits gateway runtime is incomplete. Run: bash "
+                    "source/agent_formalizer/install_harnesses.sh logits"
+                )
+            entrypoint_host = LOGITS_GATEWAY_SCRIPT
+            entrypoint_container = LOGITS_GATEWAY_CONTAINER_PATH
+            runtime_command = [str(runtime_python), LOGITS_GATEWAY_CONTAINER_PATH]
+            runtime_root = LOGITS_BRIDGE_ENV_PATH.parent
+            transport_args.extend(
+                [
+                    "-e", f"PDDL_LOGITS_MODEL={gateway['upstream_model']}",
+                    "-e", f"PDDL_LOGITS_BRIDGE_PORT={LOGITS_BRIDGE_PORT}",
+                    "-e", "PDDL_LOGITS_ORIGIN=https://api.logits.dev",
+                    "-e", f"PDDL_LOGITS_MODEL_ASSETS_ROOT={LOGITS_MODEL_ASSETS_ROOT}",
+                    "-e", f"PDDL_LOGITS_LEDGER_PATH={container_control_dir}/logits.jsonl",
+                    "-v", f"{LOGITS_BRIDGE_SCRIPT}:{LOGITS_BRIDGE_CONTAINER_PATH}:ro",
+                    "-v", f"{MODEL_GATEWAY_SCRIPT}:{MODEL_GATEWAY_CONTAINER_PATH}:ro",
+                    "-v", f"{runtime_root}:{runtime_root}:ro",
+                ]
+            )
+            resolved_python = runtime_python.resolve()
+            try:
+                resolved_python.relative_to(runtime_root)
+            except ValueError:
+                resolved_home = resolved_python.parent.parent
+                link_target = Path(os.readlink(runtime_python))
+                if not link_target.is_absolute():
+                    link_target = runtime_python.parent / link_target
+                embedded_home = link_target.parent.parent
+                transport_args.extend(
+                    ["-v", f"{resolved_home}:{embedded_home}:ro"]
+                )
+        elif transport is not None:
+            raise RuntimeError(f"Unsupported model gateway transport: {transport}")
+
         cmd = [
             "docker", "run", "-d", "--pull", "never",
             "--name", self.gateway_name,
@@ -433,6 +692,7 @@ class AgentWorkspace:
             "-e", f"PDDL_GATEWAY_MAX_MODEL_CALLS={gateway['max_model_calls']}",
             "-e", f"PDDL_GATEWAY_MAX_ACTION_STEPS={gateway['max_action_steps']}",
             "-e", f"PDDL_GATEWAY_AUTH_MODE={gateway['auth_mode']}",
+            "-e", f"PDDL_GATEWAY_PROVIDER={gateway.get('provider', 'unknown')}",
             "-e", "PDDL_GATEWAY_ALLOWED_MODELS=" + json.dumps(gateway["allowed_models"]),
             "-e", (
                 "PDDL_GATEWAY_ALLOWED_PATH_PREFIXES="
@@ -462,13 +722,47 @@ class AgentWorkspace:
                 + json.dumps(gateway.get("request_overrides", {}), sort_keys=True)
             ),
             "-e", f"PDDL_GATEWAY_CONTROL_FILE={container_control_path}",
+            "-e", f"PDDL_GATEWAY_BENCHMARK_CANCEL_FILE={container_cancel_path}",
+            "-e", (
+                "PDDL_GATEWAY_RESPONSE_DELIVERY="
+                + gateway.get("response_delivery", "buffered_atomic")
+            ),
+            "-e",
+            (
+                "PDDL_GATEWAY_REASONING_PATH="
+                f"{container_evidence_dir}/provider_reasoning.jsonl"
+            ),
+            "-e",
+            (
+                "PDDL_GATEWAY_REASONING_STATUS_PATH="
+                f"{container_evidence_dir}/reasoning_capture_status.json"
+            ),
             "--mount",
             (
                 f"type=bind,source={control_path.parent},"
                 f"target={container_control_dir}"
             ),
-            "-v", f"{MODEL_GATEWAY_SCRIPT}:{MODEL_GATEWAY_CONTAINER_PATH}:ro",
+            "--mount",
+            (
+                f"type=bind,source={evidence_dir},"
+                f"target={container_evidence_dir}"
+            ),
+            "-v", f"{entrypoint_host}:{entrypoint_container}:ro",
+            "-v", f"{EXTERNAL_CALLS_PACKAGE}:{EXTERNAL_CALLS_CONTAINER_PATH}:ro",
+            "-v",
+            (
+                f"{PROVIDER_REASONING_MODULE}:"
+                f"{PROVIDER_REASONING_CONTAINER_PATH}:ro"
+            ),
         ]
+        cmd.extend(diagnostics_args)
+        cmd.extend(transport_args)
+        if deadline_integration.selected(self.adapter):
+            if transport == "logits-rest-openai-v1":
+                raise RuntimeError("logical deadlines are not implemented for the logits bridge")
+            cmd.extend(["--user", f"{os.getuid()}:{os.getgid()}",
+                        "-e", f"PDDL_GATEWAY_EXTERNAL_CALL_TIMING={deadline_integration.policy(self.adapter)}",
+                        "-e", "PDDL_GATEWAY_LOGICAL_CONTROL_FILE=/run/benchmark-control/model-timing.json"])
         secret = self.adapter.model_gateway_secret()
         if secret:
             secret_path = self._stage_gateway_secret(secret)
@@ -481,7 +775,7 @@ class AgentWorkspace:
                     f"target={container_secret_path},readonly"
                 ),
             ])
-        cmd.extend([self.image_name, "python3", MODEL_GATEWAY_CONTAINER_PATH])
+        cmd.extend([self.image_name, *runtime_command])
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"Failed to start model gateway: {result.stderr.strip()}")
@@ -501,7 +795,8 @@ class AgentWorkspace:
                 f"Failed to attach model gateway egress: {result.stderr.strip()}"
             )
         health = None
-        for _ in range(50):
+        health_attempts = 600 if transport == "logits-rest-openai-v1" else 50
+        for _ in range(health_attempts):
             health = subprocess.run(
                 [
                     "docker", "exec", self.gateway_name, "python3", "-c",
@@ -521,6 +816,8 @@ class AgentWorkspace:
         else:
             error = health.stderr.strip() if health else "unknown startup error"
             raise RuntimeError(f"Model gateway did not become ready: {error}")
+        if deadline_integration.selected(self.adapter) and read_json(control_path.parent / "model-timing.json") is None:
+            raise RuntimeError("model logical-deadline control is not readable by the host monitor")
 
     def _start_web_gateway(self) -> None:
         if not WEB_GATEWAY_SCRIPT.is_file():
@@ -583,6 +880,25 @@ class AgentWorkspace:
         container_entry = f"{spec.gateway_dir_container.rstrip('/')}/{spec.gateway_entrypoint}"
         # One named container per attempt for the solver tool today.
         name = self.solver_gateway_name
+        external_args = ["-v", f"{EXTERNAL_CALLS_PACKAGE}:{EXTERNAL_CALLS_CONTAINER_PATH}:ro"]
+        resolved = getattr(getattr(self.adapter, "resolved_config", None), "raw", {}).get("resolved", {})
+        policy = resolved.get("solver_error_routing")
+        if policy:
+            if self._gateway_control_dir is None or self._gateway_evidence_dir is None:
+                raise RuntimeError("solver recovery requires model gateway control and evidence")
+            self._solver_control_monitor = ToolControlMonitor(self._gateway_control_dir / "solver.json")
+            external_args.extend([
+                # Private 0600 control/evidence must remain readable by the
+                # host monitor; root-owned bind outputs break the handshake.
+                "--user", f"{os.getuid()}:{os.getgid()}",
+                "-e", f"PDDL_SOLVER_ERROR_ROUTING={policy}",
+                "-e", f"PDDL_SOLVER_EXTERNAL_CALL_TIMING={deadline_integration.policy(self.adapter) or ''}",
+                "-e", "PDDL_SOLVER_CONTROL_FILE=/run/benchmark-control/solver.json",
+                "-e", "PDDL_SOLVER_CANCEL_FILE=/run/benchmark-control/benchmark-cancelled",
+                "-e", "PDDL_SOLVER_EVIDENCE_DIR=/run/benchmark-evidence/solver_calls",
+                "-v", f"{self._gateway_control_dir}:/run/benchmark-control",
+                "-v", f"{self._gateway_evidence_dir}:/run/benchmark-evidence",
+            ])
         cmd = [
             "docker", "run", "-d", "--pull", "never",
             "--name", name,
@@ -590,7 +906,16 @@ class AgentWorkspace:
             "--network-alias", spec.gateway_host,
             "--add-host", "host.docker.internal:host-gateway",
             "-e", f"PDDL_SOLVER_GATEWAY_PORT={spec.gateway_port}",
+            "-e", (
+                "PDDL_SOLVER_UPSTREAM_BASE="
+                + self.adapter.solver_upstream_base(containerized=True)
+            ),
+            "-e", (
+                "PDDL_SOLVER_UPSTREAM_HEALTH_REQUIRED="
+                + ("1" if self.adapter.solver_backend() == "local" else "0")
+            ),
             "-v", f"{spec.gateway_dir_host}:{spec.gateway_dir_container}:ro",
+            *external_args,
             self.image_name, "python3", container_entry,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -630,6 +955,8 @@ class AgentWorkspace:
             time.sleep(0.1)
         else:
             raise RuntimeError(f"{spec.tool_id} gateway did not become ready")
+        if self._solver_control_monitor is not None and read_json(self._solver_control_monitor.path) is None:
+            raise RuntimeError("solver recovery control is not readable by the host monitor")
 
     def model_gateway_stats(self) -> dict:
         if not self._gateway_started:
@@ -826,6 +1153,7 @@ class AgentWorkspace:
         expected_model_calls = self.adapter.max_model_calls
         expected_action_steps = self.adapter.max_action_steps
         expected_routing = self.adapter.resolved_config.model_error_routing
+        expected_delivery = self.adapter.resolved_config.model_response_delivery["mode"]
         reported_routing = stats.get("transient_policy", {})
         expected_gateway_routing = {
             "max_retries": expected_routing["max_retries"],
@@ -840,10 +1168,11 @@ class AgentWorkspace:
             and stats.get("tool_calls") == 0
             and stats.get("action_steps") == 0
             and reported_routing == expected_gateway_routing
+            and stats.get("streaming_mode") == expected_delivery
         )
         return {
             "preset": "action-step-guard",
-            "version": 1,
+            "version": 2 if expected_delivery == "native_streaming" else 1,
             "status": "pass" if passed else "fail",
             "configured_model_call_limit": expected_model_calls,
             "gateway_reported_model_call_limit": stats.get("max_model_calls"),
@@ -851,6 +1180,8 @@ class AgentWorkspace:
             "gateway_reported_action_step_limit": stats.get("max_action_steps"),
             "configured_transient_policy": expected_gateway_routing,
             "gateway_reported_transient_policy": reported_routing,
+            "configured_response_delivery": expected_delivery,
+            "gateway_reported_response_delivery": stats.get("streaming_mode"),
         }
 
     def validate_state_isolation(self) -> dict:
@@ -922,6 +1253,9 @@ class AgentWorkspace:
             resolved(tool_spec.cli_host_path)
             for tool_spec in resolve_agent_tools(self.adapter.runtime_tools())
         )
+        if self._deadline_bundle is not None:
+            expected_shared_readonly.add(resolved(str(self._deadline_bundle)))
+            expected_private_readonly.append(resolved(str(self._deadline_directory)))
         expected_readonly = sorted(
             {*expected_private_readonly, *expected_shared_readonly}
         )

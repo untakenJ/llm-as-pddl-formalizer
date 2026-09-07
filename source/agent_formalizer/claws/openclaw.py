@@ -56,6 +56,7 @@ from agent_formalizer.claws.base import (
     run_process_with_attempt_clock,
 )
 from agent_formalizer.claws.common import provider_spec, google_vertex_settings, split_model_id
+from agent_formalizer.optional_evidence import inspect_json_analysis_fields
 from agent_formalizer.result_types import AgentResult
 
 logger = logging.getLogger(__name__)
@@ -251,6 +252,7 @@ class OpenClawAdapter(BaseClawAdapter):
         return value
 
     def validate_runtime(self) -> None:
+        super().validate_runtime()
         if not Path(OPENCLAW_NODE_BIN).is_file():
             raise RuntimeError(f"OpenClaw Node.js binary not found: {OPENCLAW_NODE_BIN}")
         if not Path(OPENCLAW_MODULE_DIR).is_dir():
@@ -337,6 +339,14 @@ class OpenClawAdapter(BaseClawAdapter):
         value["auth_mode"] = provider_spec(self.model).gateway_auth_mode
         _, runtime_model = split_model_id(self.model)
         value["allowed_models"] = sorted({self.model, runtime_model})
+        if self.provider == "logits":
+            value.update(
+                {
+                    "transport": "logits-rest-openai-v1",
+                    "upstream_model": runtime_model,
+                    "allowed_path_prefixes": ["/v1"],
+                }
+            )
         return value
 
     def model_gateway_secret(self) -> str | None:
@@ -444,6 +454,7 @@ class OpenClawAdapter(BaseClawAdapter):
             "anthropic": "anthropic-messages",
             "openrouter": "openai-completions",
             "deepseek": "openai-completions",
+            "logits": "openai-completions",
             "dashscope": "openai-completions",
             "qwen": "openai-completions",
             "google": "google-generative-ai",
@@ -452,10 +463,12 @@ class OpenClawAdapter(BaseClawAdapter):
         }
         _, runtime_model = split_model_id(self.model)
         upstream_path = urlsplit(self.upstream_api_base()).path.rstrip("/")
+        if self.provider == "logits" and not upstream_path:
+            upstream_path = "/v1"
         gateway_base = f"http://{MODEL_GATEWAY_HOST}:{MODEL_GATEWAY_PORT}"
         if self.provider != GOOGLE_VERTEX_PROVIDER:
             gateway_base += upstream_path
-        return {
+        config = {
             "baseUrl": gateway_base,
             "api": api_by_provider.get(self.provider, "openai-completions"),
             "request": {"allowPrivateNetwork": True},
@@ -470,6 +483,17 @@ class OpenClawAdapter(BaseClawAdapter):
                 }
             ],
         }
+        # OpenClaw's provider catalog does not expose an implicit environment
+        # lookup for every custom provider (notably DeepSeek). Bind the
+        # provider entry to the canonical *name* of the environment variable.
+        # OpenClaw resolves this recognized marker at runtime; the container
+        # receives only ``benchmark-gateway-placeholder``, while the real
+        # provider secret remains exclusively in the sidecar gateway.
+        if self.provider != GOOGLE_VERTEX_PROVIDER:
+            canonical = self._canonical_provider_env()
+            if canonical:
+                config["apiKey"] = canonical
+        return config
 
     def _auth_profiles(self) -> dict:
         """Minimal ``api_key`` auth profile for the active model's provider."""
@@ -1084,7 +1108,7 @@ class OpenClawAdapter(BaseClawAdapter):
         session_id: str | None = None,
         session_file: str | None = None,
         container_name: str | None = None,
-    ) -> None:
+    ) -> dict:
         """Copy session JSONL files from an agent into ``dest/sessions``."""
         sessions_dir = self._sessions_dir(agent_id, session_file=session_file)
         out = dest / "sessions"
@@ -1093,26 +1117,97 @@ class OpenClawAdapter(BaseClawAdapter):
         if container_name and sessions_dir and sessions_dir.is_dir():
             self._make_sessions_readable(agent_id, container_name, sessions_dir)
 
-        copied = 0
+        copied: set[str] = set()
+        failures: list[str] = []
+        candidates = 0
         if sessions_dir and sessions_dir.is_dir():
             for f in sessions_dir.glob("*.jsonl"):
+                candidates += 1
                 try:
                     shutil.copy2(f, out / f.name)
-                    copied += 1
+                    copied.add(f.name)
                 except OSError as e:
+                    failures.append(type(e).__name__)
                     logger.warning("Could not copy session file %s: %s", f, e)
 
-        if session_file and copied == 0:
+        if session_file and not copied:
             try:
                 attempt_state = self._attempt_for_agent(agent_id)
-            except RuntimeError:
-                return
-            host = self._isolated_session_path(attempt_state, session_file)
-            if host is not None and host.is_file():
-                try:
-                    shutil.copy2(host, out / host.name)
-                except OSError as e:
-                    logger.warning("Could not copy session file %s: %s", host, e)
+            except RuntimeError as exc:
+                failures.append(type(exc).__name__)
+            else:
+                host = self._isolated_session_path(attempt_state, session_file)
+                if host is not None and host.is_file():
+                    candidates += 1
+                    try:
+                        shutil.copy2(host, out / host.name)
+                        copied.add(host.name)
+                    except OSError as e:
+                        failures.append(type(e).__name__)
+                        logger.warning("Could not copy session file %s: %s", host, e)
+
+        if copied and failures:
+            status = "failed_partial"
+        elif copied:
+            status = "persisted"
+        elif failures:
+            status = "failed"
+        else:
+            status = "missing"
+        return {
+            "status": status,
+            "collector": "openclaw-session-jsonl-copy",
+            "source_candidates": candidates,
+            "files_copied": len(copied),
+            "copy_failures": len(failures),
+            "error_types": sorted(set(failures)),
+        }
+
+    def analysis_evidence_spec(self) -> dict:
+        return {
+            "schema_version": 1,
+            "analysis_source": {
+                "kind": "native_session_content_blocks",
+                "native_harness_exposure": "conditional",
+                "absence_is_model_attributable": False,
+                "text_fields": ["thinking"],
+                "opaque_fields": [
+                    "thinkingSignature",
+                    "textSignature",
+                    "encrypted_content",
+                    "openclawReasoningReplay",
+                ],
+            },
+            "raw_session": {
+                "adapter_persistence": "implemented",
+                "collector": "openclaw-session-jsonl-copy",
+            },
+            "normalized_analysis": {
+                "status": "partial",
+                "known_loss_modes": [
+                    "thinking_text_over_500_characters_is_truncated",
+                    "opaque_signature_or_replay_fields_are_truncated_or_omitted",
+                ],
+            },
+        }
+
+    def inspect_analysis_evidence(self, artifact_dir: Path) -> dict:
+        paths = [
+            path
+            for path in sorted((artifact_dir / "sessions").glob("*.jsonl"))
+            if not path.name.endswith(".trajectory.jsonl")
+        ]
+        return inspect_json_analysis_fields(
+            paths,
+            artifact_dir=artifact_dir,
+            text_fields={"thinking"},
+            opaque_fields={
+                "thinkingSignature",
+                "textSignature",
+                "encrypted_content",
+                "openclawReasoningReplay",
+            },
+        )
 
     def iter_agent_steps(
         self,

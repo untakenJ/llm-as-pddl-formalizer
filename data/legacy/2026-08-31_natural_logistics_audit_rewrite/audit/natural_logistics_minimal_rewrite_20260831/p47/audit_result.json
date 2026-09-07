@@ -1,0 +1,66 @@
+{
+  "case": "p47",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 66,
+    "init": 132,
+    "goal": 25,
+    "semantic_items": 223
+  },
+  "before": {
+    "objects_covered": 66,
+    "init_covered": 123,
+    "goal_covered": 25,
+    "missing": 0,
+    "ambiguous": 9,
+    "contradictory": 2,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 66,
+    "init_covered": 132,
+    "goal_covered": 25,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "contradiction",
+      "original_text": "nine packages",
+      "revised_text": "twenty-seven packages",
+      "reason_en": "The explicit inventory and golden problem contain 27 packages.",
+      "reason_zh": "\u660e\u786e\u6e05\u5355\u548c\u9ec4\u91d1\u95ee\u9898\u5747\u5305\u542b 27 \u4e2a\u5305\u88f9\u3002",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 9-11,16-18,23-25,30-32,38-40,45-47,52-54,59-61,67-69: package objects",
+        "golden_problem.pddl:lines 72-98: (PACKAGE ...) facts"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "contradiction",
+      "original_text": "nine locations, nine airports",
+      "revised_text": "eighteen locations (the nine positions and nine airports)",
+      "reason_en": "The golden problem types all nine positions and all nine airports as locations.",
+      "reason_zh": "\u9ec4\u91d1\u95ee\u9898\u628a\u4e5d\u4e2a\u666e\u901a\u4f4d\u7f6e\u548c\u4e5d\u4e2a\u673a\u573a\u5168\u90e8\u6807\u4e3a\u5730\u70b9\u3002",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 117-134: (LOCATION ...) facts",
+        "golden_problem.pddl:lines 135-143: (AIRPORT ...) facts"
+      ]
+    }
+  ],
+  "preserved": [
+    "All exhaustive object identifier lists",
+    "All initial location mappings and the bounded in-city rule",
+    "Complete irregular 25-atom goal"
+  ],
+  "verification": {
+    "ledger_rows": 223,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

@@ -12,9 +12,9 @@ Hook call order for one problem (see orchestrator.run_one_problem):
     create_agent(agent_id, instance_id=...) # optional isolation setup
     send_task(prompt, ...)                  # run the agent, return AgentResult
     collect_usage(workspace, artifact_dir)  # claw-specific usage, container alive
+    backup_session(agent_id, artifact_dir)  # save/report raw session logs
+    iter_agent_steps(agent_id, artifact_dir) # yield normalized agent records
     iter_tool_calls(agent_id, artifact_dir) # yield normalized tool-call records
-    iter_agent_steps(agent_id, artifact_dir) # yield per-step agent loop records
-    backup_session(agent_id, artifact_dir)  # save raw session logs
     prepare_agent_cleanup(...)              # restore access to private mounts
     workspace.cleanup()                     # unmount runtime/state paths
     delete_agent(agent_id, instance_id=...) # teardown (always called)
@@ -23,6 +23,7 @@ Hook call order for one problem (see orchestrator.run_one_problem):
 from __future__ import annotations
 
 import logging
+import math
 import subprocess
 import threading
 import time
@@ -45,6 +46,8 @@ class AttemptClock:
         self._pause_depth = 0
         self._pause_started: float | None = None
         self._paused_seconds = 0.0
+        self._external_charged_seconds = 0.0
+        self._cancel_reason: str | None = None
 
     def pause(self, *, retroactive_seconds: float = 0.0) -> None:
         """Freeze active time, optionally crediting monitor-observation delay."""
@@ -67,6 +70,14 @@ class AttemptClock:
                 self._paused_seconds += duration
                 self._pause_started = None
 
+    def charge_active(self, seconds: float) -> None:
+        """Commit a delivered external operation's elapsed time from escrow."""
+        if isinstance(seconds, bool) or not math.isfinite(seconds) or seconds < 0:
+            raise ValueError("external elapsed time must be finite and non-negative")
+        with self._lock:
+            self._external_charged_seconds += seconds
+            self._deadline -= seconds
+
     def remaining(self) -> float:
         with self._lock:
             reference = (
@@ -79,6 +90,16 @@ class AttemptClock:
     def expired(self) -> bool:
         return self.remaining() <= 0.0
 
+    def cancel(self, reason: str) -> None:
+        """Request prompt harness-process termination without posing as timeout."""
+        with self._lock:
+            if self._cancel_reason is None:
+                self._cancel_reason = str(reason)
+
+    def cancellation_reason(self) -> str | None:
+        with self._lock:
+            return self._cancel_reason
+
     def snapshot(self) -> dict:
         with self._lock:
             now = time.monotonic()
@@ -87,7 +108,7 @@ class AttemptClock:
                 if self._pause_depth > 0 and self._pause_started is not None
                 else 0.0
             )
-            paused = self._paused_seconds + live_pause
+            paused = max(0.0, self._paused_seconds + live_pause - self._external_charged_seconds)
             wall = now - self.started_monotonic
             return {
                 "limit_seconds": self.limit_seconds,
@@ -96,6 +117,7 @@ class AttemptClock:
                 "active_duration_seconds": round(max(0.0, wall - paused), 6),
                 "paused": self._pause_depth > 0,
                 "deadline_exceeded": self.remaining() <= 0.0,
+                "cancellation_reason": self._cancel_reason,
             }
 
 
@@ -116,6 +138,10 @@ def run_process_with_attempt_clock(
         env=env,
     )
     while True:
+        if clock.cancellation_reason() is not None:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            return subprocess.CompletedProcess(cmd, -1, stdout, stderr)
         remaining = clock.remaining()
         if remaining <= 0:
             proc.kill()
@@ -172,6 +198,57 @@ class BaseClawAdapter:
         self.benchmark_profile = benchmark_profile
         self.resolved_config = resolved_config
         self._attempt_clock = threading.local()
+        from local_solver import DEFAULT_SOLVER_BACKEND, base_urls_for_backend
+
+        backend = (
+            self.resolved_config.solver_backend
+            if self.resolved_config is not None
+            else DEFAULT_SOLVER_BACKEND
+        )
+        host_url, container_url = base_urls_for_backend(backend)
+        self._solver_backend = backend
+        self._solver_host_base_url = host_url
+        self._solver_container_base_url = container_url
+
+    def configure_solver_backend(
+        self,
+        backend: str,
+        *,
+        host_base_url: str | None = None,
+        container_base_url: str | None = None,
+    ) -> None:
+        """Bind operational endpoints for the profile-hashed backend mode."""
+        from local_solver import SUPPORTED_BACKENDS, base_urls_for_backend
+
+        if backend not in SUPPORTED_BACKENDS:
+            raise ValueError(f"unsupported solver backend: {backend}")
+        expected = (
+            self.resolved_config.solver_backend
+            if self.resolved_config is not None
+            else backend
+        )
+        if backend != expected:
+            raise ValueError(
+                f"solver backend {backend!r} does not match resolved mode {expected!r}"
+            )
+        default_host, default_container = base_urls_for_backend(backend)
+        self._solver_backend = backend
+        self._solver_host_base_url = (
+            host_base_url or default_host
+        ).rstrip("/")
+        self._solver_container_base_url = (
+            container_base_url or default_container
+        ).rstrip("/")
+
+    def solver_backend(self) -> str:
+        return self._solver_backend
+
+    def solver_upstream_base(self, *, containerized: bool) -> str:
+        return (
+            self._solver_container_base_url
+            if containerized
+            else self._solver_host_base_url
+        )
 
     def agent_tools(self) -> list[str]:
         if self.resolved_config is None:
@@ -220,7 +297,8 @@ class BaseClawAdapter:
 
     def validate_runtime(self) -> None:
         """Fail early when the harness runtime or credentials are unavailable."""
-        return None
+        from agent_formalizer.deadline_integration import validate
+        validate(self)
 
     def container_run_args(self, instance_id: str) -> list[str]:
         """Extra arguments for ``docker run`` (bind mounts, env vars)."""
@@ -343,8 +421,38 @@ class BaseClawAdapter:
         session_id: str | None = None,
         session_file: str | None = None,
         container_name: str | None = None,
-    ) -> None:
-        pass
+    ) -> dict:
+        """Persist raw native evidence and return a content-free status report.
+
+        The default explicitly reports that no adapter capture exists.  This
+        prevents a no-op collector from being mistaken for a model that emitted
+        no analysis.  Overrides must not include transcript text or secrets in
+        their report.
+        """
+        return {
+            "status": "not_exposed",
+            "collector": "none",
+            "reason": "adapter_has_no_raw_session_collector",
+            "files_copied": 0,
+        }
+
+    def raw_evidence_roots(self, artifact_dir: Path) -> list[Path]:
+        """Return attempt-local roots included in the optional raw manifest."""
+        return [artifact_dir / "sessions", artifact_dir / "gateway"]
+
+    def analysis_evidence_spec(self) -> dict:
+        """Declare native exposure and adapter persistence semantics."""
+        from agent_formalizer.optional_evidence import default_analysis_evidence_spec
+
+        return default_analysis_evidence_spec()
+
+    def inspect_analysis_evidence(self, artifact_dir: Path) -> dict:
+        """Inspect persisted analysis metadata without retaining its content."""
+        return {
+            "status": "not_persisted",
+            "records_examined": 0,
+            "evidence_files": [],
+        }
 
     def switch_model(self, model_name: str) -> None:
         self.model = model_name
@@ -451,6 +559,7 @@ class BaseClawAdapter:
         origin = urlsplit(self.upstream_api_base())
         value = {
             "upstream_origin": f"{origin.scheme}://{origin.netloc}",
+            "provider": self.model.split("/", 1)[0],
             "max_model_calls": self.max_model_calls,
             "max_action_steps": self.max_action_steps,
             "auth_mode": "bearer",
@@ -464,6 +573,9 @@ class BaseClawAdapter:
             value["request_overrides"] = (
                 self.resolved_config.generation_overrides
             )
+            value["response_delivery"] = (
+                self.resolved_config.model_response_delivery["mode"]
+            )
         else:
             value["transient_error_policy"] = {
                 "id": "external-transient-v2",
@@ -475,6 +587,7 @@ class BaseClawAdapter:
                 ],
             }
             value["request_overrides"] = {}
+            value["response_delivery"] = "buffered_atomic"
         return value
 
     def model_gateway_secret(self) -> str | None:
@@ -555,13 +668,37 @@ class BaseClawAdapter:
                     "resolved_value": self.max_action_steps,
                     "metric": "model_calls + tool_calls",
                     "implementation": (
-                        "the shared model gateway reserves one step for every "
+                        "the shared model gateway streams successful response bytes, "
+                        "commits the complete structured tool batch on normal stream "
+                        "completion, and applies the action threshold to the next "
+                        "request; final-batch overshoot remains visible"
+                        if self.resolved_config is not None
+                        and self.resolved_config.model_response_delivery["mode"]
+                        == "native_streaming"
+                        else "the shared model gateway reserves one step for every "
                         "logical model request and one step for each structured "
                         "tool invocation before delivering the response"
                     ),
                     "evidence": (
                         "action-step-guard, model_gateway_summary, and "
                         "model_call_ledger"
+                    ),
+                },
+                "model_response_delivery": {
+                    "resolved_value": (
+                        self.resolved_config.model_response_delivery
+                        if self.resolved_config is not None
+                        else {
+                            "mode": "buffered_atomic",
+                            "first_event_commit": False,
+                            "action_step_admission": "exact_complete_batch",
+                        }
+                    ),
+                    "implementation": (
+                        "versioned common gateway response-delivery path"
+                    ),
+                    "evidence": (
+                        "model_gateway_summary and per-call stream ledger"
                     ),
                 },
                 "model_error_routing": {
@@ -621,9 +758,23 @@ class BaseClawAdapter:
                         "optional condition-level CLI tools under "
                         "agent_formalizer/tools/<tool>/; pddl_solver mounts "
                         "/usr/local/bin/pddl-solver and a solver-gateway sidecar "
-                        "that calls planning.domains (same backend as run_solver.py)"
+                        "that calls the selected planning.domains-compatible "
+                        "backend (same backend as run_solver.py)"
                         if self.pddl_solver_tool_enabled()
                         else "none"
+                    ),
+                    "solver_backend": (
+                        {
+                            "mode": self.solver_backend(),
+                            "host_base_url": self.solver_upstream_base(
+                                containerized=False
+                            ),
+                            "container_base_url": self.solver_upstream_base(
+                                containerized=True
+                            ),
+                        }
+                        if self.pddl_solver_tool_enabled()
+                        else None
                     ),
                     "evidence": (
                         "agent_tools in resolved config, tool gateway status, "
@@ -671,6 +822,14 @@ class BaseClawAdapter:
         if self.resolved_config is not None:
             value["resolved_semantics"] = self.resolved_config.raw
             value["resolved_config_sha256"] = self.resolved_config.sha256
+            timing = self.resolved_config.raw["resolved"].get("external_call_timing")
+            if timing:
+                value["external_call_timing"] = {
+                    "policy": timing,
+                    "implementation": "host settlement + versioned native deadline runtime",
+                    "evidence": ["logical_deadline_manifest.json", "gateway/logical_time.jsonl"],
+                    "physical_clocks_modified": False,
+                }
         return value
 
     def runtime_info(self) -> dict:

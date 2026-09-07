@@ -1,0 +1,88 @@
+{
+  "case": "p70",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 87,
+    "init": 174,
+    "goal": 35,
+    "semantic_items": 296
+  },
+  "before": {
+    "objects_covered": 75,
+    "init_covered": 92,
+    "goal_covered": 35,
+    "missing": 22,
+    "ambiguous": 72,
+    "contradictory": 0,
+    "over_generated": 78
+  },
+  "after": {
+    "objects_covered": 87,
+    "init_covered": 174,
+    "goal_covered": 35,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "The packages are labeled from obj11 to obj123, the trucks are labeled from tru1 to tru12, and the airplanes are labeled apn1, apn2, and apn3.",
+      "revised_text": "For each X from 1 to 12, the three packages are labeled objX1, objX2, and objX3; the trucks are labeled from tru1 to tru12; and the airplanes are labeled apn1, apn2, and apn3.",
+      "reason_en": "Replaces the package pseudo-range with the exact bounded construction and preserves the truck and airplane declarations.",
+      "reason_zh": "用精确的有界构造替换包裹伪范围，并保留卡车和飞机声明。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 4-90: exact object set",
+        "golden_problem.pddl:lines 93-140 and 189-191: type facts"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "missing_rule",
+      "original_text": "There are also twelve cities, each with two locations: a posX location and an aptX airport, where X is the city number from 1 to 12.",
+      "revised_text": "There are also twelve cities labeled from cit1 to cit12, each with two locations: a posX location and an aptX airport, where X is the city number from 1 to 12.",
+      "reason_en": "Adds the missing cit1-through-cit12 labels; the existing X rule then uniquely links posX and aptX to citX.",
+      "reason_zh": "补充缺失的 cit1 到 cit12 标签，使原有 X 规则能唯一关联 posX、aptX 与 citX。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 141-188: city, location, and airport facts",
+        "golden_problem.pddl:lines 243-266: location-to-city facts"
+      ]
+    },
+    {
+      "id": 3,
+      "category": "missing_rule",
+      "original_text": "Initially, each truck is located at its corresponding posX location with three corresponding packages, and each airplane is stationed at a specific airport: apn1 is at apt11, apn2 is at apt9, and apn3 is at apt2.",
+      "revised_text": "Initially, for each X from 1 to 12, truX and packages objX1, objX2, and objX3 are at posX, and each airplane is stationed at a specific airport: apn1 is at apt11, apn2 is at apt9, and apn3 is at apt2.",
+      "reason_en": "Defines the complete truck/package suffix correspondence while preserving the already-correct airplane mapping verbatim.",
+      "reason_zh": "明确完整的卡车/包裹后缀对应，并逐字保留原本正确的飞机映射。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 192-242: all airplane, truck, and package (AT ...) facts"
+      ]
+    },
+    {
+      "id": 4,
+      "category": "contradiction",
+      "original_text": "The goal is to move the packages efficiently to these locations using the trucks and airplanes available.",
+      "revised_text": "All 35 listed package destinations must hold simultaneously.",
+      "reason_en": "Removes an unsupported efficiency objective and makes the conjunction of the 35 listed destinations explicit.",
+      "reason_zh": "删除 PDDL 未支持的效率目标，并明确 35 个列出目的地构成合取目标。",
+      "golden_evidence": [
+        "golden_problem.pddl:lines 268-304: conjunctive goal containing 35 atoms"
+      ]
+    }
+  ],
+  "preserved": [
+    "Opening framing and cit1 example",
+    "Exact airplane mapping",
+    "Complete 35-item irregular goal list"
+  ],
+  "verification": {
+    "ledger_rows": 296,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

@@ -95,6 +95,49 @@ class GatewayMonitorTests(unittest.TestCase):
         self.assertIn(["docker", "kill", "agent-container"], commands)
         self.assertFalse(clock.snapshot()["paused"])
 
+    def test_streaming_gateway_exit_after_commit_invalidates_and_kills_agent(self):
+        adapter = SimpleNamespace(
+            resolved_config=SimpleNamespace(
+                model_response_delivery={"mode": "native_streaming"}
+            )
+        )
+        workspace = AgentWorkspace("case", "agent-container", adapter)
+        killed = threading.Event()
+        commands: list[list[str]] = []
+
+        def fake_run(command, **kwargs):
+            commands.append(command)
+            if command[:2] == ["docker", "inspect"]:
+                return subprocess.CompletedProcess(command, 0, "false\n", "")
+            if command[:2] == ["docker", "kill"]:
+                killed.set()
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "pause_requested": False,
+                        "active_committed_streams": 1,
+                        "terminal_infra_error": None,
+                    }
+                )
+            )
+            workspace._gateway_control_path = state_path
+            clock = AttemptClock(10)
+            with patch(
+                "agent_formalizer.workspace.subprocess.run", side_effect=fake_run
+            ):
+                workspace.start_model_gateway_monitor(clock)
+                self.assertTrue(killed.wait(2))
+                workspace.stop_model_gateway_monitor()
+
+        terminal = workspace.gateway_terminal_infra_error()
+        self.assertEqual(terminal["reason"], "post_commit_stream_failure")
+        self.assertEqual(terminal["stream_error_type"], "GatewaySidecarExit")
+        self.assertIn(["docker", "kill", "agent-container"], commands)
+
 
 if __name__ == "__main__":
     unittest.main()

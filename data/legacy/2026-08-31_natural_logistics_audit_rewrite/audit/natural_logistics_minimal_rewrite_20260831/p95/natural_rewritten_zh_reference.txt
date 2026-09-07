@@ -1,0 +1,2 @@
+游戏开始时，若干包裹和运输工具位于不同城市和地点。共有五个包裹：package5、package4、package3、package2、package1；三座城市：city3、city2、city1。city3 有 city3-1 和机场 city3-2，city2 有 city2-1 和机场 city2-2，city1 有 city1-1 和机场 city1-2。另有六辆卡车和一架飞机。truck6 位于 city3-1，truck3 位于机场 city3-2，truck5 位于 city2-1，truck1 位于机场 city2-2，truck4 位于 city1-1，truck2 位于机场 city1-2。plane1 停在机场 city3-2。package5 和 package1 位于 city2-1，package4 位于 city1-2，package3 位于 city1-1，package2 位于机场 city2-2。目标是把 package5 移到机场 city3-2、package4 送到 city2-1、package3 送到 city2-1。
+

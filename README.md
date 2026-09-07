@@ -49,7 +49,9 @@ install it separately and configure its executable through `source/run_val.py`.
 
 OpenAI scripts read their API key from `_private/key.txt`. The API-based Gemini
 scripts load credentials from `_private/.env`; see their module documentation
-for the required variables.
+for the required variables. Logits uses `LOGITS_API_KEY` and explicit dynamic
+model ids such as `logits/Qwen/Qwen3.5-4B`; see the
+[Logits adapter documentation](source/agent_formalizer/logits_adapter.md).
 
 ## Agent Harness Formalizer
 
@@ -62,6 +64,20 @@ workspace access to its model and follows a profile-defined fixed generation
 and reflection sequence in a benchmark-owned host subprocess. It alone skips
 Docker; all native third-party agents retain their isolated container path.
 
+Each execution also writes a content-free
+`analysis_evidence_manifest.json`. It records adapter collection outcomes and
+an integrity inventory of adapter-declared raw session/analysis files using
+relative paths, sizes, SHA-256 hashes, and format-aware record counts. Missing
+analysis is therefore separated from collection failure or an unimplemented
+native capture path without placing reasoning text in metadata.
+
+For the five native harnesses, a shared gateway also stores provider-returned
+readable reasoning in a separate restricted optional artifact. Gemini and
+DeepSeek response formats are currently supported. This observation layer does
+not alter the response seen by a harness, does not decide whether reasoning is
+visible inside the agent, and reports unsupported providers explicitly so new
+provider-specific extractors can be added without model-name allowlists.
+
 ```bash
 bash source/agent_formalizer/install_harnesses.sh all
 
@@ -71,6 +87,36 @@ uv run python source/agent_formalizer/run_formalizer_agent.py \
     --data Heavily_Templated_BlocksWorld-100 \
     --model openai/gpt-5.4-mini \
     --indices 1,2,3
+```
+
+To start a new native-streaming study, select the versioned v5 profile
+explicitly (the default remains buffered v4):
+
+```bash
+uv run python source/agent_formalizer/run_formalizer_agent.py \
+  --claw hermes \
+  --domain blocksworld \
+  --data Heavily_Templated_BlocksWorld-100 \
+  --model openai/gpt-5.4-mini \
+  --benchmark-config source/agent_formalizer/benchmark_profiles/native_safety_streaming_native_clean.json \
+  --indices 1
+```
+
+Streaming v5 preserves real provider progress, records final-batch action-step
+overshoot, and uses up to five clean tries only for directly evidenced
+post-commit infrastructure failures. Its results must not be merged with v4.
+
+For Logits, install the locked translator/tokenizer runtime and use the full
+provider model id:
+
+```bash
+bash source/agent_formalizer/install_harnesses.sh logits
+uv run python source/agent_formalizer/run_formalizer_agent.py \
+  --claw hermes \
+  --domain barman \
+  --data Heavily_Templated_Barman-100 \
+  --model logits/Qwen/Qwen3.5-4B \
+  --indices 1
 ```
 
 The agent runner selects a secret-free named credential profile and reads only
@@ -85,6 +131,40 @@ arguments. Credential profiles, including Vertex project, are operational
 provenance and do not change the experiment config hash, label, or resume
 identity. The versioned default model is
 `google-vertex/gemini-3.1-flash-lite`.
+
+### Campaign prerequisite: local solver
+
+Current bundled benchmark profiles use the local Planutils solver for both an
+enabled agent solver tool and post-generation PDDL evaluation. Starting or
+resuming a campaign therefore includes ensuring one long-lived local solver is
+running under a host process supervisor before the first case. It is shared by
+the campaign; it is not started independently inside every case.
+
+The launch preflight must verify
+`http://127.0.0.1:8769/__benchmark__/health`, confirm the expected image,
+solver allowlist, worker count, planner timeout, and resource limits, and save
+the returned evidence in the campaign output. A failed preflight stops launch;
+it must never trigger an implicit fallback to public planning.domains. See the
+complete [local-solver campaign lifecycle contract](source/local_solver/README.md#campaign-lifecycle-contract).
+
+Bundled solver-as-tool profiles now select the versioned `solver-transient-v1`
+policy: input diagnostics are returned, temporary failures receive transparent
+bounded retries, and unrecoverable infrastructure invalidates the execution.
+This semantic policy changes the resolved experiment hash; old frozen profiles
+retain their previous behavior. See the complete
+[external-call error routing and timing contract](source/agent_formalizer/external_calls/README.md).
+
+Credentials, worker counts, trace collection, result placement, and independent
+infrastructure diagnostics can now be grouped in the strict, secret-free
+[`operational config`](source/agent_formalizer/operational_configs/standard.json)
+and selected with `--operational-config`. Its effective SHA is recorded for
+operations auditing but is excluded from the benchmark config SHA and resume
+identity. The diagnostics stream has structured Google Vertex/Gemini and
+DeepSeek handlers, so provider 429 details can be retained outside experiment
+reports without changing gateway retry or scoring behavior. See the
+[`agent harness documentation`](source/agent_formalizer/README.md#operational-configuration)
+for schema, precedence, storage, redaction, and extension rules.
+
 The agent always remains on an
 internal Docker network. The default permits only model traffic; the optional
 `controlled_web` condition uses a hostname-allowlist proxy and never grants
@@ -148,6 +228,7 @@ uv run python source/run_solver.py --domain DOMAIN --model MODEL --data DATA --i
 where 
 - `DOMAIN`, `MODEL`, `DATA`, `INDEX_START` and `INDEX_END` are the same as above
 - `SOLVER` is optional and is which solver to use (`["lama-first", "dual-bfws-ffparser"]`). The default solver is `"dual-bfws-ffparser"`.
+- Solver requests use the repository's local Planutils service by default. Start it as described in `source/local_solver/README.md`; pass `--solver-backend public` only when intentionally using public planning.domains.
 
 output will be written in `/outputs/llm-as-formalizer/DOMAIN/DATA/MODEL/`
 

@@ -1,0 +1,53 @@
+{
+  "case": "p37",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 51,
+    "init": 102,
+    "goal": 20,
+    "semantic_items": 173
+  },
+  "before": {
+    "objects_covered": 51,
+    "init_covered": 95,
+    "goal_covered": 20,
+    "missing": 0,
+    "ambiguous": 7,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 51,
+    "init_covered": 102,
+    "goal_covered": 20,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "each containing a location and an airport",
+      "revised_text": "each containing two locations, a position and an airport",
+      "reason_en": "Explicitly states that each airport is also a location.",
+      "reason_zh": "明确说明每个机场同时也是地点。",
+      "golden_evidence": [
+        "golden_problem.pddl:92-105: (LOCATION POS1) through (LOCATION APT7)",
+        "golden_problem.pddl:106-112: (AIRPORT APT1) through (AIRPORT APT7)"
+      ]
+    }
+  ],
+  "preserved": [
+    "All exact package, truck, city, airplane, initial-location, and goal enumerations.",
+    "The original paragraph structure and tone."
+  ],
+  "verification": {
+    "ledger_rows": 173,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

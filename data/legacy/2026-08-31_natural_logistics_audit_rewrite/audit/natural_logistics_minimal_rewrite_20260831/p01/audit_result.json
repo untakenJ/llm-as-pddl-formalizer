@@ -1,0 +1,40 @@
+{
+  "case": "p01",
+  "status": "COMPLETE",
+  "decision": "NO REWRITE REQUIRED",
+  "counts": {
+    "objects": 15,
+    "init": 30,
+    "goal": 4,
+    "semantic_items": 49
+  },
+  "before": {
+    "objects_covered": 15,
+    "init_covered": 30,
+    "goal_covered": 4,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "after": {
+    "objects_covered": 15,
+    "init_covered": 30,
+    "goal_covered": 4,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [],
+  "preserved": [
+    "All wording and paragraph structure; the original has exact atomic coverage.",
+    "The compact package, city-location, and goal lists; each has a unique finite expansion."
+  ],
+  "verification": {
+    "ledger_rows": 49,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

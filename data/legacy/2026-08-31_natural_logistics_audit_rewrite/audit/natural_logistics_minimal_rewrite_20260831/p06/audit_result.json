@@ -1,0 +1,66 @@
+{
+  "case": "p06",
+  "status": "COMPLETE",
+  "decision": "REWRITE REQUIRED",
+  "counts": {
+    "objects": 22,
+    "init": 44,
+    "goal": 8,
+    "semantic_items": 74
+  },
+  "before": {
+    "objects_covered": 22,
+    "init_covered": 44,
+    "goal_covered": 8,
+    "missing": 0,
+    "ambiguous": 1,
+    "contradictory": 1,
+    "over_generated": 14
+  },
+  "after": {
+    "objects_covered": 22,
+    "init_covered": 44,
+    "goal_covered": 8,
+    "missing": 0,
+    "ambiguous": 0,
+    "contradictory": 0,
+    "over_generated": 0
+  },
+  "changes": [
+    {
+      "id": 1,
+      "category": "ambiguity",
+      "original_text": "nine packages labeled from obj11 to obj33",
+      "revised_text": "nine packages labeled obj11, obj12, obj13, obj21, obj22, obj23, obj31, obj32, and obj33",
+      "reason_en": "The pseudo-range does not uniquely construct the nine golden labels and can imply 14 non-golden labels.",
+      "reason_zh": "该伪范围无法唯一构造九个黄金标签，并可能暗示 14 个非黄金标签。",
+      "golden_evidence": [
+        "golden_problem.pddl:3: (:objects ... obj33 obj32 obj31 obj23 obj22 obj21 obj13 obj12 obj11)",
+        "golden_problem.pddl:4-5: (package obj11) ... (package obj33)"
+      ]
+    },
+    {
+      "id": 2,
+      "category": "contradiction",
+      "original_text": "obj33 remains at apt3",
+      "revised_text": "obj33 is moved to apt3",
+      "reason_en": "The persistence word conflicts with obj33's golden initial location at pos3; only its goal is apt3.",
+      "reason_zh": "该持续状态用词与 obj33 在 pos3 的黄金初始位置冲突；只有其目标位置是 apt3。",
+      "golden_evidence": [
+        "golden_problem.pddl:11: (at obj33 pos3)",
+        "golden_problem.pddl:14-15: (at obj33 apt3)"
+      ]
+    }
+  ],
+  "preserved": [
+    "Original sentence order, tone, punctuation, and all unaffected wording.",
+    "All city/location mappings and vehicle facts.",
+    "All initial co-location groups and seven unaffected goal mappings."
+  ],
+  "verification": {
+    "ledger_rows": 74,
+    "all_items_covered": true,
+    "all_correspondences_unique": true,
+    "no_over_generation": true
+  }
+}

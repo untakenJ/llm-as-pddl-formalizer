@@ -1,0 +1,1 @@
+在物流游戏中，我们从以下场景开始：有六个包裹，标记为 obj11、obj12、obj13、obj21、obj22 和 obj23。我们有两辆卡车 tru1 和 tru2，以及两个城市 cit1 和 cit2。城市中有若干地点：pos1 和 apt1 位于 cit1，pos2 和 apt2 位于 cit2。apt1 和 apt2 都被指定为机场。此外，有一架飞机 apn1，目前位于机场 apt1。卡车 tru1 停在地点 pos1，包裹 obj11、obj12 和 obj13 也在那里。与此同时，卡车 tru2 停在地点 pos2，包裹 obj21、obj22 和 obj23 位于那里。目标是调运包裹，使 obj23 和 obj11 都位于 pos1，包裹 obj22 和 obj21 被运到 apt2，并将 obj12 运到 apt1。
