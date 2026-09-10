@@ -6,12 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_formalizer.execution_validity import (
+from agent_formalizer.results.execution_validity import (
     EVENTS_NAME,
     STATE_NAME,
     ExecutionValidityError,
     append_manual_event,
     refresh_cell_state,
+    repair_identity_migration_authorized,
     selected_artifact_paths_for_model_dir,
     selected_attempt,
     write_execution_result,
@@ -19,6 +20,79 @@ from agent_formalizer.execution_validity import (
 
 
 class ExecutionValidityTests(unittest.TestCase):
+    def _automatic_invalid(self, cell):
+        directory = cell / "p01" / "executions" / "execution-001"
+        directory.mkdir(parents=True)
+        evidence = directory / "infra_invalid.json"
+        evidence.write_text(json.dumps({"attempt_valid": False, "execution_try": 1}))
+        (cell / "p01" / "invalid_attempt.json").write_text(json.dumps({
+            "task_input_sha256": "a" * 64, "runtime_identity_sha256": "b" * 64,
+            "resolved_config_sha256": "config-hash", "attempt_valid": False,
+            "status": "infra_invalid",
+        }))
+        refresh_cell_state(cell, expected_problems=["p01"], attempts_per_case=1)
+        return evidence
+
+    def _authorize(self, cell, evidence, **overrides):
+        options = dict(action="authorize_repair", problem="p01", attempt_index=1,
+            execution_try=1, operator="owner", reason_code="tool_infra.checkpoint_lifecycle",
+            reason="Owner-approved operational repair, unchanged task/profile",
+            evidence_paths=[evidence], result_visibility="score_visible",
+            timestamp="2026-09-09T00:00:00Z", replacement_task_input_sha256="a" * 64,
+            replacement_runtime_identity_sha256="c" * 64)
+        options.update(overrides)
+        return append_manual_event(cell, **options)
+
+    def test_authorize_automatic_invalid_preserves_terminal_and_audits_new_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cell = Path(tmp)
+            evidence = self._automatic_invalid(cell)
+            original = evidence.read_bytes()
+            _, state = self._authorize(cell, evidence)
+            record = state["problems"]["p01"]["attempts"]["1"]["executions"]["1"]
+            self.assertFalse(record["automatic_valid"])
+            self.assertFalse(record["effective_valid"])
+            self.assertTrue(repair_identity_migration_authorized(state, "p01", 1,
+                task_input_sha256="a" * 64, runtime_identity_sha256="c" * 64))
+            with self.assertRaisesRegex(ExecutionValidityError, "mixed runtime"):
+                refresh_cell_state(cell, runtime_identity_sha256="d" * 64)
+            refresh_cell_state(cell, runtime_identity_sha256="c" * 64)
+            execution, completion = self._execution(cell, 2, task_hash="a" * 64)
+            completion["runtime_identity_sha256"] = "c" * 64
+            # Simulate the first valid completion emitted by the orchestrator.
+            (execution / "execution_result.json").write_text(json.dumps(completion))
+            (cell / "p01" / "completion.json").write_text(json.dumps(completion))
+            (cell / "p01" / "metadata.json").write_text(json.dumps(completion))
+            state = refresh_cell_state(cell)
+            self.assertEqual(state["cell"]["runtime_identity_sha256"], "b" * 64)
+            self.assertEqual(state["problems"]["p01"]["attempts"]["1"]["selected_execution"], 2)
+            self.assertEqual(evidence.read_bytes(), original)
+
+    def test_repair_authorization_rejects_changed_task_and_duplicate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cell = Path(tmp)
+            evidence = self._automatic_invalid(cell)
+            with self.assertRaisesRegex(ExecutionValidityError, "exact task"):
+                self._authorize(cell, evidence, replacement_task_input_sha256="d" * 64)
+            self._authorize(cell, evidence)
+            with self.assertRaisesRegex(ExecutionValidityError, "already has"):
+                self._authorize(cell, evidence)
+
+    def test_repair_authorization_cannot_resample_valid_execution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cell = Path(tmp)
+            execution, _ = self._execution(cell, 1, task_hash="a" * 64)
+            with self.assertRaisesRegex(ExecutionValidityError, "automatically-invalid"):
+                self._authorize(cell, execution / "execution_result.json")
+
+    def test_repair_authorization_cannot_target_invalid_with_valid_alternative(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cell = Path(tmp)
+            evidence = self._automatic_invalid(cell)
+            self._execution(cell, 2, task_hash="a" * 64)
+            with self.assertRaisesRegex(ExecutionValidityError, "no valid execution"):
+                self._authorize(cell, evidence)
+
     def _completion(
         self,
         execution_try: int,

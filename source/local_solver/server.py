@@ -51,7 +51,7 @@ class ServerConfig:
     memory_swap: str = "4096m"
     cpus: float = 1.0
     pids_limit: int = 256
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = 90.0
     image: str = DEFAULT_IMAGE
     worker_security: str = "privileged"
     task_retention: int = 10000
@@ -558,7 +558,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--memory-swap", default="4096m")
     parser.add_argument("--cpus", type=float, default=1.0)
     parser.add_argument("--pids-limit", type=int, default=256)
-    parser.add_argument("--timeout", type=float, default=60.0, dest="timeout_seconds")
+    parser.add_argument("--timeout", type=float, default=90.0, dest="timeout_seconds")
     parser.add_argument("--image", default=DEFAULT_IMAGE)
     parser.add_argument(
         "--worker-security",

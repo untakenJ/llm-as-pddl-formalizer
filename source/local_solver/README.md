@@ -63,7 +63,7 @@ Defaults:
 - one worker and therefore one simultaneous solve;
 - 4096 MiB memory and no additional swap per worker;
 - one CPU and 256 PIDs per worker;
-- 60 second planner deadline;
+- 90 second planner deadline (owner-approved default update on 2026-09-08);
 - port 8769;
 - only loopback and Docker-private client addresses are accepted.
 - `privileged` worker compatibility, matching the official
@@ -95,7 +95,7 @@ uses `http://host.docker.internal:8769`; the agent container still sees only
 ## Campaign lifecycle contract
 
 For every new or resumed campaign, first resolve and freeze the benchmark
-profile. If its effective `solver_backend` is `local`, the campaign launch has
+profile. If its effective `solver_backend` is `local` or `public_then_local`, the campaign launch has
 the following fixed infrastructure steps:
 
 1. Ensure exactly one compatible, long-lived local solver service is available
@@ -107,6 +107,9 @@ the following fixed infrastructure steps:
    allowed solver set (whose installation service startup has already verified),
    worker count, planner timeout, worker security mode, and CPU/memory/PID limits
    against the campaign's intended operational setup.
+   For `public_then_local`, require `timeout_seconds: 90` (start the service with
+   `--timeout 90`); the wrapper rejects a legacy 60-second service. Preserve any
+   service already used by another frozen study instead of hot-reconfiguring it.
 3. Save the complete secret-free health response with a UTC observation time as
    `<campaign-output>/local_solver_preflight/<UTC-timestamp>.json`. Campaign
    launch notes or the operational manifest should reference this file. This is
@@ -117,6 +120,10 @@ the following fixed infrastructure steps:
    is solver infrastructure failure. Never silently route affected requests to
    public planning.domains and never score evaluator unavailability as an
    incorrect PDDL result.
+   The separately selected `public_then_local` condition is the explicit
+   exception: public recovery may switch to local according to its versioned
+   policy, and an exhausted evaluation is recorded as failed with its infra
+   diagnostic (not relabeled as proven unsolvable).
 5. On resume, repeat the health check and append or preserve new immutable
    preflight evidence rather than overwriting the original observation. A
    supervisor restart is acceptable only when the effective image and resource
@@ -146,6 +153,16 @@ Use `--solver-backend public` to opt into the public planning.domains service
 for a new, separately identified experiment. Custom URLs remain available via
 `--solver-base-url` for host evaluation and `--solver-container-base-url` for
 the per-attempt solver-gateway sidecar.
+
+Use `--solver-backend public_then_local` for the optional remote-first wrapper:
+public native 30-second planner limit, bounded recovery, then local 90-second
+planner limit with its own bounded recovery. Local fallback uses port 8769 at
+the host/container addresses above; the primary URL flags still refer to the
+public phase. Python callers can supply `fallback_base_url` explicitly. This is
+a new experimental condition; the default backend remains local. The standalone
+local service also defaults to 90 seconds; historical 60-second services must be
+explicitly reconfigured only when no other frozen study is using them. See
+[routing, timing, and evidence](../agent_formalizer/external_calls/README.md#optional-public-then-local-solver-wrapper).
 
 The non-agent `sweep_pipeline.py` applies the same default to its formalizer-API
 evaluation stage.

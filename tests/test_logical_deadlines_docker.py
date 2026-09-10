@@ -13,11 +13,13 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
-from agent_formalizer.benchmark_profile import BENCHMARK_PROFILES_DIR, load_benchmark_profile
+from profile_fixtures import HISTORICAL_PROFILES_DIR
+
+from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
 from agent_formalizer.claws import get_adapter
 from agent_formalizer.claws.base import AttemptClock
-from agent_formalizer.config import MODEL_GATEWAY_HOST, MODEL_GATEWAY_PORT
-from agent_formalizer.deadline_integration import ENVIRONMENT_KEYS
+from agent_formalizer.configuration.config import MODEL_GATEWAY_HOST, MODEL_GATEWAY_PORT
+from agent_formalizer.timing.deadline_integration import ENVIRONMENT_KEYS
 from agent_formalizer.workspace import AgentWorkspace
 from test_external_calls_gateway import Backend, SUBMIT, TIMEOUT, PLAN
 
@@ -60,7 +62,39 @@ class ModelBackend(BaseHTTPRequestHandler):
 
 @unittest.skipUnless(os.environ.get("RUN_EXTERNAL_CALLS_DOCKER_TESTS") == "1", "opt-in real Docker/native runtime test")
 class NativeDeadlineDockerTests(unittest.TestCase):
-    def run_solver(self, harness, *, final_delay=0, retry=True, profile_name="native_safety_streaming_solver_as_tool_logical_deadline.json"):
+    def test_python_checkpoint_native_outer_timeouts(self):
+        for harness in ('generic', 'nanobot', 'hermes'):
+            for retry in (True, False):
+                with self.subTest(harness=harness, retry=retry):
+                    self.run_solver(harness, retry=retry, final_delay=0 if retry else 6,
+                                    native_only=True,
+                                    profile_name='native_safety_streaming_solver_as_tool_call_checkpoint.json')
+
+    def test_python_checkpoint_background_waits(self):
+        for harness in ('nanobot', 'hermes'):
+            with self.subTest(harness=harness):
+                self.run_solver(harness, native_path='background',
+                                profile_name='native_safety_streaming_solver_as_tool_call_checkpoint.json')
+
+    def test_python_checkpoint_model_retries_and_native_read_timeouts(self):
+        for harness in ('generic', 'nanobot', 'hermes'):
+            for retry in (True, False):
+                with self.subTest(harness=harness, retry=retry):
+                    self.run_model(retry=retry, final_delay=0 if retry else 2,
+                                   asynchronous=harness == 'nanobot', harness_name=harness,
+                                   profile_name='native_safety_streaming_solver_as_tool_call_checkpoint.json')
+
+    def test_python_checkpoint_hidden_retries(self):
+        for harness in ('generic', 'nanobot', 'hermes'):
+            with self.subTest(harness=harness):
+                self.run_solver(harness, profile_name='native_safety_streaming_solver_as_tool_call_checkpoint.json')
+
+    def test_python_checkpoint_genuine_timeouts(self):
+        for harness in ('generic', 'nanobot', 'hermes'):
+            with self.subTest(harness=harness):
+                self.run_solver(harness, final_delay=5, retry=False, profile_name='native_safety_streaming_solver_as_tool_call_checkpoint.json')
+
+    def run_solver(self, harness, *, final_delay=0, retry=True, native_path=None, native_only=False, profile_name="native_safety_streaming_solver_as_tool_logical_deadline.json"):
         bridge = json.loads(subprocess.check_output(["docker", "network", "inspect", "bridge"], text=True))[0]["IPAM"]["Config"][0]["Gateway"]
         self.assertTrue(ipaddress.ip_address(bridge).is_private)
         backend = ThreadingHTTPServer((bridge, 0), DelayedBackend)
@@ -68,7 +102,7 @@ class NativeDeadlineDockerTests(unittest.TestCase):
         backend.requests = []
         backend.final_delay = final_delay
         threading.Thread(target=backend.serve_forever, daemon=True).start()
-        profile = load_benchmark_profile(BENCHMARK_PROFILES_DIR / profile_name)
+        profile = load_benchmark_profile(HISTORICAL_PROFILES_DIR / profile_name)
         adapter = get_adapter(harness, benchmark_profile=profile, model="openai/gpt-4o-mini", api_key="test-not-real")
         identity = "logical-native-test-" + uuid.uuid4().hex[:12]
         try:
@@ -82,6 +116,8 @@ class NativeDeadlineDockerTests(unittest.TestCase):
                         clock = AttemptClock(30)
                         workspace.start_model_gateway_monitor(clock)
                         command = "cd /workspace && timeout 4 pddl-solver; echo NATIVE_EXIT=$?"
+                        if native_only:
+                            command = "cd /workspace && pddl-solver; echo NATIVE_EXIT=$?"
                         if harness == "generic":
                             code = f"import sys; sys.path.insert(0, {str(adapter.runtime_repo)!r}); from ga import code_run; print(list(code_run({command!r}, code_type='bash', timeout=5, cwd='/workspace', code_cwd='/workspace')))"
                         elif harness == "nanobot":
@@ -91,6 +127,21 @@ class NativeDeadlineDockerTests(unittest.TestCase):
                             code = f"import {{m as run}} from '/usr/lib/node_modules/openclaw/dist/bash-tools.exec-runtime-Cdq-HAHC.js'; const task=await run({json.dumps(options)}); console.log(JSON.stringify(await task.promise));"
                         else:
                             code = f"import subprocess; from tools.environments.local import LocalEnvironment; e=LocalEnvironment(cwd='/workspace'); p=subprocess.Popen({command!r}, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True); print(e._wait_for_process(p, timeout=5))"
+                        if native_path == 'background' and harness == 'hermes':
+                            code = f"import os; from tools.process_registry import ProcessRegistry; r=ProcessRegistry(); s=r.spawn_local({command!r}, cwd='/workspace', env_vars=dict(os.environ)); print(r.wait(s.id, timeout=5))"
+                        elif native_path == 'background' and harness == 'nanobot':
+                            code = f"""import asyncio, os
+from nanobot.agent.tools.exec_session import ExecSessionManager, WriteStdinTool
+async def run():
+    manager=ExecSessionManager()
+    key, first=await manager.start(command={command!r}, cwd='/workspace', env=dict(os.environ),
+        timeout=5, shell_program=None, login=False, yield_time_ms=0, max_output_chars=10000)
+    assert not first.done, first
+    print(await WriteStdinTool(manager=manager)._wait_for_output(session_id=key, chars=None,
+        close_stdin=False, terminate=False, wait_for='NATIVE_EXIT', wait_timeout_ms=5000,
+        max_output_chars=10000))
+asyncio.run(run())
+"""
                         runtime = "node --input-type=module -e" if harness == "openclaw" else f"{shlex.quote(str(adapter.runtime_python))} -c"
                         result = workspace.run_in_container(f"{runtime} {shlex.quote(code)}", timeout=25)
                         workspace.stop_model_gateway_monitor()
@@ -99,7 +150,8 @@ class NativeDeadlineDockerTests(unittest.TestCase):
                         self.assertEqual(result.exit_code, 0, result.stdout + result.stderr)
                         outcome = json.loads((Path(directory) / "gateway/solver_calls/call-0001/outcome.json").read_text())
                         if final_delay:
-                            self.assertIn("NATIVE_EXIT=124", result.stdout)
+                            if not native_only:
+                                self.assertIn("NATIVE_EXIT=124", result.stdout)
                             self.assertNotIn("(move a b)", result.stdout)
                             self.assertEqual(outcome["action"], "native_deadline")
                         else:
@@ -136,13 +188,13 @@ class NativeDeadlineDockerTests(unittest.TestCase):
     def test_openclaw_genuine_native_deadline(self):
         self.run_solver("openclaw", final_delay=5, retry=False)
 
-    def run_model(self, *, retry, final_delay=0, asynchronous=False, openclaw=False, profile_name="native_safety_streaming_solver_as_tool_logical_deadline.json"):
+    def run_model(self, *, retry, final_delay=0, asynchronous=False, openclaw=False, harness_name=None, profile_name="native_safety_streaming_solver_as_tool_logical_deadline.json"):
         bridge = json.loads(subprocess.check_output(["docker", "network", "inspect", "bridge"], text=True))[0]["IPAM"]["Config"][0]["Gateway"]
         backend = ThreadingHTTPServer((bridge, 0), ModelBackend)
         backend.calls, backend.retry, backend.final_delay = 0, retry, final_delay
         threading.Thread(target=backend.serve_forever, daemon=True).start()
-        profile = load_benchmark_profile(BENCHMARK_PROFILES_DIR / profile_name)
-        adapter = get_adapter("openclaw" if openclaw else "nanobot" if asynchronous else "generic", benchmark_profile=profile, model="openai/gpt-4o-mini", api_key="test-not-real")
+        profile = load_benchmark_profile(HISTORICAL_PROFILES_DIR / profile_name)
+        adapter = get_adapter(harness_name or ("openclaw" if openclaw else "nanobot" if asynchronous else "generic"), benchmark_profile=profile, model="openai/gpt-4o-mini", api_key="test-not-real")
         gateway = adapter.model_gateway()
         gateway["upstream_origin"] = f"http://{bridge}:{backend.server_port}"
         identity = "logical-model-test-" + uuid.uuid4().hex[:12]
@@ -240,6 +292,83 @@ class CallCheckpointDockerTests(unittest.TestCase):
     run_model = NativeDeadlineDockerTests.run_model
     profile_name = "native_safety_streaming_solver_as_tool_call_checkpoint.json"
 
+    def test_native_exec_default_background_yield_then_model(self):
+        """Actual default 10 s yield, actual process poll and SDK; healthy solver."""
+        bridge = json.loads(subprocess.check_output(["docker", "network", "inspect", "bridge"], text=True))[0]["IPAM"]["Config"][0]["Gateway"]
+        model = ThreadingHTTPServer((bridge, 0), ModelBackend)
+        solver = ThreadingHTTPServer((bridge, 0), DelayedBackend)
+        model.calls, model.retry, model.final_delay = 0, False, 0
+        solver.requests, solver.responses, solver.final_delay = [], [SUBMIT, PLAN], 13
+        for server in (model, solver):
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+        profile = load_benchmark_profile(HISTORICAL_PROFILES_DIR / self.profile_name)
+        adapter = get_adapter("openclaw", benchmark_profile=profile, model="openai/gpt-4o-mini", api_key="not-real")
+        gateway = adapter.model_gateway()
+        gateway["upstream_origin"] = f"http://{bridge}:{model.server_port}"
+        identity = "checkpoint-background-test-" + uuid.uuid4().hex[:12]
+        try:
+            with tempfile.TemporaryDirectory(prefix="checkpoint-background-evidence-") as directory:
+                workspace = AgentWorkspace(identity, identity, adapter, artifact_dir=Path(directory))
+                try:
+                    with patch.object(adapter, "model_gateway", return_value=gateway), \
+                         patch.object(adapter, "solver_upstream_base", return_value=f"http://{bridge}:{solver.server_port}"), \
+                         patch.object(adapter, "solver_backend", return_value="public"):
+                        workspace.start()
+                    workspace.write_text_file("/workspace/domain.pddl", "(domain bytes)")
+                    workspace.write_text_file("/workspace/problem.pddl", "(problem bytes)")
+                    clock = AttemptClock(40)
+                    workspace.start_model_gateway_monitor(clock)
+                    code = """
+import {r as createExecTool, t as createProcessTool} from '/usr/lib/node_modules/openclaw/dist/bash-tools-Bvyb7cWG.js';
+import OpenAI from '/usr/lib/node_modules/openclaw/node_modules/openai/index.mjs';
+import deadlines from '/opt/benchmark-deadlines/node-checkpoints.cjs';
+const runDeadline=deadlines.setTimeout(()=>{throw new Error('native run timeout')},35000);
+const exec=createExecTool({host:'gateway',security:'full',ask:'off'});
+const process=createProcessTool();
+const start=Date.now();
+// Neither background nor yieldMs is specified by the agent.
+const initial=await exec.execute('exec-1',{command:'cd /workspace && pddl-solver',timeout:30});
+const yieldElapsed=Date.now()-start;
+if(initial.details.status!=='running') throw new Error(JSON.stringify(initial));
+const client=new OpenAI({apiKey:'not-real',baseURL:'http://model-gateway:8766/v1',maxRetries:0});
+const answers=await Promise.all([1,2].map(async index=>{
+  const stream=await client.chat.completions.create({model:'gpt-4o-mini',stream:true,
+  messages:[{role:'user',content:JSON.stringify({index,initial})}]});
+  let answer=''; for await(const chunk of stream) answer+=chunk.choices[0]?.delta?.content??'';
+  return answer;
+}));
+let final;
+do { final=await process.execute('poll-1',{action:'poll',sessionId:initial.details.sessionId,timeout:1000}); }
+while(final.details.status==='running');
+console.log(JSON.stringify({yieldElapsed,elapsed:Date.now()-start,answers,initial,final}));
+deadlines.clearTimeout(runDeadline);
+"""
+                    result = workspace.run_in_container("node --input-type=module -e " + shlex.quote(code), timeout=40)
+                    workspace.stop_model_gateway_monitor()
+                    self.assertIsNone(workspace.gateway_terminal_infra_error(), result.stdout + result.stderr)
+                    self.assertIsNone(workspace.gateway_monitor_error(), result.stdout + result.stderr)
+                    self.assertEqual(result.exit_code, 0, result.stdout + result.stderr)
+                    value = json.loads(result.stdout)
+                    self.assertGreater(value["yieldElapsed"], 9900)
+                    self.assertLess(value["yieldElapsed"], 12500)
+                    self.assertEqual(value["answers"], ["hello", "hello"])
+                    self.assertIn("(move a b)", json.dumps(value["final"]))
+                    self.assertEqual(model.calls, 2)
+                    self.assertEqual(len(solver.requests), 2)
+                    ledger = workspace.model_gateway_ledger()
+                    self.assertEqual(len({row["timing_control_call_id"] for row in ledger}), 2)
+                    self.assertTrue(all(row["external_call_timing_mode"] == "running_wall" for row in ledger))
+                    solver_request = json.loads((Path(directory) / "gateway/solver_calls/call-0001/request.json").read_text())
+                    self.assertIn("timing_control_call_id", solver_request)
+                    self.assertLess(clock.snapshot()["infra_pause_seconds"], 1)
+                    print("native background checkpoint:", {"wall_ms": value["elapsed"], "yield_ms": value["yieldElapsed"], "clock": clock.snapshot()})
+                finally:
+                    workspace.cleanup()
+        finally:
+            for server in (model, solver):
+                server.shutdown()
+                server.server_close()
+
     def test_model_retry_same_native_continuation(self):
         self.run_model(retry=True, openclaw=True, profile_name=self.profile_name)
 
@@ -298,7 +427,7 @@ class CallCheckpointDockerTests(unittest.TestCase):
         solver.responses = [SUBMIT, TIMEOUT, SUBMIT, PLAN]
         for server in (model, solver):
             threading.Thread(target=server.serve_forever, daemon=True).start()
-        profile = load_benchmark_profile(BENCHMARK_PROFILES_DIR / self.profile_name)
+        profile = load_benchmark_profile(HISTORICAL_PROFILES_DIR / self.profile_name)
         adapter = get_adapter("openclaw", benchmark_profile=profile, model="openai/gpt-4o-mini", api_key="not-real")
         gateway = adapter.model_gateway()
         gateway["upstream_origin"] = f"http://{bridge}:{model.server_port}"

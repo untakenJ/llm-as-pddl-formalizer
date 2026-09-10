@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from agent_formalizer.config import MODEL_GATEWAY_SCRIPT
+from agent_formalizer.configuration.config import MODEL_GATEWAY_SCRIPT
 
 # model_gateway is intentionally a standalone sidecar entrypoint whose policy
 # is validated at import. Supply a harmless unit-test policy for direct access
@@ -25,7 +25,7 @@ os.environ.setdefault("PDDL_GATEWAY_UPSTREAM_ORIGIN", "http://127.0.0.1:9")
 os.environ.setdefault("PDDL_GATEWAY_API_KEY", "observer-unit-test")
 os.environ.setdefault("PDDL_GATEWAY_ALLOWED_MODELS", '["gpt-test"]')
 os.environ.setdefault("PDDL_GATEWAY_ALLOWED_PATH_PREFIXES", '["/v1"]')
-from agent_formalizer.model_gateway import StreamToolObserver
+from agent_formalizer.gateways.model_gateway import StreamToolObserver
 
 
 def _free_port() -> int:
@@ -310,7 +310,7 @@ class StreamObserverTests(unittest.TestCase):
 
     def test_sse_observer_buffer_is_bounded(self):
         observer = StreamToolObserver("text/event-stream")
-        from agent_formalizer.model_gateway import (
+        from agent_formalizer.gateways.model_gateway import (
             STREAM_EVENT_BUFFER_BYTES,
             StreamObservationError,
         )

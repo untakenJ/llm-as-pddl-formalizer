@@ -18,13 +18,13 @@ from agent_formalizer.claws.common import (
     PythonRuntimeMixin,
     safe_component,
 )
-from agent_formalizer.config import (
+from agent_formalizer.configuration.config import (
     CONTAINER_WORKSPACE,
     GENERIC_BENCHMARK_STATE_DIR,
     GENERIC_ENV_PATH,
     GENERIC_REPO_PATH,
 )
-from agent_formalizer.optional_evidence import inspect_tagged_response_logs
+from agent_formalizer.results.optional_evidence import inspect_tagged_response_logs
 from agent_formalizer.result_types import AgentResult
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,7 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             raise RuntimeError(
                 "GenericAgent runtime is incomplete: "
                 + ", ".join(missing)
-                + ". Run: bash source/agent_formalizer/install_harnesses.sh generic"
+                + ". Run: bash source/agent_formalizer/runtime/install_harnesses.sh generic"
             )
 
     def container_run_args(self, instance_id: str) -> list[str]:
@@ -277,7 +277,7 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         return value
 
     def runtime_info(self) -> dict:
-        from agent_formalizer.provenance import git_info
+        from agent_formalizer.results.provenance import git_info
 
         return {
             **super().runtime_info(),
@@ -286,7 +286,7 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         }
 
     def skills_info(self) -> dict:
-        from agent_formalizer.provenance import file_manifest
+        from agent_formalizer.results.provenance import file_manifest
 
         paths = [
             path for path in (self.runtime_repo / "memory").glob("**/*")

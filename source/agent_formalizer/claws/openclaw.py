@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from agent_formalizer.config import (
+from agent_formalizer.configuration.config import (
     MODEL_GATEWAY_HOST,
     MODEL_GATEWAY_PORT,
     OPENCLAW_BENCHMARK_STATE_DIR,
@@ -56,7 +56,7 @@ from agent_formalizer.claws.base import (
     run_process_with_attempt_clock,
 )
 from agent_formalizer.claws.common import provider_spec, google_vertex_settings, split_model_id
-from agent_formalizer.optional_evidence import inspect_json_analysis_fields
+from agent_formalizer.results.optional_evidence import inspect_json_analysis_fields
 from agent_formalizer.result_types import AgentResult
 
 logger = logging.getLogger(__name__)
@@ -292,7 +292,7 @@ class OpenClawAdapter(BaseClawAdapter):
         return value
 
     def runtime_info(self) -> dict:
-        from agent_formalizer.provenance import run_text
+        from agent_formalizer.results.provenance import run_text
 
         return {
             **super().runtime_info(),
@@ -309,7 +309,7 @@ class OpenClawAdapter(BaseClawAdapter):
         }
 
     def skills_info(self) -> dict:
-        from agent_formalizer.provenance import file_manifest
+        from agent_formalizer.results.provenance import file_manifest
 
         root = Path(OPENCLAW_MODULE_DIR)
         paths = [
@@ -737,9 +737,20 @@ class OpenClawAdapter(BaseClawAdapter):
             except RuntimeError:
                 return
         try:
+            cleanup_command = ["chmod", "-R", "a+rwX", "/root/.openclaw", "/workspace"]
+            if self.resolved_config.skill_bundle.skills:
+                from agent_formalizer.configuration.skill_library import CONTAINER_ROOT
+
+                # Do not chmod the experimental read-only mount. Everything
+                # else keeps the existing teardown permission restoration.
+                cleanup_command = [
+                    "find", "/root/.openclaw", "/workspace",
+                    "-path", CONTAINER_ROOT, "-prune", "-o",
+                    "-exec", "chmod", "a+rwX", "{}", "+",
+                ]
             result = self._run_container_cleanup_command(
                 container_name,
-                ["chmod", "-R", "a+rwX", "/root/.openclaw", "/workspace"],
+                cleanup_command,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.warning(

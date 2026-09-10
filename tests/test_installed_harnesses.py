@@ -14,8 +14,12 @@ from agent_formalizer.claws.nanobot import NanoBotAdapter
 from agent_formalizer.claws.openclaw import OpenClawAdapter
 from agent_formalizer.claws.zeroclaw import ZeroClawAdapter
 from agent_formalizer.claws import get_adapter
-from agent_formalizer.runtime_lock import validate_runtime_lock
-from agent_formalizer.config import (
+from agent_formalizer.runtime.runtime_lock import (
+    load_runtime_lock, observe_logits_transport, validate_runtime_lock,
+)
+from agent_formalizer.configuration.config import (
+    LOGITS_BRIDGE_ENV_PATH,
+    LOGITS_MODEL_ASSETS_ROOT,
     GENERIC_ENV_PATH,
     GENERIC_REPO_PATH,
     HERMES_ENV_PATH,
@@ -40,6 +44,14 @@ class InstalledHarnessTests(unittest.TestCase):
 
     def tearDown(self):
         self.key_patch.stop()
+
+    def test_installed_logits_transport_matches_lock(self):
+        require_path(LOGITS_BRIDGE_ENV_PATH / "bin" / "python")
+        require_path(LOGITS_MODEL_ASSETS_ROOT)
+        self.assertEqual(
+            observe_logits_transport(),
+            load_runtime_lock()["provider_transports"]["logits"],
+        )
 
     def test_all_installed_runtime_closures_match_lock(self):
         for name in ("hermes", "nanobot", "zeroclaw", "generic", "openclaw"):

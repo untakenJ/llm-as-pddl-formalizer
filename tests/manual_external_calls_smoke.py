@@ -12,7 +12,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from agent_formalizer.config import MODEL_GATEWAY_SCRIPT, ROOT_DIR
+from agent_formalizer.configuration.config import MODEL_GATEWAY_SCRIPT, ROOT_DIR
 from agent_formalizer.external_calls.control import write_json
 from agent_formalizer.external_calls.solver import solve
 from agent_formalizer.tools.solver.remote_client import solver_failure

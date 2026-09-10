@@ -9,14 +9,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agent_formalizer.benchmark_profile import canonical_sha256
+from agent_formalizer.configuration.benchmark_profile import canonical_sha256
 from agent_formalizer.claws.generic import GenericAgentAdapter
 from agent_formalizer.claws.hermes import HermesAdapter
 from agent_formalizer.claws.minimum import MinimumAgentAdapter
 from agent_formalizer.claws.nanobot import NanoBotAdapter
 from agent_formalizer.claws.openclaw import OpenClawAdapter
 from agent_formalizer.claws.zeroclaw import ZeroClawAdapter
-from agent_formalizer.optional_evidence import (
+from agent_formalizer.results.optional_evidence import (
     build_analysis_evidence_manifest,
     inspect_json_analysis_fields,
     inventory_raw_evidence,
@@ -25,7 +25,7 @@ from agent_formalizer.orchestrator import (
     _ensure_uncollected_analysis_manifest,
     _record_optional_evidence,
 )
-from agent_formalizer.provider_reasoning import ProviderReasoningRecorder
+from agent_formalizer.results.provider_reasoning import ProviderReasoningRecorder
 from agent_formalizer.util import Tracer
 
 

@@ -250,6 +250,11 @@ class BaseClawAdapter:
             else self._solver_host_base_url
         )
 
+    def solver_fallback_base(self, *, containerized: bool) -> str | None:
+        from local_solver import fallback_url_for_backend
+
+        return fallback_url_for_backend(self.solver_backend(), containerized=containerized)
+
     def agent_tools(self) -> list[str]:
         if self.resolved_config is None:
             return []
@@ -297,7 +302,7 @@ class BaseClawAdapter:
 
     def validate_runtime(self) -> None:
         """Fail early when the harness runtime or credentials are unavailable."""
-        from agent_formalizer.deadline_integration import validate
+        from agent_formalizer.timing.deadline_integration import validate
         validate(self)
 
     def container_run_args(self, instance_id: str) -> list[str]:
@@ -442,7 +447,7 @@ class BaseClawAdapter:
 
     def analysis_evidence_spec(self) -> dict:
         """Declare native exposure and adapter persistence semantics."""
-        from agent_formalizer.optional_evidence import default_analysis_evidence_spec
+        from agent_formalizer.results.optional_evidence import default_analysis_evidence_spec
 
         return default_analysis_evidence_spec()
 
@@ -515,10 +520,10 @@ class BaseClawAdapter:
         self, domain_description: str, problem_description: str
     ) -> str:
         """Render the exact task message transported to this harness."""
-        from agent_formalizer.prompt import build_prompt
+        from agent_formalizer.prompts.prompt import build_prompt
 
         contract = self.resolved_config.raw["resolved"]["artifact_contract"]
-        return build_prompt(
+        prompt = build_prompt(
             domain_description,
             problem_description,
             template_path=None,
@@ -526,6 +531,8 @@ class BaseClawAdapter:
             problem_output_name=contract["workspace_problem_file"],
             agent_tools=self.resolved_config.agent_tools,
         )
+        bundle = self.resolved_config.skill_bundle
+        return prompt + bundle.catalog() if bundle.skills else prompt
 
     def prompt_template(self) -> Path | None:
         """Prompt template override; None means prompts/default.txt."""
@@ -626,6 +633,8 @@ class BaseClawAdapter:
             if self.resolved_config is not None
             else None
         )
+        checkpoint = bool(self.resolved_config and
+                          self.resolved_config.raw['resolved'].get('external_call_timing') == 'call-checkpoint-v1')
         return {
             "config_name": (
                 self.resolved_config.label if self.resolved_config is not None else None
@@ -650,6 +659,9 @@ class BaseClawAdapter:
                 "harness_execution_timeout_seconds": {
                     "resolved_value": self.timeout,
                     "implementation": (
+                        "host call-boundary business-time settlement; retained native continuation; "
+                        "hidden external retries excluded; native healthy concurrency remains running"
+                        if checkpoint else
                         "runner active-time deadline from native harness startup until native "
                         "harness exit; benchmark-owned provider transient retry pauses the "
                         "agent container and clock; complete container termination on deadline"
@@ -799,6 +811,13 @@ class BaseClawAdapter:
                         "per-request override ledger"
                     ),
                 },
+                **({"external_call_timing": {
+                    "resolved_value": "call-checkpoint-v1",
+                    "implementation": "named, version-checked native cancellation sites; original request/continuation retained",
+                    "native_fields": "per-harness coverage in logical_deadline_manifest.json",
+                    "evidence": ["logical_deadline_manifest.json", "gateway/call_checkpoints.jsonl", "model_call_ledger.jsonl"],
+                    "limits": "actual unsafe concurrent recovery invalidates; no filesystem or committed-stream rollback",
+                }} if checkpoint else {}),
             },
         }
 
@@ -827,7 +846,8 @@ class BaseClawAdapter:
                 value["external_call_timing"] = {
                     "policy": timing,
                     "implementation": "host settlement + versioned native deadline runtime",
-                    "evidence": ["logical_deadline_manifest.json", "gateway/logical_time.jsonl"],
+                    "evidence": ["logical_deadline_manifest.json",
+                                 "gateway/call_checkpoints.jsonl" if timing == 'call-checkpoint-v1' else "gateway/logical_time.jsonl"],
                     "physical_clocks_modified": False,
                 }
         return value

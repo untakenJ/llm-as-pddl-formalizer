@@ -311,8 +311,8 @@ def build_logits_client(model: str):
     """Build the direct public-REST client used by the API-only pipelines."""
     import atexit
 
-    from agent_formalizer.config import LOGITS_MODEL_ASSETS_ROOT
-    from agent_formalizer.logits_openai_bridge import JsonlLedger, LogitsChatBackend
+    from agent_formalizer.configuration.config import LOGITS_MODEL_ASSETS_ROOT
+    from agent_formalizer.compute_platforms.logits.logits_openai_bridge import JsonlLedger, LogitsChatBackend
 
     cfg = require_logits_api_key_config()
     upstream_model = model.split("/", 1)[1]

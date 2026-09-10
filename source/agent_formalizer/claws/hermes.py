@@ -16,8 +16,8 @@ from agent_formalizer.claws.common import (
     run_captured_agent,
     safe_component,
 )
-from agent_formalizer.config import CONTAINER_WORKSPACE, HERMES_ENV_PATH
-from agent_formalizer.optional_evidence import inspect_sqlite_analysis_fields
+from agent_formalizer.configuration.config import CONTAINER_WORKSPACE, HERMES_ENV_PATH
+from agent_formalizer.results.optional_evidence import inspect_sqlite_analysis_fields
 from agent_formalizer.result_types import AgentResult
 
 logger = logging.getLogger(__name__)
@@ -135,7 +135,7 @@ class HermesAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         }
 
     def skills_info(self) -> dict:
-        from agent_formalizer.provenance import file_manifest
+        from agent_formalizer.results.provenance import file_manifest
 
         packages = sorted(
             (self.runtime_env / "lib").glob("python*/site-packages/hermes_cli")

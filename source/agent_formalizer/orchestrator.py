@@ -11,8 +11,8 @@ import time
 import uuid
 from pathlib import Path
 
-from agent_formalizer.benchmark_profile import canonical_sha256
-from agent_formalizer.config import (
+from agent_formalizer.configuration.benchmark_profile import canonical_sha256
+from agent_formalizer.configuration.config import (
     OUTPUT_DIR,
     ROOT_DIR,
     BASE_IMAGE,
@@ -22,8 +22,8 @@ from agent_formalizer.config import (
     new_runtime_id,
     problem_output_dir,
 )
-from agent_formalizer.prompt import extract_pddl_from_text
-from agent_formalizer.provenance import (
+from agent_formalizer.prompts.prompt import extract_pddl_from_text
+from agent_formalizer.results.provenance import (
     docker_image_info,
     file_manifest,
     git_info,
@@ -32,12 +32,13 @@ from agent_formalizer.provenance import (
     sha256_text,
 )
 from agent_formalizer.result_types import AgentResult, FormalizerResult
-from agent_formalizer.runtime_lock import RuntimeLockMismatch, validate_runtime_lock
+from agent_formalizer.runtime.runtime_lock import RuntimeLockMismatch, validate_runtime_lock
 from agent_formalizer.util import Tracer, format_problem_name, now_iso, run_parallel
 from agent_formalizer.workspace import AgentWorkspace
-from agent_formalizer.minimum_workspace import MinimumHostWorkspace
-from agent_formalizer.optional_evidence import build_analysis_evidence_manifest
-from agent_formalizer.execution_validity import (
+from agent_formalizer.docker.network_resources import NetworkResources, options_from
+from agent_formalizer.claws.minimum.workspace import MinimumHostWorkspace
+from agent_formalizer.results.optional_evidence import build_analysis_evidence_manifest
+from agent_formalizer.results.execution_validity import (
     ExecutionValidityError,
     refresh_cell_state,
     selected_source_path,
@@ -122,11 +123,14 @@ def _adapter_code_sha256() -> str:
         for path in package.glob("**/*")
         if path.is_file()
         and "__pycache__" not in path.parts
-        and path.suffix in {".py", ".json", ".txt", ".sh", ".c", ".js", ".cjs", ".mjs"}
+        and path.suffix in {".py", ".json", ".txt", ".sh", ".c", ".rs", ".js", ".cjs", ".mjs"}
         # Credential registries are operational inputs with their own redacted
         # provenance hash.  Adding/rotating a named profile must not alter the
         # experiment/runtime identity used for labels and resume.
         and path.name != "credential_profiles.json"
+        # Experimental skill payloads have selected-content semantic hashes.
+        # Unselected library files must not change any run's runtime identity.
+        and path.relative_to(package).parts[0] != "skills"
     ]
     return canonical_sha256(file_manifest(paths, root=package))
 
@@ -155,6 +159,11 @@ def _provenance(
 ) -> dict:
     effective = adapter.effective_config()
     skills = adapter.skills_info()
+    bundle = adapter.resolved_config.skill_bundle
+    if bundle.skills:
+        skills = {**skills, "experimental": {
+            **bundle.manifest(), "sha256": bundle.sha256,
+        }}
     materialized_sha256 = canonical_sha256(effective)
     return {
         "schema_version": 2,
@@ -534,6 +543,8 @@ def _run_execution_try(
             image=image,
             artifact_dir=execution_dir,
             diagnostics_plan=diagnostics_plan,
+            network_options=options_from(operational_config),
+            operational_run_id=operational_run_id,
         )
     )
     result = FormalizerResult(
@@ -915,8 +926,11 @@ def _run_execution_try(
         watchdog_stop.set()
         if watchdog_thread is not None and watchdog_thread is not threading.current_thread():
             watchdog_thread.join(timeout=10)
-        workspace.stop_model_gateway_monitor()
-        adapter.end_attempt_clock()
+        try:
+            workspace.stop_model_gateway_monitor()
+            adapter.end_attempt_clock()
+        except Exception:
+            logger.exception("Failed to close clock/monitor; continuing resource cleanup")
         try:
             try:
                 adapter.prepare_agent_cleanup(
@@ -1085,6 +1099,21 @@ def _run_attempt(
         raise RuntimeError(
             f"existing completion identity differs; choose a new config/model label: "
             f"{completion_path}"
+        )
+    previous_invalid_path = attempt_dir / "invalid_attempt.json"
+    previous_invalid = _read_completion(previous_invalid_path) if previous_invalid_path.is_file() else None
+    if (
+        not completion_path.exists()
+        and previous_invalid
+        and previous_invalid.get("runtime_identity_sha256") != runtime_identity_sha256
+        and not repair_identity_migration_authorized(
+            validity_state, problem, attempt_index,
+            task_input_sha256=task_identity["sha256"],
+            runtime_identity_sha256=runtime_identity_sha256,
+        )
+    ):
+        raise ExecutionValidityError(
+            f"automatically-invalid attempt needs an exact authorized repair runtime: {attempt_dir}"
         )
     effective_source = selected_source_path(
         validity_cell_dir, validity_state, problem, attempt_index
@@ -1564,7 +1593,7 @@ def run_batch(
     validity_cell_dir = problem_output_dir(
         root, domain, data, base_label, expected_problems[0] if expected_problems else "p00"
     ).parent
-    refresh_cell_state(
+    validity_state = refresh_cell_state(
         validity_cell_dir,
         expected_problems=expected_problems,
         attempts_per_case=attempts,
@@ -1576,6 +1605,18 @@ def run_batch(
         for problem_number in problem_numbers
         for attempt_index in range(1, attempts + 1)
     ]
+
+    pending_jobs = [
+        job for job in jobs
+        if validity_state.get("problems", {}).get(format_problem_name(job[0]), {})
+        .get("attempts", {}).get(str(job[1]), {}).get("selected_execution") is None
+    ]
+    if pending_jobs and adapter.name != "minimum":
+        # Before worker dispatch and before execution retries/agent clocks.
+        NetworkResources(
+            options=options_from(operational_config),
+            evidence_dir=root / "network_preflight",
+        ).preflight(min(workers, len(pending_jobs)))
 
     def worker(job) -> FormalizerResult:
         problem_number, attempt_index = job

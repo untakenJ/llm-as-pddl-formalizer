@@ -12,7 +12,9 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from agent_formalizer.benchmark_profile import BENCHMARK_PROFILES_DIR, load_benchmark_profile
+from profile_fixtures import HISTORICAL_PROFILES_DIR
+
+from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
 from agent_formalizer.claws import get_adapter
 from agent_formalizer.claws.base import AttemptClock
 from agent_formalizer.workspace import AgentWorkspace
@@ -29,7 +31,7 @@ class DockerSolverRecoveryTests(unittest.TestCase):
         backend.responses = [SUBMIT, TIMEOUT, SUBMIT, PLAN]
         backend.requests = []
         threading.Thread(target=backend.serve_forever, daemon=True).start()
-        profile = load_benchmark_profile(BENCHMARK_PROFILES_DIR / "native_safety_streaming_solver_as_tool.json")
+        profile = load_benchmark_profile(HISTORICAL_PROFILES_DIR / "native_safety_streaming_solver_as_tool.json")
         adapter = get_adapter("openclaw", benchmark_profile=profile, model="openai/gpt-4o-mini", api_key="test-not-real")
         identity = "external-calls-smoke-" + uuid.uuid4().hex[:12]
         try:

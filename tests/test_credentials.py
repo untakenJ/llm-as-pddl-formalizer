@@ -6,9 +6,9 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 
-from agent_formalizer.benchmark_profile import DEFAULT_BENCHMARK_PROFILE
+from agent_formalizer.configuration.benchmark_profile import DEFAULT_BENCHMARK_PROFILE
 from agent_formalizer.claws import get_adapter
-from agent_formalizer.credentials import load_credential_registry
+from agent_formalizer.configuration.credentials import load_credential_registry
 from sweep_agent_pipeline import _freeze_credential_registry
 
 

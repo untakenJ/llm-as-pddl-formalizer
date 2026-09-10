@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_formalizer.config import PREDICTION_TYPE
+from agent_formalizer.configuration.config import PREDICTION_TYPE
 from sweep_agent_pipeline import _invalid_attempt_count, _valid_completion_indices
 
 

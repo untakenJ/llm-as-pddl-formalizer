@@ -1,4 +1,7 @@
 import argparse
+import hashlib
+import json
+import uuid
 import os
 import sys
 import time
@@ -22,8 +25,13 @@ from local_solver import (  # noqa: E402
     DEFAULT_SOLVER_BACKEND,
     SUPPORTED_BACKENDS,
     base_urls_for_backend,
+    fallback_url_for_backend,
 )
-from agent_formalizer.execution_validity import (  # noqa: E402
+from agent_formalizer.external_calls import ExternalCallInvalid  # noqa: E402
+from agent_formalizer.external_calls.solver import POLICY_ID as SOLVER_RECOVERY_POLICY  # noqa: E402
+
+EVALUATION_POLICY = "solver-evaluation-transient-v1"
+from agent_formalizer.results.execution_validity import (  # noqa: E402
     selected_artifact_paths_for_model_dir,
     validity_is_managed_for_model_dir,
 )
@@ -73,9 +81,12 @@ def run_solver(
     solver,
     prediction_type="llm-as-formalizer",
     out_dir_root=None,
-    solver_base_url=SOLVER_BASE_URL,
+    solver_base_url=None,
+    solver_backend=None,
 ):
     """Load generated PDDL files and solve them on the selected backend."""
+    if solver_base_url is None:
+        solver_base_url = base_urls_for_backend(solver_backend or DEFAULT_SOLVER_BACKEND)[0]
     model_name = _model_output_name(model)
 
     out_root = out_dir_root or f'{ROOT_DIR}/output'
@@ -104,12 +115,52 @@ def run_solver(
     with open(problem_path) as f:
         problem_file = f.read()
 
-    return solve_pddl(
-        domain_file,
-        problem_file,
-        solver=solver,
-        base_url=solver_base_url,
-    )
+    backend = solver_backend or DEFAULT_SOLVER_BACKEND
+    request_id = uuid.uuid4().hex
+    evidence_path = problem_dir / f'{problem}_{model_name}_solver_events.jsonl'
+    last_physical = {}
+
+    def event(value):
+        if "physical_attempt" in value and "response" in value:
+            last_physical.clear()
+            last_physical.update(value)
+        # Restricted append-only evaluation evidence, separate from immutable
+        # generation traces/completion and from any agent business clock.
+        fd = os.open(evidence_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, 'a', encoding='utf-8') as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            handle.write(json.dumps({
+                "recorded_at_utc": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                "evaluation_request_id": request_id,
+                "evaluation_policy": EVALUATION_POLICY,
+                "selected_backend": backend, **value,
+            }, ensure_ascii=False) + '\n')
+
+    event({"action": "evaluation_start", "base_url": solver_base_url, "solver": solver,
+           "inputs": {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                      for path in (Path(domain_path), Path(problem_path))}})
+    options = {"recovery_policy": SOLVER_RECOVERY_POLICY, "event": event}
+    if backend == "public_then_local":
+        options["fallback_base_url"] = fallback_url_for_backend(backend)
+    started = time.monotonic()
+    try:
+        ok, result = solve_pddl(domain_file, problem_file, solver=solver,
+                               base_url=solver_base_url, **options)
+    except ExternalCallInvalid as exc:
+        # A bounded controller failure is an evaluator failure, never grounds
+        # to invalidate/replay the selected agent execution. Preserve evidence
+        # even when a task-wait/deadline guard has no formatted diagnostic.
+        diagnostic = exc.diagnostic or json.dumps({
+            "reason": exc.reason, "evidence": exc.evidence,
+            "last_physical_response": last_physical,
+        }, ensure_ascii=False)
+        event({"action": "evaluation_failed", "failure_kind": "infrastructure",
+               "reason": exc.reason, "diagnostic": diagnostic,
+               "physical_wall_seconds": time.monotonic() - started})
+        raise ExternalCallInvalid(exc.reason, diagnostic=diagnostic, evidence=exc.evidence) from exc
+    event({"action": "evaluation_return", "plan_found": ok,
+           "physical_wall_seconds": time.monotonic() - started})
+    return ok, result
 
 
 def _plan_text_from_solver_result(result) -> tuple[bool, str]:
@@ -127,7 +178,8 @@ def _run_solver_one(
     out_root,
     model_name,
     attempts=3,
-    solver_base_url=SOLVER_BASE_URL,
+    solver_base_url=None,
+    solver_backend=None,
 ):
     problem_name = format_problem_name(problem_number)
     print(f"Running {problem_name}", flush=True)
@@ -148,7 +200,13 @@ def _run_solver_one(
                 prediction_type,
                 out_dir_root=out_root,
                 solver_base_url=solver_base_url,
+                **({"solver_backend": solver_backend} if solver_backend is not None else {}),
             )
+        except ExternalCallInvalid as exc:
+            # The selected backend already exhausted its bounded controller(s).
+            # Evaluation records failure, not generation invalidity or another
+            # outer set of 3 x public/local retries.
+            result = f"solver infrastructure failure: {exc.reason}\n{exc.diagnostic}"
         except Exception as exc:
             attempt_errors.append(
                 f"attempt {attempt}/{attempts}: {type(exc).__name__}: {exc}\n"
@@ -192,7 +250,8 @@ def _run_solver_one(
 
 
 def run_solver_batch(domain, model, data, problem_numbers, solver, prediction_type="llm-as-formalizer",
-                     out_dir_root=None, workers=1, solver_base_url=SOLVER_BASE_URL):
+                     out_dir_root=None, workers=1, solver_base_url=None,
+                     solver_backend=None):
     model_name = _model_output_name(model)
     out_root = out_dir_root or f'{ROOT_DIR}/output'
 
@@ -207,6 +266,7 @@ def run_solver_batch(domain, model, data, problem_numbers, solver, prediction_ty
             out_root,
             model_name,
             solver_base_url=solver_base_url,
+            solver_backend=solver_backend,
         )
 
     run_parallel(problem_numbers, _worker, workers=workers)
@@ -235,4 +295,4 @@ if __name__=="__main__":
 
     run_solver_batch(domain=DOMAIN, model=MODEL, data=DATA, problem_numbers=PROBLEM_NUMBERS, solver=SOLVER,
                      prediction_type=PREDICTION_TYPE, out_dir_root=OUT_DIR_ROOT, workers=WORKERS,
-                     solver_base_url=SOLVER_SERVICE_BASE_URL)
+                     solver_base_url=SOLVER_SERVICE_BASE_URL, solver_backend=args.solver_backend)

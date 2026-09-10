@@ -53,17 +53,17 @@ if SOURCE_DIR not in sys.path:
     sys.path.insert(0, SOURCE_DIR)
 
 from agent_formalizer.claws import CLAWS, get_adapter
-from agent_formalizer.benchmark_profile import load_benchmark_profile
-from agent_formalizer.config import (
+from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
+from agent_formalizer.configuration.config import (
     DATASETS,
     DOMAINS,
     agent_model_label,
 )
-from agent_formalizer.credentials import (
+from agent_formalizer.configuration.credentials import (
     load_credential_registry,
 )
 from agent_formalizer.orchestrator import run_batch
-from agent_formalizer.operational_config import (
+from agent_formalizer.configuration.operational_config import (
     load_operational_config,
     safe_operational_component,
 )
@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="model id passed to the claw (default: benchmark profile)")
     p.add_argument("--benchmark-config", default=None,
                    help="JSON benchmark profile (default: bundled "
-                        "benchmark_profiles/native_safety_native_clean.json)")
+                        "configs/benchmark_profiles/native_baseline_v1.json)")
     p.add_argument(
         "--operational-config",
         default=None,
@@ -128,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="base output directory; defaults to {ROOT_DIR}/output")
     p.add_argument("--image", default=None,
                    help="Docker base image to run the agent in "
-                        "(must resolve to the image ID in runtime_lock.json)")
+                        "(must resolve to the image ID in runtime/runtime_lock.json)")
     p.add_argument("--timeout", type=int, default=None,
                    help="agent timeout in seconds (default: benchmark profile)")
     p.add_argument("--max-action-steps", type=int, default=None,

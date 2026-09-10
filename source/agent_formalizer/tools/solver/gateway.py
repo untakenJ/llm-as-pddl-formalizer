@@ -17,6 +17,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
+from contextlib import nullcontext
 
 # Allow ``python3 /opt/.../gateway.py`` with the sibling module mounted
 # next to this file inside the sidecar.
@@ -30,11 +31,13 @@ try:
     from agent_formalizer.external_calls.control import ToolControl, write_json, NativeDeadlineExpired
     from agent_formalizer.external_calls.solver import POLICY_ID
     from agent_formalizer.external_calls.checkpoint import RequestCheckpoint
+    from agent_formalizer.external_calls.solver_fallback import validate_local_health
 except ModuleNotFoundError:
     from external_calls import ExternalCallInvalid
     from external_calls.control import ToolControl, write_json, NativeDeadlineExpired
     from external_calls.solver import POLICY_ID
     from external_calls.checkpoint import RequestCheckpoint
+    from external_calls.solver_fallback import validate_local_health
 
 from remote_client import (  # noqa: E402
     DEFAULT_SOLVER,
@@ -54,6 +57,14 @@ REQUIRE_UPSTREAM_HEALTH = os.environ.get(
     "PDDL_SOLVER_UPSTREAM_HEALTH_REQUIRED", "0"
 ) == "1"
 RECOVERY_POLICY = os.environ.get("PDDL_SOLVER_ERROR_ROUTING") or None
+BACKEND = os.environ.get("PDDL_SOLVER_BACKEND", "single")
+FALLBACK_BASE = os.environ.get("PDDL_SOLVER_FALLBACK_BASE") or None
+if BACKEND not in {"single", "public_then_local"} or (
+    (BACKEND == "public_then_local") != bool(FALLBACK_BASE)
+):
+    raise RuntimeError("invalid explicit solver fallback configuration")
+if FALLBACK_BASE and not RECOVERY_POLICY:
+    raise RuntimeError("solver fallback requires recovery and timing control")
 CONTROL_FILE = os.environ.get("PDDL_SOLVER_CONTROL_FILE")
 CANCEL_FILE = os.environ.get("PDDL_SOLVER_CANCEL_FILE")
 EVIDENCE_DIR = os.environ.get("PDDL_SOLVER_EVIDENCE_DIR")
@@ -74,15 +85,17 @@ if RECOVERY_POLICY:
 
 
 def _upstream_health() -> tuple[bool, dict | str]:
-    if not REQUIRE_UPSTREAM_HEALTH:
+    if not REQUIRE_UPSTREAM_HEALTH and not FALLBACK_BASE:
         return True, {"required": False}
-    url = f"{UPSTREAM_BASE}/__benchmark__/health"
+    url = f"{(FALLBACK_BASE or UPSTREAM_BASE).rstrip('/')}/__benchmark__/health"
     try:
         with urllib.request.urlopen(url, timeout=3) as response:
             raw = response.read().decode("utf-8", errors="replace")
         payload = json.loads(raw) if raw else {}
         if not isinstance(payload, dict) or payload.get("status") != "ok":
             return False, {"url": url, "response": payload}
+        if FALLBACK_BASE:
+            validate_local_health(payload, solver=DEFAULT_PACKAGE)
         return True, {"url": url, "response": payload}
     except Exception as exc:  # noqa: BLE001 - health boundary diagnostic
         return False, f"{type(exc).__name__}: {exc}"
@@ -207,10 +220,12 @@ class SolverGatewayHandler(BaseHTTPRequestHandler):
         if CONTROL is None:
             ok, result = solve_pddl(domain, problem, solver=solver, base_url=UPSTREAM_BASE)
         else:
-            # A timing lease has one owner. Physical retries never re-enter the
-            # logical request counter or the harness's structured tool stream.
-            with State.call_lock:
-                if _cancelled() or CONTROL.state.get("phase") == "invalid":
+            independent = os.environ.get("PDDL_SOLVER_EXTERNAL_CALL_TIMING") == "call-checkpoint-v1"
+            # Legacy escrow has one owner; checkpoints use per-request state.
+            # Do not serialize the native harness's legitimate background work.
+            with (nullcontext() if independent else State.call_lock):
+                control = ToolControl(CONTROL_FILE, cancelled=_cancelled, independent=True) if independent else CONTROL
+                if _cancelled() or control.state.get("phase") == "invalid":
                     self.close_connection = True
                     return
                 evidence = Path(EVIDENCE_DIR) / f"call-{index:04d}"
@@ -220,58 +235,69 @@ class SolverGatewayHandler(BaseHTTPRequestHandler):
                         target = evidence / name
                         target.write_text(contents, encoding="utf-8")
                         target.chmod(0o600)
-                    write_json(evidence / "request.json", {
+                    request_record = {
                         "index": index, "policy": RECOVERY_POLICY, "solver": solver,
                         "upstream": UPSTREAM_BASE, "timestamp": _now(),
                         "domain_sha256": hashlib.sha256(domain.encode()).hexdigest(),
                         "problem_sha256": hashlib.sha256(problem.encode()).hexdigest(),
-                    })
+                    }
+                    if FALLBACK_BASE:
+                        request_record.update(backend=BACKEND, fallback_upstream=FALLBACK_BASE)
+                    write_json(evidence / "request.json", request_record)
 
                     def event(value):
                         path = evidence / "events.jsonl"
                         with open(path, "a", encoding="utf-8") as handle:
                             os.chmod(path, 0o600)
                             handle.write(json.dumps({"timestamp": _now(), **value}, ensure_ascii=False) + "\n")
-                        if value.get("action") == "retry" and checkpoint is not None:
+                        if value.get("action") in {"retry", "fallback"} and checkpoint is not None:
                             checkpoint.discard(value["reason"])
-                            CONTROL.publish(rollback_count=checkpoint.discarded)
+                            control.publish(rollback_count=checkpoint.discarded)
 
                     checkpoint = None
                     if os.environ.get("PDDL_SOLVER_EXTERNAL_CALL_TIMING") == "call-checkpoint-v1":
-                        checkpoint = RequestCheckpoint(json.dumps({"domain": domain, "problem": problem,
-                            "solver": solver, "upstream": UPSTREAM_BASE}, sort_keys=True).encode(), event=event)
-                    CONTROL.begin()
+                        checkpoint_request = {"domain": domain, "problem": problem,
+                                              "solver": solver, "upstream": UPSTREAM_BASE}
+                        if FALLBACK_BASE:
+                            checkpoint_request["fallback_upstream"] = FALLBACK_BASE
+                        checkpoint = RequestCheckpoint(json.dumps(checkpoint_request,
+                            sort_keys=True).encode(), event=event)
+                    control.begin()
+                    request_record["timing_control_call_id"] = control.state["call_id"]
+                    write_json(evidence / "request.json", request_record)
                     charges = []
                     ok, result = solve_pddl(
                         domain, problem, solver=solver, base_url=UPSTREAM_BASE,
                         recovery_policy=RECOVERY_POLICY, event=event,
                         cancelled=_cancelled, charge=charges.append,
+                        **({"fallback_base_url": FALLBACK_BASE} if FALLBACK_BASE else {}),
                     )
                     charged = charges[0] if charges else 0.0  # local argument rejection
                     write_json(evidence / "outcome.json", {
                         "action": "return_candidate", "ok": ok, "charged_seconds": charged,
                         "policy": RECOVERY_POLICY,
                     })
-                    CONTROL.finish(charged)
+                    receipt = control.finish(charged)
                     if checkpoint is not None:
                         checkpoint.commit()
                     write_json(evidence / "outcome.json", {
                         "action": "return", "ok": ok, "charged_seconds": charged,
                         "policy": RECOVERY_POLICY, "host_release_acknowledged": True,
+                        "timing_mode": receipt.get("timing_mode", "isolated_escrow"),
                     })
                 except NativeDeadlineExpired:
                     write_json(evidence / "outcome.json", {
                         "action": "native_deadline", "candidate_discarded": True,
                         "accepted_seconds": charged, "policy": RECOVERY_POLICY,
                     })
-                    CONTROL.publish(phase="native_done")
+                    control.publish(phase="native_done")
                     self.close_connection = True
                     return
                 except ExternalCallInvalid as exc:
                     if exc.reason != "external_call_cancelled":
                         reason = (exc.reason if exc.reason.startswith("external_call_")
                                   else "external_call_unrecoverable")
-                        CONTROL.invalidate(reason, classification=exc.reason)
+                        control.invalidate(reason, classification=exc.reason)
                         write_json(evidence / "outcome.json", {
                             "action": "invalidate", "reason": reason, "classification": exc.reason,
                             "diagnostic": exc.diagnostic, "evidence": exc.evidence,
@@ -279,14 +305,14 @@ class SolverGatewayHandler(BaseHTTPRequestHandler):
                     else:
                         write_json(evidence / "outcome.json", {
                             "action": "cancelled", "reason": exc.reason,
-                            "phase": CONTROL.state.get("phase"),
-                            "charged_seconds": CONTROL.state.get("charged_seconds", 0),
+                            "phase": control.state.get("phase"),
+                            "charged_seconds": control.state.get("charged_seconds", 0),
                         })
                     # Do not publish a synthetic service error into agent context.
                     self.close_connection = True
                     return
                 except Exception as exc:
-                    CONTROL.invalidate("external_call_control_failed", classification=type(exc).__name__)
+                    control.invalidate("external_call_control_failed", classification=type(exc).__name__)
                     self.close_connection = True
                     return
         duration_ms = round((time.monotonic() - started) * 1000, 3)

@@ -7,13 +7,15 @@ import tempfile
 import time
 import unittest
 
-from agent_formalizer.call_checkpoint import CheckpointBroker, POLICY_ID
+from profile_fixtures import HISTORICAL_PROFILES_DIR
+
+from agent_formalizer.timing.call_checkpoint import CheckpointBroker, POLICY_ID
 from agent_formalizer.claws.base import AttemptClock
 from agent_formalizer.external_calls.checkpoint import RequestCheckpoint
-from agent_formalizer.benchmark_profile import BENCHMARK_PROFILES_DIR, load_benchmark_profile
-from agent_formalizer.deadline_integration import validate
+from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
+from agent_formalizer.timing.deadline_integration import validate
 
-RUNTIME = Path(__file__).resolve().parents[1] / "source/agent_formalizer/deadline_runtime/node-checkpoints.cjs"
+RUNTIME = Path(__file__).resolve().parents[1] / "source/agent_formalizer/timing/runtime/node-checkpoints.cjs"
 
 
 class RequestCheckpointTests(unittest.TestCase):
@@ -33,16 +35,15 @@ class RequestCheckpointTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             checkpoint.commit()
 
-    def test_profile_is_separate_and_unsupported_adapters_rejected(self):
+    def test_profile_is_separate_and_five_native_adapters_supported(self):
         from agent_formalizer.claws import get_adapter
-        new = load_benchmark_profile(BENCHMARK_PROFILES_DIR / "native_safety_streaming_solver_as_tool_call_checkpoint.json")
-        old = load_benchmark_profile(BENCHMARK_PROFILES_DIR / "native_safety_streaming_solver_as_tool_logical_deadline.json")
+        new = load_benchmark_profile(HISTORICAL_PROFILES_DIR / "native_safety_streaming_solver_as_tool_call_checkpoint.json")
+        old = load_benchmark_profile(HISTORICAL_PROFILES_DIR / "native_safety_streaming_solver_as_tool_logical_deadline.json")
         self.assertEqual(new.resolve(harness="openclaw").raw["resolved"]["external_call_timing"], POLICY_ID)
         self.assertEqual(old.resolve(harness="openclaw").raw["resolved"]["external_call_timing"], "logical-deadline-v1")
         for harness in ("generic", "nanobot", "hermes", "zeroclaw"):
             adapter = get_adapter(harness, benchmark_profile=new, model="openai/gpt-4o-mini", api_key="not-real")
-            with self.assertRaisesRegex(RuntimeError, "coverage not implemented"):
-                validate(adapter)
+            validate(adapter)
 
 
 class NativeCheckpointTests(unittest.TestCase):
@@ -165,6 +166,53 @@ console.log(JSON.stringify({pairs:25000,ms:performance.now()-start}));
         receipt = self.broker.settle("same", 2)
         self.assertEqual(receipt, self.broker.settle("same", 2))
         self.assertAlmostEqual(before - self.clock.remaining(), 2, delta=0.1)
+
+    def test_busy_native_event_loop_is_not_a_three_second_invalidator(self):
+        child = self.node("console.log('READY'); const end=Date.now()+3300; while(Date.now()<end){}; setTimeout(()=>{},300);")
+        self.assertEqual(child.stdout.readline().strip(), "READY")
+        self.broker.freeze()
+        receipt = self.broker.settle("busy", 0.01)
+        self.broker.resume()
+        self.assertIsNone(self.broker.failure)
+        self.assertGreater(receipt["charged_seconds"], 3)
+        out, err = child.communicate(timeout=4)
+        self.assertEqual(child.returncode, 0, err)
+
+    def test_cyclic_native_context_is_allowed_without_recovery(self):
+        child = self.node("const context={}; context.self=context; runtime.watchContext(context); setTimeout(()=>{},500); console.log('READY');")
+        self.assertEqual(child.stdout.readline().strip(), "READY")
+        self.broker.freeze()
+        self.broker.settle("healthy-cycle", 0.01)
+        self.broker.resume()
+        out, err = child.communicate(timeout=3)
+        self.assertEqual(child.returncode, 0, err)
+
+    def test_no_hidden_128_participant_invalidation_limit(self):
+        # Fill the registry, not the machine with 128 extra Node processes.
+        keys = [f"fixture-{i}" for i in range(128)]
+        with self.broker.clients_lock:
+            self.broker.clients.update({key: {} for key in keys})
+        try:
+            child = self.node("console.log('READY');")
+            out, err = child.communicate(timeout=3)
+            self.assertEqual(child.returncode, 0, err)
+            self.assertEqual(out.strip(), "READY")
+            self.assertIsNone(self.broker.failure)
+        finally:
+            with self.broker.clients_lock:
+                for key in keys:
+                    self.broker.clients.pop(key, None)
+
+    def test_throwing_native_timeout_callback_is_not_a_protocol_failure(self):
+        child = self.node("runtime.setTimeout(()=>{throw new Error('native callback failure')},200); console.log('READY');")
+        self.assertEqual(child.stdout.readline().strip(), "READY")
+        self.broker.freeze()
+        self.broker.settle("native-throw", 0.3)
+        out, err = child.communicate(timeout=3)
+        self.assertNotEqual(child.returncode, 0)
+        self.assertIn("native callback failure", err)
+        self.assertNotIn("checkpoint control failed", err)
+        self.assertIsNone(self.broker.failure)
 
 
 if __name__ == "__main__":

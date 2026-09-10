@@ -31,7 +31,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_formalizer.config import (
+from agent_formalizer.configuration.config import (
     BASE_IMAGE,
     CONTAINER_WORKSPACE,
     DOMAIN_OUTPUT_NAME,
@@ -61,7 +61,8 @@ from agent_formalizer.config import (
 )
 from agent_formalizer.tools import resolve_agent_tools
 from agent_formalizer.external_calls.control import ToolControlMonitor, read_json
-from agent_formalizer import deadline_integration
+from agent_formalizer.timing import deadline_integration
+from agent_formalizer.docker.network_resources import NetworkResources, label_args
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,8 @@ class AgentWorkspace:
         image: str | None = None,
         artifact_dir: Path | None = None,
         diagnostics_plan=None,
+        network_options=None,
+        operational_run_id: str | None = None,
     ):
         self.instance_id = instance_id
         self.adapter = adapter
@@ -93,6 +96,10 @@ class AgentWorkspace:
         self.container_name = container_name
         self.artifact_dir = Path(artifact_dir) if artifact_dir is not None else None
         self.diagnostics_plan = diagnostics_plan
+        self._network_resources = NetworkResources(options=network_options, evidence_dir=self.artifact_dir)
+        self._network_record = None
+        self._resource_labels = {}
+        self._operational_run_id = operational_run_id or instance_id
         # Hash the complete parent name into every related resource.  Prefix
         # slicing used to discard the per-problem/attempt suffix and made
         # concurrent sweeps remove one another's containers.
@@ -125,6 +132,7 @@ class AgentWorkspace:
         self._deadline_broker = None
         self._deadline_bundle = None
         self._deadline_directory = None
+        self._experiment_skills_directory: Path | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -133,6 +141,7 @@ class AgentWorkspace:
     def start(self) -> str:
         """Start the Docker container. Returns the container name."""
         deadline_integration.validate(self.adapter)
+        skill_mounts = self._prepare_experiment_skills()
         self._remove_stale_resources()
         self._create_network()
         self._start_model_gateway()
@@ -151,6 +160,7 @@ class AgentWorkspace:
             "docker", "run", "-d",
             "--pull", "never",
             "--name", self.container_name,
+            *label_args(self._resource_labels),
             "--network", self.network_name,
             "--pids-limit", str(resources["pids_limit"]),
             "--memory", resources["memory"],
@@ -186,6 +196,7 @@ class AgentWorkspace:
                 ),
             ])
         cmd.extend(self.adapter.container_run_args(self.instance_id))
+        cmd.extend(skill_mounts)
         if deadline_integration.selected(self.adapter):
             cmd.extend(deadline_integration.prepare(self))
         cmd.extend([self.image_name, "tail", "-f", "/dev/null"])
@@ -199,38 +210,54 @@ class AgentWorkspace:
         logger.info("Container %s started.", self.container_name)
         return self.container_name
 
+    def _prepare_experiment_skills(self) -> list[str]:
+        """Expose the same selected-only read-only snapshot to every harness."""
+        from agent_formalizer.configuration.skill_library import CONTAINER_ROOT
+
+        bundle = self.adapter.resolved_config.skill_bundle
+        if not bundle.skills:
+            return []
+        if self.artifact_dir is None:
+            raise ValueError("experimental skills require an execution artifact directory")
+        snapshot = self.artifact_dir.absolute() / "experiment_skills"
+        if ":" in str(snapshot) or "\n" in str(snapshot):
+            raise ValueError("skill snapshot path cannot be represented safely as a Docker volume")
+        bundle.materialize(snapshot)
+        self._experiment_skills_directory = snapshot
+        evidence = self.artifact_dir / "experiment_skills_manifest.json"
+        payload = json.dumps({**bundle.manifest(), "sha256": bundle.sha256},
+                             indent=2, ensure_ascii=False) + "\n"
+        if evidence.exists():
+            if evidence.is_symlink() or evidence.read_text() != payload:
+                raise ValueError("execution skill manifest mismatch")
+        else:
+            with evidence.open("x") as stream:
+                stream.write(payload)
+        return ["-v", f"{snapshot}:{CONTAINER_ROOT}:ro"]
+
     def cleanup(self) -> None:
-        """Force-remove the container (best effort)."""
-        self.stop_model_gateway_monitor()
-        if self._deadline_broker is not None:
-            self._deadline_broker.close()
-            self._deadline_broker = None
-        subprocess.run(
-            ["docker", "rm", "-f", "-v", self.container_name],
-            capture_output=True,
-        )
-        subprocess.run(
-            ["docker", "rm", "-f", "-v", self.gateway_name],
-            capture_output=True,
-        )
-        subprocess.run(
-            ["docker", "rm", "-f", "-v", self.web_gateway_name], capture_output=True
-        )
-        subprocess.run(
-            ["docker", "rm", "-f", "-v", self.solver_gateway_name], capture_output=True
-        )
-        subprocess.run(
-            ["docker", "network", "rm", self.network_name],
-            capture_output=True,
-        )
-        self._cleanup_gateway_secret()
-        self._cleanup_gateway_control()
-        self._started = False
-        self._gateway_started = False
-        self._web_gateway_started = False
-        self._solver_gateway_started = False
-        self._network_created = False
-        logger.debug("Removed container %s", self.container_name)
+        """Verify owned resource removal without changing the collected result."""
+        try:
+            self.stop_model_gateway_monitor()
+            if self._deadline_broker is not None:
+                self._deadline_broker.close()
+                self._deadline_broker = None
+        except Exception:
+            logger.exception("Could not stop cleanup monitors for %s", self.container_name)
+        record = self._network_record or self._network_resources.pending_record
+        cleaned = record is None or self._network_resources.cleanup(record)
+        if cleaned:
+            self._started = False
+            self._gateway_started = False
+            self._web_gateway_started = False
+            self._solver_gateway_started = False
+            self._network_created = False
+            logger.debug("Verified Docker resource cleanup for %s", self.container_name)
+        for cleanup in (self._cleanup_gateway_secret, self._cleanup_gateway_control):
+            try:
+                cleanup()
+            except Exception:
+                logger.exception("Could not remove gateway temporary state")
 
     def enforce_agent_deadline(self) -> None:
         """Freeze actions, cut the model route, then stop the complete tree."""
@@ -271,28 +298,16 @@ class AgentWorkspace:
                 logger.error("Timed out killing agent container at deadline")
 
     def _remove_stale_resources(self) -> None:
-        self._cleanup_gateway_secret()
-        self._cleanup_gateway_control()
-        for name in (
-            self.container_name,
-            self.gateway_name,
-            self.web_gateway_name,
-            self.solver_gateway_name,
-        ):
-            subprocess.run(["docker", "rm", "-f", "-v", name], capture_output=True)
-        subprocess.run(
-            ["docker", "network", "rm", self.network_name], capture_output=True
-        )
+        # Retained as a compatibility hook. Names alone never authorize deletion.
+        # Labeled, dead-owner recovery happens under the shared admission lock.
+        pass
 
     def _create_network(self) -> None:
-        cmd = ["docker", "network", "create"]
-        # The agent always lives on an internal network. Optional web access is
-        # through a separate allowlist proxy, never ordinary container egress.
-        cmd.append("--internal")
-        cmd.append(self.network_name)
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to create benchmark network: {result.stderr.strip()}")
+        self._network_record, self._resource_labels = self._network_resources.create(
+            self.network_name,
+            [self.container_name, self.gateway_name, self.web_gateway_name, self.solver_gateway_name],
+            self._operational_run_id,
+        )
         self._network_created = True
 
     def _stage_gateway_secret(self, secret: str) -> Path:
@@ -649,7 +664,7 @@ class AgentWorkspace:
             if missing or not LOGITS_MODEL_ASSETS_ROOT.is_dir():
                 raise RuntimeError(
                     "Logits gateway runtime is incomplete. Run: bash "
-                    "source/agent_formalizer/install_harnesses.sh logits"
+                    "source/agent_formalizer/runtime/install_harnesses.sh logits"
                 )
             entrypoint_host = LOGITS_GATEWAY_SCRIPT
             entrypoint_container = LOGITS_GATEWAY_CONTAINER_PATH
@@ -685,6 +700,7 @@ class AgentWorkspace:
         cmd = [
             "docker", "run", "-d", "--pull", "never",
             "--name", self.gateway_name,
+            *label_args(self._resource_labels),
             "--network", self.network_name,
             "--network-alias", MODEL_GATEWAY_HOST,
             "--add-host", "host.docker.internal:host-gateway",
@@ -826,6 +842,7 @@ class AgentWorkspace:
         cmd = [
             "docker", "run", "-d", "--pull", "never",
             "--name", self.web_gateway_name,
+            *label_args(self._resource_labels),
             "--network", self.network_name,
             "--network-alias", WEB_GATEWAY_HOST,
             "--add-host", "host.docker.internal:host-gateway",
@@ -883,6 +900,13 @@ class AgentWorkspace:
         external_args = ["-v", f"{EXTERNAL_CALLS_PACKAGE}:{EXTERNAL_CALLS_CONTAINER_PATH}:ro"]
         resolved = getattr(getattr(self.adapter, "resolved_config", None), "raw", {}).get("resolved", {})
         policy = resolved.get("solver_error_routing")
+        if self.adapter.solver_backend() == "public_then_local":
+            if not policy:
+                raise RuntimeError("public_then_local tool requires solver recovery/control")
+            external_args.extend([
+                "-e", "PDDL_SOLVER_BACKEND=public_then_local",
+                "-e", "PDDL_SOLVER_FALLBACK_BASE=" + self.adapter.solver_fallback_base(containerized=True),
+            ])
         if policy:
             if self._gateway_control_dir is None or self._gateway_evidence_dir is None:
                 raise RuntimeError("solver recovery requires model gateway control and evidence")
@@ -902,6 +926,7 @@ class AgentWorkspace:
         cmd = [
             "docker", "run", "-d", "--pull", "never",
             "--name", name,
+            *label_args(self._resource_labels),
             "--network", self.network_name,
             "--network-alias", spec.gateway_host,
             "--add-host", "host.docker.internal:host-gateway",
@@ -912,7 +937,7 @@ class AgentWorkspace:
             ),
             "-e", (
                 "PDDL_SOLVER_UPSTREAM_HEALTH_REQUIRED="
-                + ("1" if self.adapter.solver_backend() == "local" else "0")
+                + ("1" if self.adapter.solver_backend() in {"local", "public_then_local"} else "0")
             ),
             "-v", f"{spec.gateway_dir_host}:{spec.gateway_dir_container}:ro",
             *external_args,
@@ -1256,6 +1281,10 @@ class AgentWorkspace:
         if self._deadline_bundle is not None:
             expected_shared_readonly.add(resolved(str(self._deadline_bundle)))
             expected_private_readonly.append(resolved(str(self._deadline_directory)))
+        if self._experiment_skills_directory is not None:
+            # Immutable selected content, not writable harness state. Its exact
+            # location is execution evidence, separate from native attempt HOME.
+            expected_shared_readonly.add(resolved(str(self._experiment_skills_directory)))
         expected_readonly = sorted(
             {*expected_private_readonly, *expected_shared_readonly}
         )
@@ -1273,6 +1302,26 @@ class AgentWorkspace:
                     break
 
         adapter_tests = dict(spec.get("tests", {}))
+        bundle = getattr(getattr(self.adapter, "resolved_config", None), "skill_bundle", None)
+        if bundle is not None and bundle.skills:
+            from agent_formalizer.configuration.skill_library import CONTAINER_ROOT, load_bundle
+
+            snapshot = self._experiment_skills_directory
+            try:
+                content_ok = snapshot is not None and load_bundle(
+                    snapshot, [skill.name for skill in bundle.skills],
+                ) == bundle and {p.name for p in snapshot.iterdir()} == {
+                    skill.name for skill in bundle.skills
+                }
+            except (OSError, ValueError):
+                content_ok = False
+            adapter_tests["experimental_skill_snapshot_exact"] = content_ok
+            adapter_tests["experimental_skill_mount_exact"] = snapshot is not None and any(
+                m.get("Type") == "bind" and m.get("RW") is False
+                and m.get("Destination") == CONTAINER_ROOT
+                and resolved(str(m.get("Source", ""))) == resolved(str(snapshot))
+                for m in mounts if isinstance(m, dict)
+            )
         tests = {
             "container_inspect_succeeded": inspect_ok,
             "isolation_mode_is_explicit": spec.get("mode") == "isolated",

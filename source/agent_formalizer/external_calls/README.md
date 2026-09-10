@@ -20,8 +20,9 @@ Solver recovery is selected by the **semantic** condition override:
 {"solver_error_routing": "solver-transient-v1"}
 ```
 
-The three bundled solver-as-tool profiles enable it. For a custom profile,
-including Minimum with fixed solver feedback, add this override explicitly.
+The canonical native baseline enables it for evaluation and for solver tools
+when explicitly added to a derived profile. Frozen custom profiles, including
+Minimum with fixed solver feedback, must select this override explicitly.
 It applies to either `solver_backend: "local"` or `"public"`. The resolver
 includes the policy and its invalidators in the resolved config hash. This is
 not an operational configuration setting: changing results visible to agents
@@ -106,7 +107,9 @@ Earlier retry diagnostics stay in restricted evidence, not the tool response.
 | Connection refused/reset, no route to host, DNS, socket timeout, truncated/malformed HTTP, non-certificate TLS transport errors | Retry submission or re-poll **the same task ID** | Invalidate: transport failure cannot diagnose the input |
 | Invalid JSON, wrong envelope shape, missing submit task reference | Retry same stage/task | Invalidate: protocol failure |
 | HTTP 401/403, certificate verification failure | Invalidate immediately | Do not disable TLS verification or switch credentials/backends |
-| HTTP 400/404/405/415/422 from the upstream service; missing required API argument, missing package/endpoint/service, `not configured correctly`, `Adaptor Not Found` | Invalidate immediately | Gateway supplies the fixed protocol; these are not reliable PDDL diagnostics. `Adaptor Not Found` can also mask server adaptation exceptions. |
+| HTTP 400/415/422 | Return the actual request rejection | These statuses alone do not prove a service/configuration failure. |
+| HTTP 404/405 on the fixed upstream route; anchored missing required API argument or missing/uninstalled package | Invalidate immediately | Fixed gateway protocol/routing could not access the service. |
+| `Adaptor Not Found`, generic `does not exist` / `does not contain` / `not configured correctly` errors | Classify as unexplained service error, not automatically configuration failure | Poll-stage ambiguous terminal failures can be returned after bounded re-solves; these phrases may describe input-dependent adaptation. |
 | HTTP 413 | Return request-size limit | No retry; capability constraint on this request |
 | HTTP redirect, cross-origin task URL | Invalidate immediately | Never forward PDDL to an unconfigured origin |
 | Missing runtime/operator/fact files, uninstalled/unexecutable package, missing Singularity command | Invalidate immediately | Missing service runtime, not PDDL syntax |
@@ -120,7 +123,8 @@ Local compatible-service additions (the server/runner remain uncoupled):
 | --- | --- |
 | Queue full | Retry; persistent exhaustion invalidates |
 | `local_backend.worker.oom_killed` or `worker_control_timeout` | Ambiguous new solve; after three ambiguous terminal failures return final evidence |
-| Runner `FileNotFoundError`, `PermissionError`, `ValueError`, `KeyError` | Invalidate runtime/configuration failure |
+| Runner `FileNotFoundError`, `PermissionError` | Invalidate runtime/configuration failure |
+| Runner `ValueError`, `KeyError` | Ambiguous worker failure, not configuration proof; poll-stage repeated terminal failures return the last diagnostic |
 | Worker protocol failure, unexpected worker/server exception without input-dependent evidence | Retry; persistent exhaustion invalidates |
 | Planner `local_backend.timed_out` | Same three-solve timeout rule as public terminal timeout |
 
@@ -139,7 +143,9 @@ Do not duplicate a task merely because a poll transport failed or says PENDING.
 
 ## Clock, visibility and validity
 
-Solver gateway calls are serialized within one execution's sidecar. Before the
+The following describes the **legacy** escrow path; the current OpenClaw
+checkpoint implementation is described below. Legacy solver gateway calls are
+serialized within one execution's sidecar. Before the
 first physical solve, an out-of-band acknowledged **timing escrow** pauses the
 benchmark active clock and freezes the agent container. Minimum has a
 synchronous host caller instead of a container. This escrow is needed because
@@ -192,16 +198,16 @@ exists for the prior model pause mechanism).
 
 ## Opt-in native logical deadlines: `logical-deadline-v1`
 
-Select
-[`native_safety_streaming_solver_as_tool_logical_deadline.json`](../benchmark_profiles/native_safety_streaming_solver_as_tool_logical_deadline.json),
-or add `condition_profile.overrides.external_call_timing: "logical-deadline-v1"`
-to a **new** condition. This is a semantic setting, not an operational knob.
-The bundled profile retains v5 streaming, native tool limits, budgets, solver
-retry classification and the local solver backend. It does not update old
-profiles/results or silently change Direct API/evaluation.
+This historical timing mode is selected by
+`condition_profile.overrides.external_call_timing: "logical-deadline-v1"`.
+It is a semantic setting, not an operational knob. Its former bundled preset
+is now a test-only fixture. New experiments start from the
+[canonical baseline](../configs/benchmark_profiles/README.md), which uses
+`call-checkpoint-v1`; changing that condition requires an explicit experimental
+choice. Frozen profiles/results and Direct API/evaluation are not rewritten.
 
 `external_calls/control.py` supplies the acknowledged call protocol;
-`logical_time.py` owns deadline leases; `deadline_integration.py` owns
+`timing/logical_time.py` owns deadline leases; `timing/deadline_integration.py` owns
 Docker/process control and native runtime setup. API classifiers remain
 independent of harnesses and Docker.
 
@@ -346,14 +352,68 @@ silently changing standalone Direct API or evaluation behavior.
 
 ## Call-boundary checkpoints (`call-checkpoint-v1`)
 
-Opt in with
-`benchmark_profiles/native_safety_streaming_solver_as_tool_call_checkpoint.json`.
-This is a **new semantic condition**, initially implemented for the locked
-OpenClaw runtime only. Other adapters and custom gateway transports fail
-preflight; existing profiles, executions and running campaigns are unchanged.
-The bundled example retains local solver, v5 streaming and the same budgets.
+The [canonical native baseline](../configs/benchmark_profiles/native_baseline_v1.json)
+selects `condition_profile.overrides.external_call_timing: "call-checkpoint-v1"`.
+This is a **semantic condition**, implemented for the five locked native
+harnesses in revision `native-concurrency-v5-native-exit`. Unlisted adapters,
+native source drift and custom gateway transports fail preflight; existing
+profiles, executions and running campaigns are unchanged.
+The baseline retains local evaluation, v5 streaming and the same budgets;
+agent solver tools require an explicitly derived solver-as-tool condition.
 Solver backend selection and existing error classification/retry limits remain
 independent of this timing mechanism.
+
+### Checkpoint participant lifecycle (`native-concurrency-v5-native-exit`)
+
+Send errors, receive errors/EOF and missing acknowledgements share one bounded
+disconnect adjudication. The registry lock is not held across socket I/O or
+exit confirmation; per-connection ordering preserves hello/command/ACK sequence
+identity. Disconnection is resolved once per connection. Without a terminal
+notice, there is at most 0.5 seconds to confirm an exiting process, not a new
+wait on every successful call. Process
+identity includes Linux start time: PID reuse means the original peer exited;
+unreadable or malformed process evidence is unknown, not proof of exit.
+Transient unknown samples can be rechecked within that same 0.5-second bound;
+only positive process-identity evidence permits retirement as a native outcome.
+
+The locked Node runtime sends one versioned `participant_exit` record on its
+existing checkpoint connection at native `exit`, **not** `beforeExit` or a model
+final message. Node can close socket handles while its PID remains alive during
+C++/isolate cleanup for longer than 0.5 seconds. This notice permits
+`native_exiting` retirement in that interval, bound to the connection identity
+from hello and the host-observed PID/start time. It is not a successful result,
+does not stop the execution clock/container or other participants, and does not
+replace ordinary process-exit supervision, artifact collection or evaluation.
+Nonzero native exits remain native outcomes, not automatic infra failures.
+
+The exit hook performs one small synchronous write to the version-bound Node
+socket FD only when no Node writes are queued; it never awaits an ACK, keeps
+the event loop alive, or retries a blocked write. Missing/truncated notices
+retain conservative EOF/protocol handling. A separate `control_failure` origin
+preserves adapter failure followed by `process.exit(70)`; it cannot be washed
+away by a subsequent native exit hook. Terminal messages are not checkpoint
+ACKs, and acknowledgements after a terminal notice are protocol faults.
+
+| Evidence | Handling |
+|---|---|
+| Confirmed peer exit at an ordinary boundary | Retire its connection and timer lease; preserve the native exit/tool outcome and continue with remaining participants. |
+| Native exit notice followed by EOF while the same PID is still cleaning up | Retire as `native_exiting`; do not mistake cleanup exceeding 0.5 seconds for a live control failure. Unknown process identity still fails closed. |
+| Live or unidentifiable peer with a broken control channel | `external_call_control_failed`; do not reconnect with a fresh checkpoint or silently continue without timer protection. |
+| Explicit protocol/adapter fault followed by exit | Keep the fault; a later exit never clears the recorded invalidator. |
+| Previously acknowledged checkpoint participant lost before recovery validation | `external_call_recovery_unsafe`, classification `checkpoint_participant_lost_during_recovery`; retirement cannot erase a required business-state check. |
+| Owner cleanup | Stop the checkpoint monitor without creating a new invalidation. |
+
+Retired checkpoint membership is retained until that call's resume/new checkpoint,
+not across the whole execution. The existing context-change/concurrency guards,
+native timeouts and API retry policies remain in force. There is no new heartbeat,
+per-stream-event IPC, command replay, model resampling or physical-clock change.
+`gateway/call_checkpoints.jsonl` records participant ID, PID/start time, operation,
+sequence, terminal notice origin/exit code, disconnect source/error type,
+initial/final process status, confirmation duration and disposition (no payload).
+The implementation revision appears in new runtime manifests; this source change
+does not modify frozen campaign runtimes, historical traces or validity records.
+Tests: `test_checkpoint_lifecycle.py`, plus the existing Python, Node and native
+concurrency checkpoint suites; no external API is required.
 
 ### Business continuation and recovery boundary
 
@@ -374,7 +434,10 @@ remaining deadlines. Before accepting a recovered result it checks that the
 context has not changed and that concurrent native tool execution has not
 crossed the checkpoint. A mismatch fails closed as infrastructure invalidation;
 the runtime does not serialize the agent's tools or generate another decision
-to obtain a more convenient execution. There is no filesystem rollback here:
+to obtain a more convenient execution. A healthy context change, cyclic context,
+parallel tools or background process is **not** an invalidator. The context
+check is only enforced after an actual external physical request was discarded.
+There is no filesystem rollback here:
 the supported model and solver boundary has no agent-visible writes before
 delivery. Arbitrary shell background jobs, external side effects and hidden
 untracked concurrent work are **not** claimed to be safely recoverable.
@@ -384,6 +447,91 @@ API. It cannot resurrect an already killed process, undo an external write, or
 recover a committed partial model stream. The v5 post-commit stream-failure
 invalidation rule remains in force. Extending recovery across any of those
 boundaries needs additional adapter-specific support and a new policy version.
+
+### Native concurrency revision (`native-concurrency-v2`)
+
+The current checkpoint implementation uses independent model/solver call-control
+files and no per-execution model/solver serialization lock. OpenClaw's native
+`exec` default 10-second background yield, explicit background execution,
+`process` polling, and overlapping healthy model calls remain enabled. The old
+`external_call_stream_overlap` test is not used by this checkpoint path.
+The driver also no longer imposes an undeclared 128-Node-participant invalidator.
+Model ledger and solver request records include `timing_control_call_id`; delivery
+records identify `running_wall` versus `isolated_escrow` for later audit.
+
+An isolated external call still escrows deadlines. When native concurrency is
+observed, its healthy elapsed prefix is charged once and the clock resumes
+normal wall-time advancement for the overlapping group. Call durations are not
+added together, ordinary native callbacks remain active, and no response/error
+is injected to force the agent to run serially. Separate control files prevent
+requests overwriting one another. Model state is re-read after Docker/filesystem
+checks; a stale stream snapshot alone cannot invalidate a healthy execution.
+
+If an actual failed physical request needs transparent recovery after that
+group has advanced on the running clock, the current implementation cannot
+promise retrospective rollback of all concurrent native deadlines/context.
+It records `external_call_recovery_unsafe`, with affected call IDs and nonzero
+rollback counts, and invalidates instead of refunding concurrent useful work or
+silently accepting a potentially biased result. The same reason is used when
+an actual serial recovery fails the native business-state check. This is a
+remaining recovery limitation, **not** a ban on asynchronous agent behavior.
+
+Normal native cancellation/exit, a timeout callback that throws, and slow native
+cleanup are valid outcomes. Busy Node event loops do not fail a fixed three-second
+ACK bound: the host reports progress while waiting, charges that work as active
+time, and the benchmark budget remains the outer limit. A dead/stalled host
+control channel still has a 15-second no-progress transport watchdog.
+
+This revision is recorded in `logical_deadline_manifest.json`. Its resolved
+checkpoint invalidator list now names the recovery-specific guard, so new
+resolved identities are distinct. Existing campaign frozen runtimes, executions,
+validity decisions and completions are not rewritten or silently resumed.
+See [the invalidation audit](INVALIDATION_AUDIT.md) for classification details
+and the explicit scope of the legacy paths.
+
+### Five-harness native sites (`native-concurrency-v3-multiharness`)
+
+The same business-state contract applies to all five harnesses. A hidden retry
+keeps the original request and suspended continuation; only its accepted final
+physical request consumes business time. We do not replay a preceding shell
+command, rewrite a prompt, change a native timeout value, remove tools, force
+sequential execution, or change native retry/cleanup behavior.
+
+| Harness | Named native business deadlines | Native behavior deliberately retained |
+| --- | --- | --- |
+| OpenClaw | Existing model idle/run/abort and foreground exec deadlines | Default background yield, process polling and parallel tools |
+| Generic | `ga.code_run` deadline; gateway socket read deadline | Native generator, output, process signals and tool arguments |
+| Hermes | Environment process deadline, `process.wait`, concurrent tool batch deadline; gateway SDK reads | Native concurrent pool, completion events, timeout errors, heartbeat and cleanup |
+| Nanobot | Foreground `ExecTool`, non-streaming runner request timeout, session hard deadline at native poll, `write_stdin` wait-for-output deadline; HTTPX reads | Streaming runner's native absence of an outer request timeout; background yield and passive expiry |
+| ZeroClaw | Native Rust shell timeout; locked reqwest total request/body deadline only for model-gateway | Native timeout values, `Elapsed`/reqwest error construction, process cleanup, parallel-tools setting; connect-only streaming client |
+
+Python uses a persistent background control channel and local deadline objects.
+There is no per-chunk/per-read synchronous registration RPC. AST overlays are
+restricted to exact, counted source sites and never mutate installed packages.
+Python contexts are fingerprinted in-process only at call boundaries: Generic's
+model payload, Hermes tool batch messages and Nanobot's runner messages. Changed
+context or observed concurrent tool activity is only a recovery-safety check
+after an actual discarded request; healthy activity remains valid.
+
+ZeroClaw uses an isolated derived release binary built from its pinned source,
+default features and locked dependencies. The only dependency patch is its
+same-version reqwest deadline future, scoped to the model gateway endpoint;
+other HTTP endpoints keep native timers. The helper uses one lease per named
+deadline and an in-process asynchronous 20 ms poll, not stream-event IPC.
+Physical `Instant`, `SystemTime`, `time.time`, and `time.monotonic` stay physical.
+The build command, original/derived binary hashes, native source hashes and
+overlay identity are recorded, and preflight verifies the derived artifact.
+
+Background yields, output-drain grace, PID liveness/cleanup waits, arbitrary
+user-program timers and physical elapsed-time metadata are **not** normalized.
+We do not claim arbitrary background filesystem effects can be reverted.
+Actual recovery across observed parallel business progress remains
+`external_call_recovery_unsafe`; an explicit adapter control failure is
+`external_call_control_failed`. Genuine native cancellation is still a valid
+measured result, even if it happens before the benchmark envelope expires.
+
+These adaptations concern transient external calls only. They do not harmonize
+different harnesses' native budgets or increase their success rate by design.
 
 ### Timer commit barrier and cost
 
@@ -410,8 +558,8 @@ mock or an optimization of arbitrary user timers.
 There is fixed per-call checkpoint/acknowledgement overhead, including context
 serialization, and small event-loop scheduling differences. This is not a
 claim of microsecond equivalence or a measured full-campaign speedup. A stalled
-control channel fails closed (bounded three-second participant acknowledgement)
-instead of silently disabling deadlines. There are no retry-controlled state
+control channel fails closed; ordinary native event-loop work does not become
+an infrastructure failure solely because it exceeds three seconds. There are no retry-controlled state
 restores of retry counters, physical-call limits, recovery watchdogs, evidence
 or action-step accounting.
 
@@ -442,6 +590,137 @@ context/concurrency rejection, 25,000 timer operations without hot-path IO, and
 the actual native Agent loop with 10,000 streamed events followed by a solver
 tool. They require socket/Docker permission but no model credentials.
 
+## Optional public-then-local solver wrapper
+
+`solver_backend: "public_then_local"` selects the separate, versioned
+`solver-public-then-local-v1` mechanism in `solver_fallback.py`. It is **opt-in**:
+existing `public` and `local` modes and frozen studies are unchanged. Both agent
+solver tools and post-generation evaluation support it. The resolved agent
+configuration includes the backend and wrapper policy in its semantic hash;
+do not resume a public-only study with this different solver condition.
+
+Use `--solver-backend public_then_local` on a new agent run/sweep, with an
+explicit profile derived from the [canonical baseline](../configs/benchmark_profiles/README.md).
+Enable `agent_tools: ["pddl_solver"]` and its startup invalidator in that
+derived profile if the user requests solver-as-tool. The CLI passes the backend
+to evaluation too; the native baseline alone does not expose a solver tool.
+For evaluation alone, add `--solver-backend public_then_local` to the usual
+`source/run_solver.py` command. Tool profiles must explicitly select
+`solver_error_routing: "solver-transient-v1"`; without recovery/timing control,
+the wrapper fails preflight. It does not alter native harness tools or prompts.
+
+### Limits and lifecycle
+
+| Layer | Public phase | Local fallback phase |
+| --- | --- | --- |
+| Planner deadline | Public service's native **30 seconds** | Service configured to **90 seconds** |
+| Recovery budget | Initial operation plus at most 2 retries | A fresh budget: initial operation plus at most 2 retries |
+| Backoff | 5 then 15 seconds; `Retry-After` bounded to 60 seconds | Same |
+| HTTP exchange timeout | At most 30 seconds, clamped to remaining guards | Same; **not** the planner limit |
+| One submitted task's pending wait cap | 180 seconds | 180 seconds, including queue wait |
+| Backend wall guard | 210 seconds | 360 seconds |
+
+The wrapper starts no processes or services. Before a campaign starts, provision
+one supervisor-managed local service with `--timeout 90`; retain the usual
+single-worker/4096 MiB defaults unless the study specifies otherwise. Follow
+the [campaign lifecycle contract](../../local_solver/README.md#campaign-lifecycle-contract)
+and save the health/resource evidence. The gateway requires healthy local
+fallback infrastructure even if its first public request succeeds. The wrapper
+also validates the local health response before its first local submission:
+backend, actual planner timeout, and installed/allowed requested package.
+A 60-second service is rejected; an HTTP timeout or ignored request parameter
+cannot turn it into a 90-second planner. Do not reconfigure a service being used
+by another frozen study. Public 30 seconds is the upstream planner policy, not a
+client guarantee about public queue or response latency.
+
+Both phases reuse the existing `solver-transient-v1` classifier and controller;
+health failures use the local controller rather than a nested retry loop. The
+210 + 360 second wall guards leave nominal room under the existing 600-second
+tool transport/control guards. They are checked between IO/waits and clamp
+individual HTTP timeouts, not a kernel-level guarantee against pathological
+slow-drip network peers. A shorter native tool deadline still applies to
+accepted work; this wrapper does not extend it. Too much local queueing can hit
+the pending cap: that is unknown infrastructure latency, not a proven hard PDDL.
+
+### Routing and visibility
+
+| Outcome | Public phase | Local phase / final tool decision |
+| --- | --- | --- |
+| Plan, empty plan, explicit unsolvable/search exhaustion, syntax/semantic input error, capability/request-size limit, HTTP 400/415/422 | Return immediately; no fallback | Return actual result |
+| Terminal planner timeout, Planutils error, ambiguous OOM/crash/missing terminal result | Retry; on exhausted ambiguous budget discard the public result and switch | Retry; after three ambiguous terminal failures return **last actual local diagnostic** |
+| 429, temporary HTTP/service/transport/protocol failure | Retry; exhaustion switches | Retry; exhaustion raises `ExternalCallInvalid` |
+| Pending/recovery/backend wall cap; exhausted mixed failure budget | Switch without duplicating a known pending task | Invalidate; not evidence of repeated input-dependent timeout |
+| Authentication/certificate error, redirect/untrusted task URL, fixed route or missing runtime/package error | Invalidate immediately; do not switch to bypass a security/configuration failure | Invalidate immediately |
+| Local health missing/wrong backend, wrong planner deadline, unavailable requested package | Not applicable | `solver_fallback_configuration_error`; no solve under wrong settings |
+| Benchmark cancellation or timing/control failure | Stop; no fallback | Stop; no fallback |
+
+In evaluation, wrapper exhaustion is recorded as an evaluation failure with
+the final diagnostic, without another outer set of retries or automatic agent
+invalidation. The evaluation policy below enables the same bounded recovery
+for standalone public/local evaluation too (`EVAL-001`).
+
+One logical tool call/checkpoint spans both phases. Hidden retries and the
+public-to-local switch discard their results and restore logical call/timer
+state using the existing timing protocol. All discarded solves, retry backoff,
+and abandoned public-phase time are excluded from the benchmark clock. Only
+the final delivered solve is charged (including its successful submission,
+ordinary polling/waiting and result retrieval). If the final local timeout is
+returned, its 90-second solve is charged, not zero. For example, three public
+31-second solves and three local 91-second solves with 5 + 15 seconds backoff
+per phase take 406 seconds physically, but charge only **91 seconds**.
+No additional agent action steps, fabricated plans, or public-error messages
+are injected by fallback. PDDL bytes and requested planner package are identical
+across both backends. Existing checkpoint recovery-safety checks remain: native
+asynchronous progress is allowed, but an unsafe rollback invalidates rather
+than contaminates an execution. Physical time and external jobs are not reverted.
+
+Restricted solver evidence adds `backend_start`, `backend_health`, physical
+requests/retries with backend tags, `backend_return`, `fallback`, final `return`
+or `wrapper_invalid`, plus input hashes and actual charge. An inner public
+`backend_return` is only a candidate, **not delivery to the agent**. The gateway's
+`outcome.json` remains authoritative for acknowledged delivery. Evaluation
+appends `<problem>_<model>_solver_events.jsonl` with UTC timestamps and a unique
+evaluation request ID; historical evidence is not overwritten. No new broad
+model/trace ledger is introduced.
+
+Known boundary: public API has no reliable cancellation/idempotency endpoint.
+Abandoning a pending public task (or losing submit acknowledgement) can leave an
+orphan job. Retrying a failed poll preserves its task ID. Local fallback changes
+resources/deadline and therefore is its own experimental condition, not a claim
+that local 90 seconds exactly equals public 30 seconds in solving power.
+
+## Deterministic evaluation recovery (`solver-evaluation-transient-v1`)
+
+`source/run_solver.py` always enables the shared solver controller for `public`,
+`local` and `public_then_local`. This is an evaluator implementation revision,
+not a change to historical agent profiles, completion records or tool policies.
+It solves the selected effective-valid execution's exact frozen PDDL; it never
+regenerates, repairs or invalidates an agent answer. Frozen older runtimes must
+be explicitly versioned/replaced for a resumed evaluator to use this revision.
+
+The complete classifier tables above apply unchanged. In particular:
+
+| Evaluation outcome | Handling |
+| --- | --- |
+| Plan/empty plan, explicit no-plan/search exhaustion, input/capability rejection | Return immediately; VAL decides plan correctness |
+| Terminal timeout, Planutils error, ambiguous crash/OOM | Up to two retries with 5/15-second backoff; retain only the final outcome for scoring |
+| Temporary network/HTTP/429/protocol failure | Same bounded controller; poll failures retry the same task ID |
+| Persistent `PENDING` | Poll the same task for at most 180 seconds, then record an infrastructure failure; no duplicate known pending job |
+| `public_then_local` exhausted public recovery or pending limit | Switch to the 90-second local backend with its own bounded budget and health check |
+| Final infrastructure/guard failure | Write this problem's `_error.txt` with the actual reason/evidence and continue the batch; never call it proven unsolvable |
+
+There is no additional outer retry loop for `ExternalCallInvalid`, so evaluator
+retry budgets do not multiply. Missing PDDL causes no solver request. Each
+evaluation appends restricted `*_solver_events.jsonl` evidence with a request
+ID, policy, backend, input paths/hashes, physical responses, retry/fallback,
+accepted solve charge and final evaluator outcome. Task-wait guard failures
+retain the last observed response and task URL even without a formatted error.
+Evaluation runs after the agent clock has stopped: no retry/backoff is added to
+agent time or action metrics. Physical evaluator wall time is recorded separately.
+Successful re-evaluation replaces a stale error; failure removes a stale plan.
+Campaign operators must archive replaced evaluation artifacts as appropriate;
+immutable agent completions/traces are never overwritten by evaluation.
+
 ## Add a future API/tool
 
 1. Add a pure API classifier returning `Decision`; document every class here.
@@ -459,6 +738,7 @@ tool. They require socket/Docker permission but no model credentials.
 ```bash
 PYTHONPATH=source .venv/bin/python -m unittest discover -s tests -p 'test_external_calls*.py'
 PYTHONPATH=source .venv/bin/python -m unittest discover -s tests -p 'test*model_gateway.py'
+PYTHONPATH=source:tests .venv/bin/python -m unittest test_solver_fallback test_external_calls_gateway
 ```
 
 The integration tests require loopback socket permission and use simulated

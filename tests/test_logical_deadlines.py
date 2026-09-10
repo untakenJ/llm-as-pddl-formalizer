@@ -15,13 +15,15 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agent_formalizer import logical_time as lt
-from agent_formalizer.benchmark_profile import BENCHMARK_PROFILES_DIR, load_benchmark_profile
+from profile_fixtures import HISTORICAL_PROFILES_DIR
+
+from agent_formalizer.timing import logical_time as lt
+from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
 from agent_formalizer.claws.base import AttemptClock
-from agent_formalizer.deadline_integration import monitor, validate
+from agent_formalizer.timing.deadline_integration import monitor, validate
 from agent_formalizer.external_calls.control import write_json
 
-RUNTIME = Path(lt.__file__).with_name("deadline_runtime")
+RUNTIME = Path(lt.__file__).with_name("runtime")
 sys.modules.setdefault("benchmark_logical_time", lt)
 spec = importlib.util.spec_from_file_location("native_deadlines_test", RUNTIME / "native_deadlines.py")
 native = importlib.util.module_from_spec(spec)
@@ -90,7 +92,7 @@ class LogicalDeadlineTests(unittest.TestCase):
         )
         def run(command, **kwargs):
             return subprocess.CompletedProcess(command, 0, "false\n", "")
-        with patch("agent_formalizer.deadline_integration.subprocess.run", side_effect=run) as invoked:
+        with patch("agent_formalizer.timing.deadline_integration.subprocess.run", side_effect=run) as invoked:
             monitor(workspace, self.clock, stop)
         self.assertEqual(workspace._gateway_terminal_error["reason"], "post_commit_stream_failure")
         self.assertTrue(any(call.args[0][:2] == ["docker", "kill"] for call in invoked.call_args_list))
@@ -105,7 +107,7 @@ class LogicalDeadlineTests(unittest.TestCase):
             _solver_control_monitor=SimpleNamespace(path=solver),
             container_name="test-agent", _read_gateway_control=lambda: {},
         )
-        with patch("agent_formalizer.deadline_integration.subprocess.run", return_value=subprocess.CompletedProcess([], 0)):
+        with patch("agent_formalizer.timing.deadline_integration.subprocess.run", return_value=subprocess.CompletedProcess([], 0)):
             monitor(workspace, self.clock, threading.Event())
         self.assertEqual(workspace._gateway_terminal_error["reason"], "external_call_stream_overlap")
 
@@ -148,7 +150,7 @@ setTimeout(() => console.log(JSON.stringify({{physical:Date.now()-physical, logi
                 proc.wait()
 
     def test_openclaw_overlay_targets_only_watchdogs(self):
-        from agent_formalizer.openclaw_deadlines import sources, transform
+        from agent_formalizer.timing.openclaw_deadlines import sources, transform
         root = Path('/usr/lib/node_modules/openclaw')
         if not root.exists():
             self.skipTest('locked OpenClaw runtime not installed')
@@ -200,23 +202,48 @@ def code_run(timeout):
         self.broker._prune()
         self.assertFalse(self.broker.leases)
         # A real process-group suspension does not spend this logical deadline.
-        proc = subprocess.Popen(["timeout", "0.3", "sh", "-c", "sleep 0.6; echo survived"],
+        # Leave a seconds-scale setup margin under concurrent Docker tests.
+        # A 300 ms native deadline can legitimately expire before the host
+        # polling thread is scheduled; that says nothing about retry escrow.
+        proc = subprocess.Popen(["timeout", "2", "sleep", "3"],
                                 env=env, stdout=subprocess.PIPE, start_new_session=True)
         try:
             end = time.monotonic() + 2
-            while not self.broker.leases and time.monotonic() < end:
-                time.sleep(0.01)
+            sleeping = False
+            watcher_ready = False
+            while time.monotonic() < end:
+                # GNU can fork its command before arming its watchdog. Wait
+                # for BOTH the command's physical sleep and the timer thread
+                # after register RPC has returned. Stopping mid-register can
+                # instead exercise the physical control-socket timeout.
+                children = Path(f"/proc/{proc.pid}/task/{proc.pid}/children")
+                for child in children.read_text().split() if children.exists() else []:
+                    try:
+                        sleeping = "nanosleep" in Path(f"/proc/{child}/wchan").read_text()
+                    except FileNotFoundError:
+                        pass
+                    if sleeping:
+                        break
+                watchers = [p for p in Path(f'/proc/{proc.pid}/task').glob('*/wchan')
+                            if p.parent.name != str(proc.pid)]
+                watcher_ready = any('nanosleep' in p.read_text() for p in watchers if p.exists())
+                registered = any(item['pid'] == proc.pid for item in self.broker.leases.values())
+                if sleeping and watcher_ready and registered:
+                    break
+                time.sleep(0.005)
+            self.assertTrue(sleeping, "child did not enter its physical sleep")
+            self.assertTrue(watcher_ready, "parent had not finished arming the logical watchdog")
             self.assertTrue(self.broker.leases)
             os.killpg(proc.pid, signal.SIGSTOP)
             self.broker.freeze()
-            time.sleep(0.7)
+            time.sleep(3.2)
             receipt = self.broker.settle("retry", 0.03)
             self.assertFalse(receipt["native_due"])
             os.killpg(proc.pid, signal.SIGCONT)
             self.broker.resume()
             out, _ = proc.communicate(timeout=3)
             self.assertEqual(proc.returncode, 0)
-            self.assertIn(b"survived", out)
+            self.assertEqual(out, b"")
         finally:
             if proc.poll() is None:
                 os.killpg(proc.pid, signal.SIGCONT)
@@ -232,17 +259,17 @@ class DeadlineProfileTests(unittest.TestCase):
 
     def test_nanobot_only_new_condition_propagates_runtime_environment(self):
         from agent_formalizer.claws import get_adapter
-        from agent_formalizer.deadline_integration import ENVIRONMENT_KEYS
-        old = load_benchmark_profile(BENCHMARK_PROFILES_DIR / "native_safety_streaming_solver_as_tool.json")
-        new = load_benchmark_profile(BENCHMARK_PROFILES_DIR / "native_safety_streaming_solver_as_tool_logical_deadline.json")
+        from agent_formalizer.timing.deadline_integration import ENVIRONMENT_KEYS
+        old = load_benchmark_profile(HISTORICAL_PROFILES_DIR / "native_safety_streaming_solver_as_tool.json")
+        new = load_benchmark_profile(HISTORICAL_PROFILES_DIR / "native_safety_streaming_solver_as_tool_logical_deadline.json")
         configs = [get_adapter("nanobot", benchmark_profile=p, model="openai/gpt-4o-mini", api_key="not-real")._benchmark_config() for p in (old, new)]
         self.assertNotIn("allowedEnvKeys", configs[0]["tools"]["exec"])
         self.assertEqual(configs[1]["tools"]["exec"]["allowedEnvKeys"], list(ENVIRONMENT_KEYS))
         self.assertFalse(any("API_KEY" in key for key in ENVIRONMENT_KEYS))
 
     def test_opt_in_identity_leaves_original_unchanged(self):
-        old = load_benchmark_profile(BENCHMARK_PROFILES_DIR / "native_safety_streaming_solver_as_tool.json")
-        new = load_benchmark_profile(BENCHMARK_PROFILES_DIR / "native_safety_streaming_solver_as_tool_logical_deadline.json")
+        old = load_benchmark_profile(HISTORICAL_PROFILES_DIR / "native_safety_streaming_solver_as_tool.json")
+        new = load_benchmark_profile(HISTORICAL_PROFILES_DIR / "native_safety_streaming_solver_as_tool_logical_deadline.json")
         before = old.resolve(harness="generic").raw
         after = new.resolve(harness="generic").raw
         self.assertNotIn("external_call_timing", before["resolved"])

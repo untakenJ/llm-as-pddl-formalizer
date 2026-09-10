@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agent_formalizer.config import (
+from agent_formalizer.configuration.config import (
     DOCKER_RESOURCE_NAME_MAX,
     container_name,
 )

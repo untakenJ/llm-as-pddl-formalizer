@@ -9,7 +9,7 @@ from agent_formalizer.claws.common import (
     EnvConfiguredAdapter,
     run_captured_agent,
 )
-from agent_formalizer.config import (
+from agent_formalizer.configuration.config import (
     CONTAINER_WORKSPACE,
     ZEROCLAW_BIN,
     ZEROCLAW_SOURCE_PATH,
@@ -90,17 +90,24 @@ class ZeroClawAdapter(EnvConfiguredAdapter):
         if not ZEROCLAW_BIN.is_file():
             raise RuntimeError(
                 f"ZeroClaw binary not found at {ZEROCLAW_BIN}. Run: "
-                "bash source/agent_formalizer/install_harnesses.sh zeroclaw"
+                "bash source/agent_formalizer/runtime/install_harnesses.sh zeroclaw"
             )
 
     def container_run_args(self, instance_id: str) -> list[str]:
-        return ["-v", f"{ZEROCLAW_BIN}:/usr/local/bin/zeroclaw:ro"]
+        return ["-v", f"{self.execution_binary()}:/usr/local/bin/zeroclaw:ro"]
+
+    def execution_binary(self):
+        from agent_formalizer.timing.deadline_integration import policy
+        if policy(self) == 'call-checkpoint-v1':
+            from agent_formalizer.timing.zeroclaw_deadlines import prepared
+            return prepared()[0]
+        return ZEROCLAW_BIN
 
     def state_isolation_spec(self, instance_id: str) -> dict:
         spec = super().state_isolation_spec(instance_id)
         spec["shared_readonly_bind_sources"] = [
             *spec.get("shared_readonly_bind_sources", []),
-            str(ZEROCLAW_BIN),
+            str(self.execution_binary()),
         ]
         return spec
 
@@ -185,22 +192,31 @@ strict_tool_parsing = false
         return value
 
     def runtime_info(self) -> dict:
-        from agent_formalizer.provenance import git_info, run_text
+        from agent_formalizer.results.provenance import git_info, run_text
 
         version = run_text([str(ZEROCLAW_BIN), "--version"])
         if ZEROCLAW_VERSION_NOTE_PATH.is_file():
             note = ZEROCLAW_VERSION_NOTE_PATH.read_text(encoding="utf-8").strip()
             if note:
                 version = f"{version} ({note})"
+        overlay = {}
+        from agent_formalizer.timing.deadline_integration import policy
+        if policy(self) == 'call-checkpoint-v1':
+            from agent_formalizer.timing.zeroclaw_deadlines import prepared
+            binary, manifest = prepared()
+            overlay = {'execution_binary': str(binary),
+                       'execution_binary_sha256': manifest['binary_sha256'],
+                       'native_deadline_overlay': manifest['implementation']}
         return {
             **super().runtime_info(),
+            **overlay,
             "binary": str(ZEROCLAW_BIN),
             "version": version,
             "source": git_info(ZEROCLAW_SOURCE_PATH),
         }
 
     def skills_info(self) -> dict:
-        from agent_formalizer.provenance import file_manifest
+        from agent_formalizer.results.provenance import file_manifest
 
         paths = [
             path for path in ZEROCLAW_SOURCE_PATH.glob("shared/skills/**/*")

@@ -18,6 +18,7 @@ validation stay centralized.
 | `pddl_solver` | `tools/solver/` | `/usr/local/bin/pddl-solver` + `solver-gateway` |
 
 All runnable benchmark study profiles, including native-clean baselines and
-profiles that enable tools, live under `benchmark_profiles/` (not inside each
-tool package), so profile discovery is uniform and study identity stays
-separate from tool implementation.
+profiles that enable tools, live under
+[`configs/benchmark_profiles/`](../configs/benchmark_profiles/README.md), so
+profile discovery is uniform and study identity stays separate from tool
+implementation.

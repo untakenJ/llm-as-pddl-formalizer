@@ -9,23 +9,24 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import PropertyMock, patch
 
-from agent_formalizer.benchmark_profile import (
-    BENCHMARK_PROFILES_DIR,
+from profile_fixtures import HISTORICAL_PROFILES_DIR
+
+from agent_formalizer.configuration.benchmark_profile import (
     DEFAULT_BENCHMARK_PROFILE,
     load_benchmark_profile,
 )
 from agent_formalizer.claws import get_adapter
-from agent_formalizer.minimum_agent_runtime import execute, parse_response
-from agent_formalizer.minimum_workspace import MinimumHostWorkspace
+from agent_formalizer.claws.minimum.runtime import execute, parse_response
+from agent_formalizer.claws.minimum.workspace import MinimumHostWorkspace
 from agent_formalizer.orchestrator import (
     _freeze_execution_reference,
     run_one_problem,
 )
-from agent_formalizer.runtime_lock import validate_runtime_lock
+from agent_formalizer.runtime.runtime_lock import validate_runtime_lock
 
 
 MINIMUM_PROFILE_PATH = (
-    BENCHMARK_PROFILES_DIR / "native_safety_minimum_agent.json"
+    HISTORICAL_PROFILES_DIR / "native_safety_minimum_agent.json"
 )
 DOMAIN = "(define (domain mock) (:requirements :strips) (:predicates (ready)))"
 PROBLEM = "(define (problem p01) (:domain mock) (:init (ready)) (:goal (ready)))"
@@ -226,15 +227,15 @@ class MinimumRuntimeTests(unittest.TestCase):
 
             with (
                 patch(
-                    "agent_formalizer.minimum_agent_runtime._validate_output_path",
+                    "agent_formalizer.claws.minimum.runtime._validate_output_path",
                     side_effect=lambda value: Path(value),
                 ),
                 patch(
-                    "agent_formalizer.minimum_agent_runtime._chat_completion",
+                    "agent_formalizer.claws.minimum.runtime._chat_completion",
                     side_effect=fake_chat,
                 ),
                 patch(
-                    "agent_formalizer.minimum_agent_runtime._solver_feedback",
+                    "agent_formalizer.claws.minimum.runtime._solver_feedback",
                     side_effect=fake_solver,
                 ),
             ):
@@ -294,11 +295,11 @@ class MinimumRuntimeTests(unittest.TestCase):
 
             with (
                 patch(
-                    "agent_formalizer.minimum_agent_runtime._validate_output_path",
+                    "agent_formalizer.claws.minimum.runtime._validate_output_path",
                     side_effect=lambda value: Path(value),
                 ),
                 patch(
-                    "agent_formalizer.minimum_agent_runtime._chat_completion",
+                    "agent_formalizer.claws.minimum.runtime._chat_completion",
                     side_effect=fake_chat,
                 ),
                 self.assertRaisesRegex(ValueError, "no JSON object"),

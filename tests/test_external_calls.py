@@ -11,13 +11,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from profile_fixtures import HISTORICAL_PROFILES_DIR
+
 from agent_formalizer.external_calls import Action, Decision, ExternalCallInvalid, RetryController, RetryPolicy
 from agent_formalizer.external_calls.solver import Response, classify_response, solve
 from agent_formalizer.external_calls.control import ToolControl, ToolControlMonitor, read_json, write_json
 from agent_formalizer.claws.base import AttemptClock
 from agent_formalizer.tools.solver.remote_client import solver_failure
 from agent_formalizer.workspace import AgentWorkspace
-from agent_formalizer.benchmark_profile import BENCHMARK_PROFILES_DIR, load_benchmark_profile
+from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
 
 
 def terminal(stdout="", stderr="", output=None, **extra):
@@ -52,6 +54,20 @@ class RetryTests(unittest.TestCase):
 
 
 class SolverRulesTests(unittest.TestCase):
+    def test_request_rejections_are_agent_visible_not_guessed_configuration_failures(self):
+        for status in (400, 415, 422):
+            self.assertEqual(classify_response(Response(status=status), stage="submit").action, Action.RETURN)
+        for error in ("predicate foo does not exist", "problem does not contain a goal",
+                      "Adaptor Not Found", "input not configured correctly"):
+            result = classify_response(Response(status=200, payload={"error": error}), stage="poll")
+            self.assertEqual((result.action, result.exhausted), (Action.RETRY, Action.RETURN))
+
+    def test_local_exception_name_alone_cannot_prove_configuration_error(self):
+        for kind in ("ValueError", "KeyError"):
+            for local in ({"error": {"type": kind}}, {"error_type": kind}):
+                result = classify_response(Response(status=200, payload={"local_backend": local}), stage="poll")
+                self.assertEqual((result.action, result.exhausted), (Action.RETRY, Action.RETURN))
+
     def test_routing_table(self):
         rows = [
             (PLAN, Action.RETURN, Action.INVALIDATE, "solver_plan"),
@@ -257,7 +273,7 @@ class TimingControlTests(unittest.TestCase):
 
 class ProfileIdentityTests(unittest.TestCase):
     def test_new_policy_is_semantic_but_legacy_resolves_without_injection(self):
-        profile = load_benchmark_profile(BENCHMARK_PROFILES_DIR / "native_safety_streaming_solver_as_tool.json")
+        profile = load_benchmark_profile(HISTORICAL_PROFILES_DIR / "native_safety_streaming_solver_as_tool.json")
         resolved = profile.resolve("openclaw")
         self.assertEqual(resolved.raw["resolved"]["solver_error_routing"], "solver-transient-v1")
         self.assertIn("external_call_unrecoverable", resolved.raw["infra_retry"]["invalidators"])
@@ -273,7 +289,7 @@ class ProfileIdentityTests(unittest.TestCase):
             self.assertEqual(legacy.sha256, load_benchmark_profile(path).resolve("openclaw").sha256)
 
     def test_unknown_policy_rejected(self):
-        profile = load_benchmark_profile(BENCHMARK_PROFILES_DIR / "native_safety_streaming_solver_as_tool.json")
+        profile = load_benchmark_profile(HISTORICAL_PROFILES_DIR / "native_safety_streaming_solver_as_tool.json")
         raw = deepcopy(profile.raw)
         raw["condition_profile"]["overrides"]["solver_error_routing"] = "typo"
         with tempfile.TemporaryDirectory() as directory:

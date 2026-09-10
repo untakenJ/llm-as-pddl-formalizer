@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from agent_formalizer.benchmark_profile import DEFAULT_BENCHMARK_PROFILE
+from agent_formalizer.configuration.benchmark_profile import DEFAULT_BENCHMARK_PROFILE
 from agent_formalizer.claws.base import BaseClawAdapter
 from agent_formalizer.claws.generic import GenericAgentAdapter
 from agent_formalizer.claws.hermes import HermesAdapter

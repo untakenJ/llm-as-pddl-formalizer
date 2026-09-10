@@ -83,7 +83,9 @@ def classify_response(response: Response, *, stage: str) -> Decision:
         return Decision(Action.INVALIDATE, "solver_untrusted_redirect")
     if status == 413:
         return Decision(Action.RETURN, "solver_request_size_limit")
-    if status in {400, 404, 405, 415, 422}:
+    if status in {400, 415, 422}:
+        return Decision(Action.RETURN, "solver_request_rejected")
+    if status in {404, 405}:
         return Decision(Action.INVALIDATE, "solver_protocol_configuration_error")
     if response.error:
         return retry("solver_transport_error" if response.error_type != "InvalidResponse"
@@ -94,20 +96,20 @@ def classify_response(response: Response, *, stage: str) -> Decision:
         worker = local.get("worker") or {}
         error = local.get("error") or {}
         kind = error.get("type") if isinstance(error, dict) else None
+        kind = kind or local.get("error_type")
         if isinstance(worker, dict) and worker.get("oom_killed"):
             return retry("solver_worker_oom", ambiguous=True)
-        if kind in {"FileNotFoundError", "PermissionError", "ValueError", "KeyError"}:
+        if kind in {"FileNotFoundError", "PermissionError"}:
             return Decision(Action.INVALIDATE, "solver_runtime_configuration_error")
+        if kind in {"ValueError", "KeyError"}:
+            return retry("solver_worker_internal_failure", ambiguous=stage == "poll")
         if kind == "worker_control_timeout":
             return retry("solver_worker_control_timeout", ambiguous=True)
         return retry("solver_worker_service_error")
     envelope_error = payload.get("error", payload.get("Error"))
     if envelope_error:
         error = envelope_error if isinstance(envelope_error, str) else json.dumps(envelope_error)
-        if any(part in error for part in (
-            "Required argument", "does not exist", "does not contain", "is not installed",
-            "not configured correctly", "Adaptor Not Found", "unsupported local solver package",
-        )):
+        if re.search(r"(?i)^(?:Required argument\b|Package\s+\S+\s+(?:does not exist|is not installed)|unsupported local solver package\b)", error):
             return Decision(Action.INVALIDATE, "solver_protocol_configuration_error")
         if "server-side error trying to run a planutils package" in error:
             return retry("solver_server_side_error", ambiguous=stage == "poll")

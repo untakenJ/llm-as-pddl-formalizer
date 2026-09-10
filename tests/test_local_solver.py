@@ -14,7 +14,7 @@ SOURCE_DIR = Path(__file__).resolve().parents[1] / "source"
 if str(SOURCE_DIR) not in sys.path:
     sys.path.insert(0, str(SOURCE_DIR))
 
-from agent_formalizer.benchmark_profile import (
+from agent_formalizer.configuration.benchmark_profile import (
     BENCHMARK_PROFILES_DIR,
     BenchmarkProfile,
     load_benchmark_profile,
@@ -27,6 +27,7 @@ from local_solver.server import (
     DockerWorkerPool,
     LocalSolverState,
     ServerConfig,
+    build_parser,
 )
 from sweep_agent_pipeline import run_agent_pipeline
 from sweep_pipeline import run_formalizer_pipeline
@@ -63,7 +64,9 @@ class LocalSolverDefaultsTests(unittest.TestCase):
         self.assertEqual(config.workers, 1)
         self.assertEqual(config.memory, "4096m")
         self.assertEqual(config.memory_swap, "4096m")
-        self.assertEqual(config.timeout_seconds, 60.0)
+        self.assertEqual(config.timeout_seconds, 90.0)
+        self.assertEqual(build_parser().parse_args([]).timeout_seconds, 90.0)
+        self.assertEqual(build_parser().parse_args(['--timeout', '60']).timeout_seconds, 60.0)
         self.assertEqual(config.worker_security, "privileged")
         self.assertEqual(DEFAULT_ALLOWED_SOLVERS, ("dual-bfws-ffparser",))
 

@@ -6,7 +6,7 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 
-from agent_formalizer.operational_config import (
+from agent_formalizer.configuration.operational_config import (
     DEFAULT_OPERATIONAL_CONFIG_PATH,
     load_operational_config,
     safe_operational_component,
@@ -123,6 +123,22 @@ class OperationalConfigTests(unittest.TestCase):
                 load_operational_config(
                     self._write(root, unknown_handler, "handler.json")
                 )
+
+    def test_network_defaults_are_compatible_and_strictly_operational(self):
+        raw = json.loads(DEFAULT_OPERATIONAL_CONFIG_PATH.read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = load_operational_config(self._write(root, raw, "new.json"))
+            raw.pop("network_resources")
+            legacy = load_operational_config(self._write(root, raw, "legacy.json"))
+            self.assertEqual(base.raw, legacy.raw)
+            raw["network_resources"] = dict(base.raw["network_resources"], safety_margin=3)
+            changed = load_operational_config(self._write(root, raw, "changed.json"))
+            self.assertNotEqual(base.sha256, changed.sha256)
+            self.assertEqual(changed.metadata()["experiment_identity"], "excluded")
+            raw["network_resources"]["unknown"] = True
+            with self.assertRaisesRegex(ValueError, "network_resources"):
+                load_operational_config(self._write(root, raw, "bad.json"))
 
     def test_handler_provider_keys_are_canonicalized(self):
         raw = json.loads(DEFAULT_OPERATIONAL_CONFIG_PATH.read_text())

@@ -13,8 +13,10 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
+from profile_fixtures import HISTORICAL_PROFILES_DIR
+
 from agent_formalizer.claws import CLAWS, get_adapter
-from agent_formalizer.benchmark_profile import (
+from agent_formalizer.configuration.benchmark_profile import (
     BENCHMARK_PROFILES_DIR,
     DEFAULT_BENCHMARK_PROFILE,
     DEFAULT_PROFILE_PATH,
@@ -45,7 +47,7 @@ from agent_formalizer.claws.openclaw import (
     _normalize_openclaw_usage,
 )
 from agent_formalizer.claws.zeroclaw import ZeroClawAdapter, _parse_costs
-from agent_formalizer.config import CLAW_DEFAULTS, agent_model_label
+from agent_formalizer.configuration.config import CLAW_DEFAULTS, agent_model_label
 from agent_formalizer.workspace import AgentWorkspace
 from agent_formalizer.util import read_named_secret, read_named_setting
 from sweep_agent_pipeline import (
@@ -84,9 +86,9 @@ class AdapterRegistryTests(unittest.TestCase):
     def test_versioned_profile_drives_every_default(self):
         self.assertEqual(DEFAULT_BENCHMARK_PROFILE.schema_version, 3)
         self.assertEqual(DEFAULT_PROFILE_PATH.parent, BENCHMARK_PROFILES_DIR)
-        self.assertEqual(DEFAULT_PROFILE_PATH.name, "native_safety_native_clean.json")
+        self.assertEqual(DEFAULT_PROFILE_PATH.name, "native_baseline_v1.json")
         envelope = DEFAULT_BENCHMARK_PROFILE.raw["benchmark_envelope"]
-        self.assertEqual(envelope["id"], "native-safety-v4")
+        self.assertEqual(envelope["id"], "native-safety-v5-streaming")
         self.assertEqual(
             set(envelope["safety_guards"]),
             {
@@ -102,15 +104,15 @@ class AdapterRegistryTests(unittest.TestCase):
         )
         self.assertEqual(
             load_benchmark_profile(
-                BENCHMARK_PROFILES_DIR / "native_safety_solver_as_tool.json"
+                HISTORICAL_PROFILES_DIR / "native_safety_solver_as_tool.json"
             ).raw["condition_profile"]["id"],
             "solver-as-tool",
         )
         temperature_profile = load_benchmark_profile(
-            BENCHMARK_PROFILES_DIR / "native_safety_temperature_0_1.json"
+            HISTORICAL_PROFILES_DIR / "native_safety_temperature_0_1.json"
         )
         solver_temperature_profile = load_benchmark_profile(
-            BENCHMARK_PROFILES_DIR
+            HISTORICAL_PROFILES_DIR
             / "native_safety_solver_as_tool_temperature_0_1.json"
         )
         for name in NATIVE_HARNESSES:
@@ -131,10 +133,12 @@ class AdapterRegistryTests(unittest.TestCase):
 
     def test_streaming_profile_has_distinct_identity_and_soft_batch_contract(self):
         profile = load_benchmark_profile(
-            BENCHMARK_PROFILES_DIR / "native_safety_streaming_native_clean.json"
+            HISTORICAL_PROFILES_DIR / "native_safety_streaming_native_clean.json"
         )
         resolved = profile.resolve("hermes")
-        default = DEFAULT_BENCHMARK_PROFILE.resolve("hermes")
+        default = load_benchmark_profile(
+            HISTORICAL_PROFILES_DIR / "native_safety_native_clean.json"
+        ).resolve("hermes")
         self.assertEqual(
             resolved.raw["benchmark_envelope"]["id"],
             "native-safety-v5-streaming",
@@ -162,10 +166,10 @@ class AdapterRegistryTests(unittest.TestCase):
 
     def test_streaming_solver_as_tool_profile_combines_only_named_condition(self):
         baseline = load_benchmark_profile(
-            BENCHMARK_PROFILES_DIR / "native_safety_streaming_native_clean.json"
+            HISTORICAL_PROFILES_DIR / "native_safety_streaming_native_clean.json"
         )
         solver = load_benchmark_profile(
-            BENCHMARK_PROFILES_DIR
+            HISTORICAL_PROFILES_DIR
             / "native_safety_streaming_solver_as_tool.json"
         )
         for harness in NATIVE_HARNESSES:
@@ -190,7 +194,7 @@ class AdapterRegistryTests(unittest.TestCase):
 
     def test_streaming_profile_rejects_wrong_identity_or_retry_count(self):
         source = load_benchmark_profile(
-            BENCHMARK_PROFILES_DIR / "native_safety_streaming_native_clean.json"
+            HISTORICAL_PROFILES_DIR / "native_safety_streaming_native_clean.json"
         ).raw
         for field, value, message in (
             ("envelope", "native-safety-v4", "native_streaming requires"),
@@ -220,7 +224,7 @@ class AdapterRegistryTests(unittest.TestCase):
 
     def test_practical_unlimited_profile_uses_large_integer_budgets(self):
         profile = load_benchmark_profile(
-            BENCHMARK_PROFILES_DIR / "native_clean_practical_unlimited.json"
+            HISTORICAL_PROFILES_DIR / "native_clean_practical_unlimited.json"
         )
         for name in NATIVE_HARNESSES:
             with self.subTest(name=name):
@@ -251,7 +255,7 @@ class AdapterRegistryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "profile.json"
             path.write_text(json.dumps(raw))
-            from agent_formalizer.benchmark_profile import load_benchmark_profile
+            from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
             profile = load_benchmark_profile(path)
             for name in NATIVE_HARNESSES:
                 adapter = get_adapter(name, benchmark_profile=profile)
@@ -349,7 +353,7 @@ class ProviderTests(unittest.TestCase):
             changed["condition_profile"]["id"] = "changed"
             profile_path = root / "changed.json"
             profile_path.write_text(json.dumps(changed))
-            from agent_formalizer.benchmark_profile import load_benchmark_profile
+            from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
             with self.assertRaises(ValueError):
                 _freeze_study_profile(load_benchmark_profile(profile_path), root)
 

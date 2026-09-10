@@ -16,7 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agent_formalizer.config import MODEL_GATEWAY_SCRIPT
+from agent_formalizer.configuration.config import MODEL_GATEWAY_SCRIPT
 from agent_formalizer.workspace import AgentWorkspace
 
 

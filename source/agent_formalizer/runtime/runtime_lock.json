@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "lock_id": "agent-harness-runtime-2026-09-10-functional-layout-v2",
+  "container": {
+    "reference": "pddl-agent-base:latest",
+    "image_id": "sha256:804a1c8db954455393fb44455c95a92cbda5247f9b7ad52f56f4af50ae550df1",
+    "dockerfile_sha256": "1f598bc5bc9600858368615463a3f02fc5d46ff380cc1acf0b59457ff88e41bc"
+  },
+  "provider_transports": {
+    "logits": {
+      "python_version": "Python 3.12.13",
+      "python_executable_sha256": "9544d2a29138833e6177d45dbc57468d37710b5080c901fbb579d53f251cdd6f",
+      "python_distribution_manifest_sha256": "3d211ded6aa5371f801e25c35aa7b1892aa2bb3da3307b874ad88f9e123ec954",
+      "python_distribution_count": 29,
+      "bridge_entrypoint_sha256": "37e6b8348c94a0745f3fb7a1971928af679356dda8fc975daa1c358c77774580",
+      "gateway_entrypoint_sha256": "2ee1cc2665ad848a75a62a941340391922f3e3fe95b8e43dd0a62611bb6518e3",
+      "model_assets_manifest_sha256": "163ee3a6e001a588a9e29aff4fce04d42de20055d5ad6d45038f4cc57a3b16ad",
+      "model_assets_count": 6
+    }
+  },
+  "harnesses": {
+    "openclaw": {
+      "version": "OpenClaw 2026.6.10 (aa69b12)",
+      "node_version": "v22.23.1",
+      "node_binary_sha256": "93956de2e59480474a7b46571da1651180b1a050cdf32641ebec4ce6e478e068",
+      "package_json_sha256": "865c6f95910979dc5cfcd9752a3a208d6b94c5fdd46b36a7e9f2b0b42cdf9426",
+      "node_distribution_manifest_sha256": "c4724c9d9ea227521df11574d6a23931d982fe827f69edfcda4960381fb0992f",
+      "node_distribution_count": 373,
+      "runtime_payload_manifest_sha256": "2d2bb77649397b8b875c27fa2c1f070776949da80c3655dc58fedbb0fb388adb",
+      "runtime_payload_count": 8443,
+      "native_assets_manifest_sha256": "edb1b8f86e9e4a8c6c9163a8767d085d1e9037fcea02569ed567b0331850204c",
+      "native_assets_count": 83
+    },
+    "hermes": {
+      "distribution": "hermes-agent",
+      "version": "0.18.2",
+      "python_version": "Python 3.12.13",
+      "python_executable_sha256": "9544d2a29138833e6177d45dbc57468d37710b5080c901fbb579d53f251cdd6f",
+      "python_distribution_manifest_sha256": "e1111a01def4cb386b45c6065fe3b2ae19083a3e4b911e9b81d63ada0e53edc3",
+      "python_distribution_count": 60,
+      "harness_payload_manifest_sha256": "97ceae0de4acfbdc1f48582aadb255d656eeb7714359f85481a03f64ccc9f5b5",
+      "harness_payload_count": 926,
+      "native_assets_manifest_sha256": "1ed9d73050095ad7bf26bc6fcebfa06b6cbf3320327166a0e53b0d4841593b0d",
+      "native_assets_count": 1
+    },
+    "nanobot": {
+      "distribution": "nanobot-ai",
+      "version": "0.2.2",
+      "python_version": "Python 3.12.13",
+      "python_executable_sha256": "9544d2a29138833e6177d45dbc57468d37710b5080c901fbb579d53f251cdd6f",
+      "python_distribution_manifest_sha256": "4fe2ecabc2d493a7b763f8a7adcc461894668ff862887b8506d50d52e8918530",
+      "python_distribution_count": 115,
+      "harness_payload_manifest_sha256": "54526762ccee795e0ff89c187fb99825dcdbe39097e3a7da6192a9620eedeec3",
+      "harness_payload_count": 576,
+      "native_assets_manifest_sha256": "067ef30db4de95948ef8ee16e0b6ebbdb2bcbbd418b600c0c5025064edfa3df4",
+      "native_assets_count": 23
+    },
+    "generic": {
+      "source_commit": "e6bbc91631b42026a2bc1e91cb51537d1151aa14",
+      "python_version": "Python 3.12.13",
+      "python_executable_sha256": "9544d2a29138833e6177d45dbc57468d37710b5080c901fbb579d53f251cdd6f",
+      "pyproject_sha256": "a295aeb38e6a76fa35104a855f9c84fe5510daa9be367cbe976352b6727200dc",
+      "python_distribution_manifest_sha256": "66d0a32c82063afc09f3c9648a3d0bc5b8c20b19db2d11e27a192fea081425f1",
+      "python_distribution_count": 19,
+      "source_payload_manifest_sha256": "a8c8ecc038ae5657c5b3d305260043c1ca0f7b8b030aa04fdb6e28c1a6117af8",
+      "source_payload_count": 218,
+      "native_assets_manifest_sha256": "520342ca6bc56d524e2e0fbbd62ac27f68c5b470ad1309bb05b0b79c66972c46",
+      "native_assets_count": 42
+    },
+    "zeroclaw": {
+      "version": "zeroclaw 0.8.2 (unreleased-pr8935+gemini-thought-signature)",
+      "binary_sha256": "2ba3667e590068882a4958c6fb0b1a8fda162b32b67f44ca38841cc1c10074db",
+      "source_commit": "85e0cfafbe677590e4fe5947f83673bb49ba0fc2",
+      "cargo_lock_sha256": "11060e8c445e1ef8f64a37546fd987c34bcc4af06b88cffcba9a9dc591df916a",
+      "native_assets_manifest_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "native_assets_count": 0
+    },
+    "minimum": {
+      "runtime_kind": "benchmark-owned-python-stdlib",
+      "runtime_entrypoint_sha256": "9ef0e08cbf6bbf4e11076023b3a22e10ecc0fce4123e07dd67a40a5805bf1f78",
+      "native_assets_manifest_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "native_assets_count": 0
+    }
+  }
+}

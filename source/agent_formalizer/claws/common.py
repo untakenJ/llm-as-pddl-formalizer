@@ -17,7 +17,7 @@ from agent_formalizer.claws.base import (
     decode_output,
     run_process_with_attempt_clock,
 )
-from agent_formalizer.config import (
+from agent_formalizer.configuration.config import (
     MODEL_GATEWAY_HOST,
     MODEL_GATEWAY_PORT,
     PROVIDER_API_BASE,
@@ -296,6 +296,10 @@ class EnvConfiguredAdapter(BaseClawAdapter):
         if self.resolved_config is not None:
             env.update(self.resolved_config.raw["resolved"]["environment"]["fixed"])
         env.update(extra or {})
+        from agent_formalizer.timing.deadline_integration import policy
+        if policy(self) == 'call-checkpoint-v1' and 'PYTHONPATH' in env:
+            from agent_formalizer.timing.logical_time import RUNTIME_DIR
+            env['PYTHONPATH'] = RUNTIME_DIR + os.pathsep + env['PYTHONPATH']
         args: list[str] = []
         for name, value in env.items():
             args.extend(["-e", f"{name}={value}"])
@@ -315,7 +319,7 @@ class PythonRuntimeMixin:
         if not self.runtime_python.is_file():
             raise RuntimeError(
                 f"{self.install_target} runtime not found at {self.runtime_python}. "
-                "Run: bash source/agent_formalizer/install_harnesses.sh "
+                "Run: bash source/agent_formalizer/runtime/install_harnesses.sh "
                 f"{self.install_target}"
             )
 
@@ -357,7 +361,7 @@ class PythonRuntimeMixin:
         return spec
 
     def python_runtime_info(self, distribution: str | None = None) -> dict:
-        from agent_formalizer.provenance import run_text
+        from agent_formalizer.results.provenance import run_text
 
         info = {
             "python_executable": str(self.runtime_python),

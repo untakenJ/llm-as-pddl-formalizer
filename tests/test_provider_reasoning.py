@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent_formalizer.claws import get_adapter
-from agent_formalizer.provider_reasoning import (
+from agent_formalizer.results.provider_reasoning import (
     ProviderReasoningRecorder,
     extract_reasoning_fragments,
     reasoning_capture_capability,
@@ -216,7 +216,7 @@ class ProviderReasoningRecorderTests(unittest.TestCase):
                 root / "reasoning_capture_status.json",
             )
             with patch(
-                "agent_formalizer.provider_reasoning.extract_reasoning_fragments",
+                "agent_formalizer.results.provider_reasoning.extract_reasoning_fragments",
                 side_effect=RuntimeError("extractor failed"),
             ):
                 report = recorder.capture_payload({}, context={})

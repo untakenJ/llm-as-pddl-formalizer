@@ -18,7 +18,7 @@ from agent_formalizer.claws.generic import (
     GenericAgentAdapter,
 )
 from agent_formalizer.claws import get_adapter
-from agent_formalizer.benchmark_profile import DEFAULT_BENCHMARK_PROFILE, load_benchmark_profile
+from agent_formalizer.configuration.benchmark_profile import DEFAULT_BENCHMARK_PROFILE, load_benchmark_profile
 from agent_formalizer.claws.hermes import HermesAdapter
 from agent_formalizer.claws.nanobot import NanoBotAdapter
 from agent_formalizer.claws.openclaw import OpenClawAdapter

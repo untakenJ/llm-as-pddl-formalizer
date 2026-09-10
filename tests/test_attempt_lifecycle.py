@@ -7,14 +7,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agent_formalizer.benchmark_profile import (
-    BENCHMARK_PROFILES_DIR,
+from profile_fixtures import HISTORICAL_PROFILES_DIR
+
+from agent_formalizer.configuration.benchmark_profile import (
     DEFAULT_BENCHMARK_PROFILE,
     load_benchmark_profile,
 )
 from agent_formalizer.orchestrator import InfraInvalid, _run_attempt
 from agent_formalizer.result_types import AgentResult, FormalizerResult
-from agent_formalizer.execution_validity import (
+from agent_formalizer.results.execution_validity import (
     append_manual_event,
     refresh_cell_state,
     selected_attempt,
@@ -32,7 +33,7 @@ def adapter(max_tries: int = 3):
 
 def streaming_adapter():
     profile = load_benchmark_profile(
-        BENCHMARK_PROFILES_DIR / "native_safety_streaming_native_clean.json"
+        HISTORICAL_PROFILES_DIR / "native_safety_streaming_native_clean.json"
     )
     return SimpleNamespace(
         resolved_config=profile.resolve("hermes", model="openai/test-model")
@@ -364,8 +365,40 @@ class AttemptLifecycleTests(unittest.TestCase):
 
         self.assertEqual(run.call_count, 2)
         self.assertFalse(result.attempt_valid)
-        self.assertEqual(result.status, "infra_invalid")
+        self.assertEqual(result.status, "incomplete")  # Current v5 envelope.
         self.assertIsNone(result.completion_path)
+
+    def test_automatic_invalid_runtime_repair_needs_authorization_and_resumes(self):
+        calls = []
+
+        def fake(*args, **kwargs):
+            calls.append(kwargs['execution_try'])
+            if len(calls) == 1:
+                raise InfraInvalid('provider_transient_exhausted', 'unavailable', retry_execution=False)
+            return valid_result(generated=False), minimal_evidence()
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            'agent_formalizer.orchestrator._run_execution_try', side_effect=fake
+        ):
+            root = Path(tmp)
+            self.invoke(root, fake, task_hash='a' * 64, runtime_hash='b' * 64)
+            cell = next(root.glob('**/invalid_attempt.json')).parent.parent
+            evidence = cell / 'p01/executions/execution-001/infra_invalid.json'
+            original = evidence.read_bytes()
+            with self.assertRaisesRegex(Exception, 'without an exact authorized repair runtime'):
+                self.invoke(root, fake, task_hash='a' * 64, runtime_hash='c' * 64)
+            append_manual_event(cell, action='authorize_repair', problem='p01', attempt_index=1,
+                execution_try=1, operator='owner', reason_code='tool_infra.checkpoint_lifecycle',
+                reason='Authorized lifecycle fix', evidence_paths=[evidence], result_visibility='score_visible',
+                timestamp='2026-09-09T00:00:00Z', replacement_task_input_sha256='a' * 64,
+                replacement_runtime_identity_sha256='c' * 64)
+            second = self.invoke(root, fake, task_hash='a' * 64, runtime_hash='c' * 64)
+            resumed = self.invoke(root, fake, task_hash='a' * 64, runtime_hash='c' * 64)
+            self.assertTrue(second.attempt_valid)
+            self.assertEqual(resumed.execution_try, 2)
+            self.assertEqual(calls, [1, 2])
+            self.assertEqual(evidence.read_bytes(), original)
+            self.assertEqual(selected_attempt(refresh_cell_state(cell), 'p01')['selected_execution'], 2)
 
     def test_provider_transient_exhaustion_is_invalid_without_auto_rerun(self):
         with tempfile.TemporaryDirectory() as tmp, patch(

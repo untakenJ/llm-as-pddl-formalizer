@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from batch_utils import format_problem_name, run_parallel
-from agent_formalizer.execution_validity import (
+from agent_formalizer.results.execution_validity import (
     cell_dir_for_model_dir,
     refresh_cell_state,
     selected_attempt,

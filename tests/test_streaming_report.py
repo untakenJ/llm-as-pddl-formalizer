@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_formalizer.streaming_report import summarize_streaming_outputs
+from agent_formalizer.results.streaming_report import summarize_streaming_outputs
 
 
 def _metadata(harness: str, overshoot: int, *, streaming: bool = True) -> dict:

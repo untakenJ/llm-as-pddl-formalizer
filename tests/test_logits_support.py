@@ -4,7 +4,7 @@ import json
 import unittest
 
 from agent_formalizer.claws import get_adapter
-from agent_formalizer.logits_openai_bridge import (
+from agent_formalizer.compute_platforms.logits.logits_openai_bridge import (
     BridgeService,
     JsonlLedger,
     LogitsChatBackend,

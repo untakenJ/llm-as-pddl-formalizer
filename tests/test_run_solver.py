@@ -12,7 +12,7 @@ if str(SOURCE_DIR) not in sys.path:
     sys.path.insert(0, str(SOURCE_DIR))
 
 import run_solver as solver_module
-from agent_formalizer.execution_validity import append_manual_event
+from agent_formalizer.results.execution_validity import append_manual_event
 
 
 class RunSolverModelLabelTests(unittest.TestCase):

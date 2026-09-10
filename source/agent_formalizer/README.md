@@ -11,11 +11,43 @@ start an agent container. Its adapter parses the last model response and writes
 the same two official files. The runner then copies official files byte-for-byte
 to the existing solver/VAL-compatible layout.
 
+## Code organization
+
+`orchestrator.py` and `workspace.py` retain the shared execution flow and
+workspace lifecycle. Feature-specific implementation lives in:
+
+- [`configs/`](configs/README.md): user-editable benchmark, operational and
+  credential configurations.
+- [`configuration/`](configuration/): configuration loaders, validation,
+  schemas and selected skill bundles.
+- [`compute_platforms/`](compute_platforms/README.md): platform integrations;
+  `compute_platforms/logits/` contains the Logits protocol bridge and entrypoint.
+- [`gateways/`](gateways/): shared model and controlled-web proxy services.
+- [`results/`](results/): execution validity, provenance, optional evidence and
+  reporting code. Experiment outputs still use the configured output location.
+- [`runtime/`](runtime/): pinned environment installer, lock and requirements.
+- [`docker/`](docker/): container image and shared network resource management.
+- [`prompts/`](prompts/): canonical templates and task text handling.
+- [`skills/`](skills/README.md): opt-in experimental skill content.
+- [`timing/`](timing/): logical deadlines, call checkpoints, native integration
+  and the deployable files in `timing/runtime/`.
+- [`external_calls/`](external_calls/): shared recovery policies, classifiers
+  and acknowledged request control.
+- [`claws/`](claws/): harness adapters; `claws/minimum/` contains the Minimum
+  adapter, host workspace and standalone standard-library runtime.
+
+Host imports use these package paths. Sidecars still receive the same narrowly
+selected files at their existing container paths. Source relocation changes
+implementation hashes; existing frozen studies keep their recorded identities.
+When the ZeroClaw timing overlay is missing or its inputs change, build it with
+`PYTHONPATH=source python -m agent_formalizer.timing.zeroclaw_deadlines`
+before running that timing condition. Existing matching overlays are reusable.
+
 ## Configuration model
 
-Versioned, runnable profiles live together in
-[`benchmark_profiles/`](benchmark_profiles/). The default
-[`native_safety_native_clean.json`](benchmark_profiles/native_safety_native_clean.json)
+Start with the [user configuration guide](configs/README.md). The single
+maintained baseline in [`configs/benchmark_profiles/`](configs/benchmark_profiles/),
+[`native_baseline_v1.json`](configs/benchmark_profiles/native_baseline_v1.json),
 implements the agreed four layers:
 
 1. `native_clean`: the pinned harness's official clean initialization or a
@@ -34,7 +66,7 @@ envelope/condition require cross-harness mappings. Every run records the config
 name, full resolved config, SHA-256, translation ledger, task hash, runtime
 closure, image identity, and validation evidence.
 
-The default `native-safety-v4` envelope uses:
+The default `native-safety-v5-streaming` envelope and native condition use:
 
 - model: `google-vertex/gemini-3.1-flash-lite`;
 - harness active-time deadline: 1800 seconds, excluding benchmark-owned
@@ -54,14 +86,17 @@ The default `native-safety-v4` envelope uses:
 - state validation: every attempt inspects its live container mounts and fails
   if any writable host bind is not exactly declared as attempt-private;
 - skills/bundles: pinned official clean baseline;
+- added agent tools: none; solver/VAL evaluation still uses the local solver
+  with `solver-transient-v1` recovery;
+- transparent recovery timing: `call-checkpoint-v1` across the five native
+  harnesses;
 - official-delivery-file success; final-message recovery disabled.
 
 CLI budget changes are recorded as `experimental_budget`, rather than being
 misrepresented as a harness-native default.
 
-The optional `native-safety-v5-streaming` envelope is a distinct study
-identity, selected with
-`--benchmark-config source/agent_formalizer/benchmark_profiles/native_safety_streaming_native_clean.json`.
+The default `native-safety-v5-streaming` envelope has a distinct study identity
+from historical buffered v4 profiles.
 It forwards the first complete semantic event immediately, uses bounded
 incremental tool observers, commits tool calls only after normal completion,
 allows a complete final tool batch to overshoot the action admission threshold,
@@ -69,6 +104,12 @@ and rejects the next request. Direct post-commit stream failures discard the
 whole clean execution try and recover up to five times; true silence, client
 cancellation, and benchmark deadlines remain valid native outcomes. It must not
 be mixed with buffered v4 results.
+
+Start each new experimental profile from this baseline, apply only the user's
+requested differences, record its baseline provenance and freeze the complete
+derived profile. Baseline changes themselves require explicit user approval;
+see the root `AGENTS.md` and the [derivation guide](configs/benchmark_profiles/README.md).
+Resume/repair keeps the study's original frozen profile, not the current default.
 
 ## Runtime closure
 
@@ -81,7 +122,7 @@ docker build -t pddl-agent-base:latest source/agent_formalizer/docker
 Install repository-local runtimes:
 
 ```bash
-bash source/agent_formalizer/install_harnesses.sh all
+bash source/agent_formalizer/runtime/install_harnesses.sh all
 ```
 
 The installer uses exact Python distribution manifests. The runtime lock also
@@ -109,7 +150,7 @@ command uses the same image even if a tag later changes.
 
 ## Credentials and host environment
 
-[`credential_profiles.json`](credential_profiles.json) is the secret-free
+[`configs/credential_profiles.json`](configs/credential_profiles.json) is the secret-free
 credential registry. Each named profile binds one API-key variable reference to
 the auxiliary provider values needed by that key. For Vertex this means the key
 and project are selected as one unit. Resolution uses an exact model default
@@ -125,7 +166,7 @@ The bundled Vertex profiles are:
 The bundled `logits-default` profile binds `LOGITS_API_KEY` to `logits/*`.
 Logits model availability is read from the authenticated provider capability
 response at runtime; model-family chat/tool conventions remain explicit and
-audited. See [`logits_adapter.md`](logits_adapter.md).
+audited. See the [Logits adapter guide](compute_platforms/logits/README.md).
 
 The runner reads only those referenced values from the git-ignored
 `_private/.env` (or `--secrets-env-file`); it does not load the file into the
@@ -172,9 +213,9 @@ An operational config is the secret-free outer configuration for realizing an
 already-defined benchmark study. It collects settings that may change where or
 how quickly a run is executed, or what maintenance telemetry is retained,
 without changing the benchmark condition. The runnable example is
-[`operational_configs/standard.json`](operational_configs/standard.json); its
+[`configs/operational_configs/standard.json`](configs/operational_configs/standard.json); its
 strict JSON Schema is
-[`operational_configs/schema_v1.json`](operational_configs/schema_v1.json).
+[`configuration/schemas/schema_v1.json`](configuration/schemas/schema_v1.json).
 
 The top-level sections have deliberately narrow roles:
 
@@ -190,14 +231,14 @@ Use the same file with either entry point:
 
 ```bash
 uv run python source/agent_formalizer/run_formalizer_agent.py \
-  --operational-config source/agent_formalizer/operational_configs/standard.json \
+  --operational-config source/agent_formalizer/configs/operational_configs/standard.json \
   --claw hermes \
   --domain blocksworld \
   --data Heavily_Templated_BlocksWorld-100 \
   --indices 1,2,3
 
 uv run python source/sweep_agent_pipeline.py \
-  --operational-config source/agent_formalizer/operational_configs/standard.json \
+  --operational-config source/agent_formalizer/configs/operational_configs/standard.json \
   --claw hermes \
   --domain blocksworld \
   --data Heavily_Templated_BlocksWorld-100 \
@@ -319,12 +360,12 @@ formalization failure and no valid `completion.json` is written. A human uses
 the ledger to decide whether a persistent 429 warrants stopping or rerunning a
 case or batch.
 
-For v5, `source/agent_formalizer/streaming_report.py` keeps selected-valid
+For v5, `source/agent_formalizer/results/streaming_report.py` keeps selected-valid
 overshoot statistics separate from discarded execution operations:
 
 ```bash
 PYTHONPATH=source .venv/bin/python \
-  source/agent_formalizer/streaming_report.py OUTPUT_ROOT
+  source/agent_formalizer/results/streaming_report.py OUTPUT_ROOT
 ```
 
 `controlled_web` is the optional web condition. It requires a non-empty hostname
@@ -344,6 +385,92 @@ the complete parent name. Therefore two sweeps may execute the same
 claw/domain/problem concurrently without sharing names or removing one
 another's resources. The runtime ID is operational isolation metadata and does
 not change task, experiment, or resume identity.
+
+### Docker network lifecycle and capacity
+
+The five Docker harnesses share `network_resources.py`; `minimum` is host-only.
+Each execution still receives a fresh internal network. No network is shared
+between executions, and no subnet size, daemon config, model/tool behavior or
+agent budget is silently changed by this operational infrastructure.
+
+Three safeguards are enabled by default:
+
+1. **Verified teardown.** After evidence collection, remove only containers and
+   the network whose exact names, IDs and versioned ownership labels match the
+   execution record. Every Docker operation has a finite timeout. Container
+   references (including stopped/created containers) and removal are inspected;
+   a failed removal stops cleanup and is never silently reported as success.
+   This operational failure does not overwrite an already-collected agent
+   result. New admissions pause until the residue is resolved.
+2. **Conservative recovery.** Before batch admission and before each network
+   allocation, inspect the shared local registry. Boot ID, PID and process start
+   ticks protect live owners and PID reuse. After a grace period, reclaim a
+   dead owner's entirely unreferenced network, or resources for which the owner
+   already recorded `cleanup_ready` after collection. A crash survivor with
+   containers and no collection authorization is retained and reported as
+   `orphan_preserved_uncollected_evidence`. Unlabeled legacy resources, foreign
+   references and unrecognized ownership are never pruned automatically.
+3. **Capacity admission.** Before dispatching pending batch jobs, check the
+   requested worker count plus a safety margin against default-pool capacity,
+   subtracting all existing networks and overlapping host IPv4 routes. Each
+   subsequent create is rechecked and serialized with cleanup under a short
+   host lock. Allocation is the actual reservation; the batch preflight is not
+   a permanent reservation of every requested worker slot. Other campaigns
+   can reduce available capacity, in which case new executions wait. Docker
+   allocation remains authoritative if an unrelated client races the estimate.
+
+Configuration belongs only to the **operational config**:
+
+```json
+"network_resources": {
+  "safety_margin": 2,
+  "docker_timeout_seconds": 20,
+  "poll_seconds": 10,
+  "orphan_grace_seconds": 60
+}
+```
+
+Older operational files resolve these defaults explicitly in new operational
+provenance. No existing frozen output/profile is rewritten. Adapter code identity
+still changes with a code update; this is not permission to bypass frozen-run
+identity checks when resuming historical campaigns.
+
+Capacity/cleanup waits happen before the agent clock and within the same pending
+startup, without a new model call or repeated infra-invalid execution. The
+runner logs `Docker network admission paused` and checks again every 10 seconds;
+already-running agents continue. Once resources are available, admission resumes.
+There is no periodic work on the model streaming path and no standalone janitor
+service. Recovery runs on launch/resume/allocation and while admission is waiting;
+after an abrupt stop with no surviving runner, cleanup waits until the next run.
+
+The shared registry is `/tmp/pddl-benchmark-networks-<uid>-<daemon-id-hash>/`:
+per-execution records plus `events.jsonl`, protected by a cross-process `flock`.
+This coordinates cooperating runners of the same Unix UID using the same local
+Docker daemon, including different working copies. It does not lock unrelated
+Docker clients or other Unix users. Remote daemons are refused because local
+PID and routing evidence cannot establish their safety. Do not remove/replace
+registry or lock files while runners are active. If `/tmp` is lost, unknown
+surviving resources are retained for manual review, not inferred to be safe.
+
+Batch preflight evidence is copied to `<output>/network_preflight/`; execution
+lifecycle evidence is copied to `executions/execution-NNN/network-lifecycle-*.jsonl`.
+The shared audit records deletion targets before changes, verified cleanup,
+preserved orphans, capacity and paused admission. It never reads container
+environments, commands or credentials. If a delete fails, inspect the exact
+record/IDs and resolve the cause manually. Read-only reconciliation unblocks
+admission after those resources disappear; it never escalates to global prune.
+
+To expand capacity, an operator can separately configure smaller default Docker
+subnets after checking host/VPN routing and planning daemon maintenance. Merely
+increasing capacity does not replace lifecycle cleanup. Never use a shared agent
+network or blanket `docker system prune` as a workaround.
+
+Tests (neither calls a model or public solver):
+
+```bash
+PYTHONPATH=source .venv/bin/python -m unittest discover -s tests -p 'test_network_resources.py'
+RUN_NETWORK_RESOURCE_DOCKER_TESTS=1 PYTHONPATH=source .venv/bin/python -m unittest discover -s tests -p 'test_network_resources_docker.py'
+```
 
 ## Native clean tools and skills
 
@@ -376,18 +503,16 @@ cross-harness accounting uses only the gateway-defined `model_calls`,
 
 ## Solver-as-tool condition
 
-The optional condition profile `solver-as-tool` keeps the same `native_clean` +
-`native-safety-v4` envelope as the default profile and adds
-`agent_tools: ["pddl_solver"]`. Current bundled solver-as-tool profiles also
-select the semantic `solver_error_routing: "solver-transient-v1"` policy;
-the streaming profile retains its v5 model delivery. Tool implementations live under
+Derive an optional `solver-as-tool` condition from the canonical native baseline.
+Keep its `native_clean`, v5 envelope and call-checkpoint timing; set
+`agent_tools: ["pddl_solver"]` and add `solver_gateway_start_failed` to
+`infra_retry.invalidators`. The baseline already selects
+`solver_error_routing: "solver-transient-v1"`. Tool implementations live under
 `agent_formalizer/tools/<tool>/` (solver is the first optional tool).
 
-The two bundled runnable profiles are:
-
-- `native_safety_native_clean.json`: the default native-clean baseline;
-- `native_safety_solver_as_tool.json`: the same baseline and envelope with the
-  `solver-as-tool` condition override.
+There is no separate maintained solver-as-tool preset. Give the derived profile
+distinct profile/condition IDs and follow the
+[baseline derivation contract](configs/benchmark_profiles/README.md).
 
 Every harness then receives:
 
@@ -415,8 +540,8 @@ This policy changes the resolved hash; frozen profiles without it remain legacy.
 The standalone evaluation client opts into recovery explicitly and does not
 invalidate completed agent executions on evaluation-only failures.
 
-The opt-in profile `native_safety_streaming_solver_as_tool_logical_deadline.json`
-adds versioned logical-deadline compatibility: hidden physical retries do not
+The historical `external_call_timing: "logical-deadline-v1"` condition provides
+versioned logical-deadline compatibility: hidden physical retries do not
 spend supported native tool/SDK deadlines, while accepted-call time still does.
 Physical clocks and original native timeout handling are preserved. Currently
 Generic, Nanobot foreground exec, Hermes and OpenClaw are supported; other harnesses and
@@ -424,21 +549,21 @@ custom transports fail preflight for this condition. See
 [coverage, remaining limitations and evidence](external_calls/README.md#opt-in-native-logical-deadlines-logical-deadline-v1).
 This has a new semantic identity and must not resume legacy-timing results.
 
-For OpenClaw, the newer opt-in
-`native_safety_streaming_solver_as_tool_call_checkpoint.json` uses
-`call-checkpoint-v1`: immutable pending requests, pre-delivery business-context
+The current baseline uses `call-checkpoint-v1` across the five locked native
+harnesses: immutable pending requests, pre-delivery business-context
 checks and call-boundary budget settlement. Node stream events no longer make
 synchronous deadline RPCs and the host does not freeze the container per call.
-This initially supports only OpenClaw and uncommitted model/solver calls, not
+This supports uncommitted model/solver calls, not
 arbitrary workspace/process rollback or partial-stream replay. See the
 [checkpoint contract and limitations](external_calls/README.md#call-boundary-checkpoints-call-checkpoint-v1).
 Use a new result condition; do not transparently mix it into an old sweep.
 
-Use the frozen study profile:
+After creating and validating your derived solver-as-tool profile, select it
+explicitly (the sweep freezes it before starting cases):
 
 ```bash
 uv run python source/sweep_agent_pipeline.py \
-  --benchmark-config source/agent_formalizer/benchmark_profiles/native_safety_solver_as_tool.json \
+  --benchmark-config .cache/campaigns/my-solver-as-tool.json \
   --claw openclaw --model google-vertex/gemini-3.1-flash-lite \
   --index_start 1 --index_end 3 ...
 ```
@@ -450,9 +575,8 @@ It does not give the model a shell, file API, workspace view, or tool schema.
 It executes directly as a host Python subprocess; Docker image discovery,
 container startup, and container cleanup are skipped only for this adapter.
 The five native adapters retain their existing Docker path unchanged.
-The bundled
-[`native_safety_minimum_agent.json`](benchmark_profiles/native_safety_minimum_agent.json)
-profile explicitly defines:
+A separately reviewed profile derived from the canonical baseline must
+explicitly define `condition_profile.overrides.minimum_agent`, including:
 
 - `execution_backend: "host"` (the only supported minimum backend);
 - `reflection_count`: non-negative `n`; the run makes exactly `n + 1` logical
@@ -481,11 +605,15 @@ chosen model price table without rerunning a case. Every model call is emitted
 to the ordinary `*_agent_steps.jsonl` trace with its phase, reflection index,
 complete response, parsed PDDL, provider usage, and `reasoning` field.
 
-Run the complete formalize/solver/VAL pipeline with:
+The native baseline intentionally rejects `--claw minimum` without that block.
+The native call-checkpoint integration does not apply to this host loop; review
+and explicitly select its compatible timing settings when deriving the minimum
+condition. After creating and validating such a profile, run the complete
+formalize/solver/VAL pipeline with:
 
 ```bash
 uv run python source/sweep_agent_pipeline.py \
-  --benchmark-config source/agent_formalizer/benchmark_profiles/native_safety_minimum_agent.json \
+  --benchmark-config .cache/campaigns/my-minimum-condition.json \
   --claw minimum \
   --model google-vertex/gemini-3.1-flash-lite \
   --domain barman \
@@ -493,7 +621,7 @@ uv run python source/sweep_agent_pipeline.py \
   --index_start 1 --index_end 101
 ```
 
-Copy the bundled profile to create a new versioned condition before changing
+Derive a separate versioned condition from the canonical baseline when changing
 `reflection_count`, solver feedback, or prompt text. The strict schema rejects
 unknown fields/placeholders and configurations whose `n + 1` calls exceed the
 resolved model/action budgets.
@@ -551,6 +679,14 @@ task hash; prompt, input, resolved profile, model, budgets, and agent-visible
 capabilities therefore cannot migrate through this path.  Omitting the pair
 retains the ordinary same-runtime repair rule.
 
+For an **automatically invalid** execution, `authorize_repair` records the
+owner's permission to use an exact revised runtime without pretending to
+invalidate it manually. This requires a pending problem/attempt with no valid
+execution, a `tool_infra.*` reason, evidence, and both replacement hashes. The
+task hash must match the existing invalid attempt. It changes neither the old
+automatic verdict nor first-valid selection, and cannot authorize resampling a
+valid result. Old and new runtime hashes remain visible in the cell audit.
+
 An owner-authorized correction to a frozen dataset is the narrow exception.
 Affected executions use `dataset_update.*` and bind the event to the exact
 replacement task-input and runtime SHA-256 identities. The old completion and
@@ -563,11 +699,11 @@ Use the management CLI rather than editing either record:
 
 ```bash
 PYTHONPATH=source .venv/bin/python \
-  source/agent_formalizer/manage_execution_validity.py audit \
+  source/agent_formalizer/results/manage_execution_validity.py audit \
   --cell OUTPUT/.../<model_label>
 
 PYTHONPATH=source .venv/bin/python \
-  source/agent_formalizer/manage_execution_validity.py invalidate \
+  source/agent_formalizer/results/manage_execution_validity.py invalidate \
   --cell OUTPUT/.../<model_label> --problem p82 --attempt 1 --execution 1 \
   --operator benchmark-owner \
   --reason-code tool_infra.solver_transport \

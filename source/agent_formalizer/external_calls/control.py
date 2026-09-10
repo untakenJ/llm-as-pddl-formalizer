@@ -30,7 +30,7 @@ def read_json(path):
 
 def write_json(path, value):
     path = Path(path)
-    temporary = path.with_name(path.name + ".tmp")
+    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     with open(temporary, "w", encoding="utf-8") as handle:
         os.chmod(temporary, 0o600)
         json.dump(value, handle, sort_keys=True, allow_nan=False)
@@ -40,8 +40,14 @@ def write_json(path, value):
 class ToolControl:
     """Gateway side. Serialize calls using the caller's lock before entering."""
 
-    def __init__(self, path, *, cancelled=lambda: False):
+    def __init__(self, path, *, cancelled=lambda: False, independent=False):
         self.path = Path(path)
+        self.base_path = self.path
+        self.independent = independent
+        if independent:
+            directory = self.path.parent / (self.path.stem + ".calls")
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            self.path = directory / (uuid.uuid4().hex + ".json")
         self.ack_path = self.path.with_suffix(".ack.json")
         self.cancelled = cancelled
         self.state = {"phase": "idle", "pause_requested": False}
@@ -55,13 +61,22 @@ class ToolControl:
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if self.cancelled():
+                self.publish(phase="cancelled", pause_requested=False)
                 raise ExternalCallInvalid("external_call_cancelled")
             ack = read_json(self.ack_path) or {}
             if ack.get("call_id") == self.state["call_id"]:
+                if ack.get("status") == "controller_waiting":
+                    # A live host is waiting for a busy native event loop.
+                    # Only fresh host progress extends the transport watchdog.
+                    updated = ack.get("updated_monotonic", 0)
+                    deadline = max(deadline, updated + 15)
                 if ack.get("status") == "native_deadline":
                     raise NativeDeadlineExpired(ack)
                 if ack.get("status") == "deadline":
+                    self.publish(phase="cancelled", pause_requested=False)
                     raise ExternalCallInvalid("external_call_cancelled")
+                if ack.get("status") == "invalid":
+                    raise ExternalCallInvalid(ack["reason"], evidence=ack.get("evidence"))
                 if ack.get("status") == status:
                     return ack
             time.sleep(0.01)
@@ -70,7 +85,7 @@ class ToolControl:
 
     def begin(self):
         self.publish(call_id=uuid.uuid4().hex, phase="running", pause_requested=True,
-                     pause_started_unix=time.time(), charged_seconds=0.0,
+                     pause_started_unix=time.time(), started_monotonic=time.monotonic(), charged_seconds=0.0,
                      terminal_infra_error=None, rollback_count=0)
         self.wait_ack("paused")
 
@@ -78,13 +93,19 @@ class ToolControl:
         self.publish(phase="settle", charged_seconds=charged_seconds)
         self.wait_ack("charged")
         self.publish(phase="ready", pause_requested=False)
-        return self.wait_ack("released")
+        receipt = self.wait_ack("released")
+        self.publish(phase="done", pause_requested=False)
+        return receipt
 
     def invalidate(self, reason, *, classification=None):
         self.publish(phase="invalid", pause_requested=True,
                     terminal_infra_error={"reason": reason, "source": "external_calls",
                                            "classification": classification or reason,
                                            "call_id": self.state.get("call_id")})
+        if self.independent:
+            # A late gateway bookkeeping failure remains observable after the
+            # host has retired this call from its active timing set.
+            write_json(self.base_path, self.state)
 
 
 class ToolControlMonitor:

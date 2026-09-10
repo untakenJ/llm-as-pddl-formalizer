@@ -158,6 +158,7 @@ def solve_pddl(
     timeout_seconds: float = REQUEST_TIMEOUT_SECONDS,
     poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
     recovery_policy: str | None = None,
+    fallback_base_url: str | None = None,
     event=None,
     cancelled=None,
     charge=None,
@@ -176,6 +177,25 @@ def solve_pddl(
         return solver_failure("validate", "domain PDDL is empty", solver=solver)
     if not isinstance(problem_file, str) or not problem_file.strip():
         return solver_failure("validate", "problem PDDL is empty", solver=solver)
+
+    if fallback_base_url is not None:
+        try:
+            from agent_formalizer.external_calls.solver import POLICY_ID
+            from agent_formalizer.external_calls.solver_fallback import solve as solve_with_fallback
+        except ModuleNotFoundError:
+            from external_calls.solver import POLICY_ID
+            from external_calls.solver_fallback import solve as solve_with_fallback
+        if recovery_policy not in (None, POLICY_ID):
+            raise ValueError(f"unsupported solver recovery policy {recovery_policy!r}")
+        ok, result, charged = solve_with_fallback(
+            domain_file, problem_file, solver=solver, base_url=base_url,
+            fallback_base_url=fallback_base_url, format_failure=solver_failure,
+            timeout_seconds=timeout_seconds, poll_interval_seconds=poll_interval_seconds,
+            event=event or (lambda value: None), cancelled=cancelled or (lambda: False),
+        )
+        if charge is not None:
+            charge(charged)
+        return ok, result
 
     if recovery_policy is not None:
         try:

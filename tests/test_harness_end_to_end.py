@@ -12,9 +12,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from profile_fixtures import HISTORICAL_PROFILES_DIR
+
 from agent_formalizer.claws import get_adapter
-from agent_formalizer.benchmark_profile import (
-    BENCHMARK_PROFILES_DIR,
+from agent_formalizer.configuration.benchmark_profile import (
     load_benchmark_profile,
 )
 from agent_formalizer.claws.generic import GenericAgentAdapter
@@ -22,7 +23,7 @@ from agent_formalizer.claws.hermes import HermesAdapter
 from agent_formalizer.claws.nanobot import NanoBotAdapter
 from agent_formalizer.claws.zeroclaw import ZeroClawAdapter
 from agent_formalizer.orchestrator import run_one_problem
-from agent_formalizer.config import PROVIDER_API_BASE
+from agent_formalizer.configuration.config import PROVIDER_API_BASE
 
 DOMAIN = """(define (domain mock)
   (:requirements :strips)
@@ -247,7 +248,7 @@ class HarnessEndToEndTests(unittest.TestCase):
                     )
                 )
                 minimum_profile = load_benchmark_profile(
-                    BENCHMARK_PROFILES_DIR
+                    HISTORICAL_PROFILES_DIR
                     / (
                         "native_safety_streaming_minimum_agent.json"
                         if os.environ.get("E2E_STREAMING") == "1"
@@ -256,7 +257,7 @@ class HarnessEndToEndTests(unittest.TestCase):
                 )
                 streaming_profile = (
                     load_benchmark_profile(
-                        BENCHMARK_PROFILES_DIR
+                        HISTORICAL_PROFILES_DIR
                         / "native_safety_streaming_native_clean.json"
                     )
                     if os.environ.get("E2E_STREAMING") == "1"

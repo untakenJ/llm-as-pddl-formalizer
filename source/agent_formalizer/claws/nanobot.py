@@ -15,9 +15,9 @@ from agent_formalizer.claws.common import (
     run_captured_agent,
     tool_records,
 )
-from agent_formalizer.config import CONTAINER_WORKSPACE, NANOBOT_ENV_PATH
-from agent_formalizer.deadline_integration import ENVIRONMENT_KEYS, selected as logical_deadlines_selected
-from agent_formalizer.optional_evidence import inspect_json_analysis_fields
+from agent_formalizer.configuration.config import CONTAINER_WORKSPACE, NANOBOT_ENV_PATH
+from agent_formalizer.timing.deadline_integration import ENVIRONMENT_KEYS, selected as logical_deadlines_selected
+from agent_formalizer.results.optional_evidence import inspect_json_analysis_fields
 from agent_formalizer.result_types import AgentResult
 
 NANOBOT_CONFIG_DIR = "/tmp/nanobot-pddl-benchmark"
@@ -290,7 +290,7 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
         }
 
     def skills_info(self) -> dict:
-        from agent_formalizer.provenance import file_manifest
+        from agent_formalizer.results.provenance import file_manifest
 
         package = self._nanobot_package_dir()
         paths = [] if not package else [

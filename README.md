@@ -43,7 +43,7 @@ compatible NVIDIA GPU/driver for practical model execution; the CPU extra is
 useful for CPU-side development and dependency checks. The agent pipeline also
 requires Docker. Its Hermes, NanoBot, ZeroClaw, and GenericAgent runtimes can be
 installed into the ignored repository cache with
-`bash source/agent_formalizer/install_harnesses.sh all`; OpenClaw keeps its
+`bash source/agent_formalizer/runtime/install_harnesses.sh all`; OpenClaw keeps its
 existing host installation. VAL is an external binary;
 install it separately and configure its executable through `source/run_val.py`.
 
@@ -51,7 +51,7 @@ OpenAI scripts read their API key from `_private/key.txt`. The API-based Gemini
 scripts load credentials from `_private/.env`; see their module documentation
 for the required variables. Logits uses `LOGITS_API_KEY` and explicit dynamic
 model ids such as `logits/Qwen/Qwen3.5-4B`; see the
-[Logits adapter documentation](source/agent_formalizer/logits_adapter.md).
+[Logits adapter documentation](source/agent_formalizer/compute_platforms/logits/README.md).
 
 ## Agent Harness Formalizer
 
@@ -79,7 +79,7 @@ visible inside the agent, and reports unsupported providers explicitly so new
 provider-specific extractors can be added without model-name allowlists.
 
 ```bash
-bash source/agent_formalizer/install_harnesses.sh all
+bash source/agent_formalizer/runtime/install_harnesses.sh all
 
 uv run python source/agent_formalizer/run_formalizer_agent.py \
     --claw hermes \
@@ -89,8 +89,10 @@ uv run python source/agent_formalizer/run_formalizer_agent.py \
     --indices 1,2,3
 ```
 
-To start a new native-streaming study, select the versioned v5 profile
-explicitly (the default remains buffered v4):
+New studies use the single v5 streaming / call-checkpoint native baseline by
+default. Derive user-requested experimental differences from this baseline;
+changing the baseline itself requires explicit user approval, as recorded in
+the root `AGENTS.md`. To select the baseline explicitly:
 
 ```bash
 uv run python source/agent_formalizer/run_formalizer_agent.py \
@@ -98,7 +100,7 @@ uv run python source/agent_formalizer/run_formalizer_agent.py \
   --domain blocksworld \
   --data Heavily_Templated_BlocksWorld-100 \
   --model openai/gpt-5.4-mini \
-  --benchmark-config source/agent_formalizer/benchmark_profiles/native_safety_streaming_native_clean.json \
+  --benchmark-config source/agent_formalizer/configs/benchmark_profiles/native_baseline_v1.json \
   --indices 1
 ```
 
@@ -106,11 +108,20 @@ Streaming v5 preserves real provider progress, records final-batch action-step
 overshoot, and uses up to five clean tries only for directly evidenced
 post-commit infrastructure failures. Its results must not be merged with v4.
 
+Optional experimental skills live in
+[`source/agent_formalizer/skills/`](source/agent_formalizer/skills/README.md).
+Select them explicitly with `condition_profile.overrides.experiment_skills` in a
+benchmark profile. The five native harnesses receive the same on-demand catalog
+and read-only selected files; the current benchmark-filtered official skills
+remain the default baseline. No additional skills are enabled by default.
+Selected content is hashed and frozen for ablation/resume; see the linked guide
+for package format, configuration, and evidence.
+
 For Logits, install the locked translator/tokenizer runtime and use the full
 provider model id:
 
 ```bash
-bash source/agent_formalizer/install_harnesses.sh logits
+bash source/agent_formalizer/runtime/install_harnesses.sh logits
 uv run python source/agent_formalizer/run_formalizer_agent.py \
   --claw hermes \
   --domain barman \
@@ -134,7 +145,7 @@ identity. The versioned default model is
 
 ### Campaign prerequisite: local solver
 
-Current bundled benchmark profiles use the local Planutils solver for both an
+The canonical benchmark baseline uses the local Planutils solver for both an
 enabled agent solver tool and post-generation PDDL evaluation. Starting or
 resuming a campaign therefore includes ensuring one long-lived local solver is
 running under a host process supervisor before the first case. It is shared by
@@ -154,9 +165,13 @@ This semantic policy changes the resolved experiment hash; old frozen profiles
 retain their previous behavior. See the complete
 [external-call error routing and timing contract](source/agent_formalizer/external_calls/README.md).
 
+User-editable benchmark, operational and credential inputs are centralized in
+[`source/agent_formalizer/configs/`](source/agent_formalizer/configs/README.md),
+separate from their Python loaders and validators.
+
 Credentials, worker counts, trace collection, result placement, and independent
 infrastructure diagnostics can now be grouped in the strict, secret-free
-[`operational config`](source/agent_formalizer/operational_configs/standard.json)
+[`operational config`](source/agent_formalizer/configs/operational_configs/standard.json)
 and selected with `--operational-config`. Its effective SHA is recorded for
 operations auditing but is excluded from the benchmark config SHA and resume
 identity. The diagnostics stream has structured Google Vertex/Gemini and
@@ -173,16 +188,18 @@ ordinary egress. See
 runtime pins, supported provider prefixes, isolation details, and evaluation
 commands.
 
-Run the fixed minimum baseline with its required profile:
+Campaigns also use shared [Docker network lifecycle and capacity
+guards](source/agent_formalizer/README.md#docker-network-lifecycle-and-capacity):
+verified per-execution cleanup, ownership-aware orphan recovery, and capacity
+admission before worker dispatch/allocation. Capacity shortages pause new work
+outside agent time instead of consuming repeated execution retries. This does
+not change Docker daemon configuration or delete unowned historical resources.
 
-```bash
-uv run python source/sweep_agent_pipeline.py \
-  --benchmark-config source/agent_formalizer/benchmark_profiles/native_safety_minimum_agent.json \
-  --claw minimum \
-  --domain barman \
-  --data Heavily_Templated_Barman-100 \
-  --index_start 1 --index_end 3
-```
+The benchmark-owned fixed `minimum` adapter requires a separately reviewed
+derived profile with explicit host-loop and prompt settings; the native
+baseline does not silently configure it. See the
+[minimum adapter contract](source/agent_formalizer/README.md#minimum-formalizer-agent-baseline)
+and [profile derivation guide](source/agent_formalizer/configs/benchmark_profiles/README.md).
 
 ## Datasets
 All datasets can be found in the `/data` folders.
@@ -229,6 +246,15 @@ where
 - `DOMAIN`, `MODEL`, `DATA`, `INDEX_START` and `INDEX_END` are the same as above
 - `SOLVER` is optional and is which solver to use (`["lama-first", "dual-bfws-ffparser"]`). The default solver is `"dual-bfws-ffparser"`.
 - Solver requests use the repository's local Planutils service by default. Start it as described in `source/local_solver/README.md`; pass `--solver-backend public` only when intentionally using public planning.domains.
+
+Evaluation uses bounded transparent recovery for `local`, `public`, and the
+optional `--solver-backend public_then_local` wrapper. Timeouts, Planutils and
+temporary network errors are retried on unchanged PDDL; exhausted failures are
+recorded with diagnostics without invalidating the agent execution or blocking
+the remaining batch indefinitely. The wrapper tries public first, then local;
+the local service defaults to a 90-second planner deadline, one worker and
+4096 MiB. See the [evaluation policy](source/agent_formalizer/external_calls/README.md#deterministic-evaluation-recovery-solver-evaluation-transient-v1)
+and [campaign service prerequisite](source/local_solver/README.md#campaign-lifecycle-contract).
 
 output will be written in `/outputs/llm-as-formalizer/DOMAIN/DATA/MODEL/`
 

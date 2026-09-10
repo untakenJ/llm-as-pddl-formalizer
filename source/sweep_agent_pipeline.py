@@ -27,25 +27,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent_formalizer.claws import CLAWS
-from agent_formalizer.benchmark_profile import (
+from agent_formalizer.configuration.benchmark_profile import (
     load_benchmark_profile,
 )
-from agent_formalizer.config import (
+from agent_formalizer.configuration.config import (
     CLAW_DEFAULTS,
     DEFAULT_SECRETS_ENV_FILE,
     PREDICTION_TYPE,
     agent_model_label,
     sanitize_model_name,
 )
-from agent_formalizer.credentials import (
+from agent_formalizer.configuration.credentials import (
     DEFAULT_CREDENTIAL_PROFILES_PATH,
     load_credential_registry,
 )
-from agent_formalizer.operational_config import (
+from agent_formalizer.configuration.operational_config import (
     load_operational_config,
     safe_operational_component,
 )
-from agent_formalizer.execution_validity import (
+from agent_formalizer.results.execution_validity import (
     cell_dir_for_model_dir,
     refresh_cell_state,
     selected_attempt,
@@ -735,21 +735,37 @@ def _default_out_dir(tag: str = "", *, root: Path | None = None) -> Path:
 
 def _freeze_study_profile(profile, out_dir: Path):
     """Persist one immutable profile snapshot before the first study case."""
+    from copy import deepcopy
+    from agent_formalizer.configuration.skill_library import bundle_for_profile
+
+    raw = deepcopy(profile.raw)
+    bundle = bundle_for_profile(raw, profile.path)
+    if bundle.skills:
+        relative = Path("study_skills") / bundle.sha256
+        raw["experiment_skill_library"] = {"path": relative.as_posix(), "sha256": bundle.sha256}
     path = out_dir / "study_benchmark_profile.json"
-    payload = json.dumps(profile.raw, indent=2, ensure_ascii=False) + "\n"
-    try:
-        with path.open("x") as stream:
-            stream.write(payload)
-    except FileExistsError:
+    payload = json.dumps(raw, indent=2, ensure_ascii=False) + "\n"
+
+    def verify_existing():
         try:
             existing = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError) as exc:
             raise ValueError(f"existing frozen study profile is unreadable: {path}") from exc
-        if existing != profile.raw:
+        if existing != raw:
             raise ValueError(
                 "output directory already contains a different frozen benchmark "
                 f"profile: {path}"
             )
+
+    if path.exists():
+        verify_existing()
+    if bundle.skills:
+        bundle.materialize(out_dir / relative)
+    try:
+        with path.open("x") as stream:
+            stream.write(payload)
+    except FileExistsError:
+        verify_existing()
     return load_benchmark_profile(path)
 
 
