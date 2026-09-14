@@ -43,6 +43,9 @@ import json
 import os
 import argparse
 import time
+import hashlib
+from pathlib import Path
+import uuid
 
 from batch_utils import format_problem_name, run_parallel
 from api_providers import (
@@ -89,8 +92,8 @@ PDDL_OUTPUT_SCHEMA = {
 
 def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=None,
                        tool_executors=None, record_trace=True, out_dir_root=None):
-    domain_description = open(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_domain.txt').read()
-    problem_description = open(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_problem.txt').read()
+    domain_description = Path(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_domain.txt').read_text()
+    problem_description = Path(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_problem.txt').read_text()
 
     prompt = (
         f"You are a PDDL expert. Here is a game we are playing.\n"
@@ -112,6 +115,19 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
     out_dir = f'{out_root}/llm-as-formalizer-api/{domain}/{data}/{model_label}/{problem}'
     os.makedirs(out_dir, exist_ok=True)
     trace_path = f'{out_dir}/{problem}_{model_label}_trace.jsonl' if record_trace else None
+    # Preserve interrupted or explicitly repeated API executions. The ordinary
+    # resume path below still skips a complete pair; never truncate old traces.
+    prior_paths = [Path(out_dir) / f'{problem}_{model_label}_{suffix}'
+                   for suffix in ('trace.jsonl', 'df.pddl', 'pf.pddl')]
+    prior_paths.append(Path(out_dir) / 'api_completion.json')
+    prior_paths = [path for path in prior_paths if path.exists()]
+    if prior_paths:
+        if any(path.is_symlink() or not path.is_file() for path in prior_paths):
+            raise RuntimeError('Unexpected API evidence path type; refusing overwrite')
+        history = Path(out_dir) / 'execution_history' / (str(time.time_ns()) + '-' + uuid.uuid4().hex[:8])
+        history.mkdir(parents=True)
+        for path in prior_paths:
+            path.rename(history / path.name)
     tracer = Tracer(trace_path)
 
     t_start = time.monotonic()
@@ -140,6 +156,7 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
             tracer=tracer,
         )
 
+        tracer.emit("model_output", raw_output_text=return_string)
         return_dict = json.loads(return_string)
         domain_file = return_dict["domain file"]
         problem_file = return_dict["problem file"]
@@ -158,6 +175,15 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
                     domain_file_chars=len(domain_file),
                     problem_file_chars=len(problem_file),
                     output_paths={"df": df_path, "pf": pf_path})
+        tracer.close()
+        completion = {"schema_version": 1, "status": "ok", "model": model,
+                      "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+                      "outputs": {Path(path).name: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+                                  for path in (df_path, pf_path)},
+                      "trace_sha256": hashlib.sha256(Path(trace_path).read_bytes()).hexdigest() if trace_path else None}
+        temporary = Path(out_dir) / 'api_completion.json.tmp'
+        temporary.write_text(json.dumps(completion, indent=2) + '\n')
+        temporary.replace(Path(out_dir) / 'api_completion.json')
 
         return domain_file, problem_file
     except Exception as e:
@@ -180,7 +206,25 @@ def run_gpt_batch(provider, client, domain, model, data, problem_numbers, tools=
         problem_dir = f'{out_root}/llm-as-formalizer-api/{domain}/{data}/{model_label}/{problem_name}'
         df_path = f'{problem_dir}/{problem_name}_{model_label}_df.pddl'
         pf_path = f'{problem_dir}/{problem_name}_{model_label}_pf.pddl'
-        if resume and os.path.isfile(df_path) and os.path.isfile(pf_path):
+        complete = os.path.isfile(df_path) and os.path.isfile(pf_path)
+        completion_path = Path(problem_dir) / 'api_completion.json'
+        if complete and completion_path.exists():
+            saved = json.loads(completion_path.read_text())
+            complete = saved.get('status') == 'ok' and all(
+                hashlib.sha256(Path(path).read_bytes()).hexdigest() == saved.get('outputs', {}).get(Path(path).name)
+                for path in (df_path, pf_path))
+            if record_trace:
+                trace = Path(problem_dir) / f'{problem_name}_{model_label}_trace.jsonl'
+                complete = complete and trace.is_file() and hashlib.sha256(trace.read_bytes()).hexdigest() == saved.get('trace_sha256')
+        elif complete and record_trace:
+            # Legacy complete pairs are reusable only with a finished trace.
+            trace = Path(problem_dir) / f'{problem_name}_{model_label}_trace.jsonl'
+            try:
+                last = json.loads(trace.read_text().splitlines()[-1])
+                complete = last.get('event') == 'final' and last.get('status') == 'ok'
+            except (OSError, ValueError, IndexError):
+                complete = False
+        if resume and complete:
             print(f"Skipping {problem_name} (complete PDDL pair exists)", flush=True)
             return
         print(f"Running {problem_name}", flush=True)

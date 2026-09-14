@@ -333,6 +333,21 @@ class NetworkResources:
             if time.time() - record["created_at"] < self.options["orphan_grace_seconds"]:
                 continue
             try:
+                if record["phase"] != "cleanup_ready" and not record.get("orphan_stopped"):
+                    # A dead owner cannot collect results or control timers.
+                    # Stop only identity-verified owned containers, preserving
+                    # their files/network and all uncollected crash evidence.
+                    _, owned = self._targets(record, *self._inventory())
+                    for container in owned:
+                        _, fresh = self._targets(record, *self._inventory())
+                        if not any(c["Id"] == container["Id"] for c in fresh):
+                            raise NetworkResourceError("Orphan identity changed before stop")
+                        self._command(["docker", "stop", "--time", "1", container["Id"]])
+                    if owned:
+                        record["orphan_stopped"] = True
+                        self._write_record(record)
+                        self._event("orphan_stopped_evidence_preserved", token=record["token"],
+                                    container_ids=[c["Id"] for c in owned])
                 self._remove(record, orphan_empty_only=record["phase"] != "cleanup_ready")
             except (NetworkResourceError, OSError, ValueError) as exc:
                 record.update(phase="cleanup_failed", error=str(exc))

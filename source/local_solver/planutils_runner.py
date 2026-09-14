@@ -11,6 +11,7 @@ the Flask/Celery/Redis/MySQL service stack.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import glob
 import json
 import os
@@ -22,6 +23,28 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+
+
+PROCESS_CLEANUP_VERSION = "subreaper-v1"
+
+
+class ProcessCleanupError(RuntimeError):
+    """The worker must be discarded instead of reusing an unclean namespace."""
+
+
+def _enable_subreaper() -> None:
+    # This program runs in a dedicated, single-threaded docker-exec process.
+    # Adopt even double-forked / setsid descendants so waitpid can reap them.
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+        error = ctypes.get_errno()
+        raise ProcessCleanupError(f"cannot enable child subreaper: {os.strerror(error)}")
+
+
+def _children() -> list[int]:
+    return [int(pid) for pid in Path(
+        f"/proc/self/task/{os.getpid()}/children"
+    ).read_text().split()]
 
 
 def _packages() -> dict[str, Any]:
@@ -94,21 +117,66 @@ def _read_outputs(directory: Path, pattern: str, output_type: str) -> dict[str, 
     return output
 
 
-def _terminate_process_group(proc: subprocess.Popen) -> None:
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    try:
-        proc.wait(timeout=2)
-        return
-    except subprocess.TimeoutExpired:
-        pass
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    proc.wait()
+def _reap_process_tree(proc: subprocess.Popen) -> dict[str, Any]:
+    """Stop/reap every owned descendant, not just the process-group leader.
+
+    Only signal our direct children. Their PIDs cannot be recycled until we
+    reap them; after killing a parent the subreaper adopts its descendants,
+    including ones that escaped the original process group. No host-wide kill
+    or container-wide PID guessing is involved.
+    """
+    started = time.monotonic()
+    signalled: set[tuple[int, int]] = set()
+    reaped = 0
+    while True:
+        proc.poll()  # Preserve Popen's actual exit status before waitpid below.
+        children = _children()
+        if not children:
+            return {"version": PROCESS_CLEANUP_VERSION, "complete": True,
+                    "reaped_descendants": reaped,
+                    "duration_seconds": round(time.monotonic() - started, 6)}
+        elapsed = time.monotonic() - started
+        if elapsed >= 5:
+            raise ProcessCleanupError(f"descendants still present after cleanup: {children}")
+        sig = signal.SIGTERM if elapsed < 2 else signal.SIGKILL
+        for pid in children:
+            if pid == proc.pid:
+                if proc.poll() is not None:
+                    continue
+            else:
+                try:
+                    waited, _ = os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError:
+                    continue
+                if waited:
+                    reaped += 1
+                    continue
+            if (pid, sig) not in signalled:
+                try:
+                    os.kill(pid, sig)
+                except ProcessLookupError:
+                    pass
+                signalled.add((pid, sig))
+        time.sleep(0.01)
+
+
+def _run_command(command: list[str], directory: Path, timeout_seconds: float):
+    # Spool output rather than waiting for pipe EOF: a detached descendant may
+    # keep stdout/stderr open after the planner exits. Read only after cleanup,
+    # so no process can keep writing to the result while it is collected.
+    with tempfile.TemporaryFile(mode="w+t") as out, tempfile.TemporaryFile(mode="w+t") as err:
+        proc = subprocess.Popen(command, cwd=directory, stdout=out, stderr=err,
+                                text=True, start_new_session=True)
+        timed_out = False
+        try:
+            proc.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+        finally:
+            cleanup = _reap_process_tree(proc)
+        out.seek(0)
+        err.seek(0)
+        return out.read(), err.read(), proc.returncode, timed_out, cleanup
 
 
 def run_package(request: dict[str, Any]) -> dict[str, Any]:
@@ -132,21 +200,9 @@ def run_package(request: dict[str, Any]) -> dict[str, Any]:
             f"timeout {timeout_seconds:g} "
             + " ".join(shlex.quote(token) for token in command)
         )
-        proc = subprocess.Popen(
-            command,
-            cwd=directory,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
+        stdout, stderr, returncode, timed_out, cleanup = _run_command(
+            command, directory, timeout_seconds
         )
-        timed_out = False
-        try:
-            stdout, stderr = proc.communicate(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            _terminate_process_group(proc)
-            stdout, stderr = proc.communicate()
 
         pattern, output_type = _output_spec(manifest)
         output = _read_outputs(directory, pattern, output_type)
@@ -160,12 +216,13 @@ def run_package(request: dict[str, Any]) -> dict[str, Any]:
                 "schema_version": 1,
                 "runner": "planutils-manifest-v1",
                 "package": package,
-                "process_returncode": proc.returncode,
+                "process_returncode": returncode,
                 "timed_out": timed_out,
                 "timeout_seconds": timeout_seconds,
                 "duration_seconds": round(time.monotonic() - started, 6),
                 "arguments": arguments,
                 "output_glob": pattern,
+                "process_cleanup": cleanup,
             },
         }
         if timed_out and not result["stdout"]:
@@ -177,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--describe", action="store_true")
     args = parser.parse_args(argv)
+    _enable_subreaper()
     if args.describe:
         packages = _packages()
         installed = sorted(
@@ -185,7 +243,8 @@ def main(argv: list[str] | None = None) -> int:
             if isinstance(value, dict)
             and "solve" in value.get("endpoint", {}).get("services", {})
         )
-        print(json.dumps({"installed_solver_packages": installed}))
+        print(json.dumps({"installed_solver_packages": installed,
+                          "process_cleanup": PROCESS_CLEANUP_VERSION}))
         return 0
     try:
         request = json.load(sys.stdin)

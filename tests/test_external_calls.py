@@ -54,6 +54,14 @@ class RetryTests(unittest.TestCase):
 
 
 class SolverRulesTests(unittest.TestCase):
+    def test_cleanup_failure_is_infra_even_with_historical_oom_flag(self):
+        for kind in ("ProcessCleanupError", "worker_unavailable"):
+            response = Response(status=200, payload={"local_backend": {
+                "error": {"type": kind}, "worker": {"oom_killed": True}}})
+            decision = classify_response(response, stage="poll")
+            self.assertEqual((decision.action, decision.exhausted),
+                             (Action.RETRY, Action.INVALIDATE))
+
     def test_request_rejections_are_agent_visible_not_guessed_configuration_failures(self):
         for status in (400, 415, 422):
             self.assertEqual(classify_response(Response(status=status), stage="submit").action, Action.RETURN)

@@ -97,6 +97,10 @@ def classify_response(response: Response, *, stage: str) -> Decision:
         error = local.get("error") or {}
         kind = error.get("type") if isinstance(error, dict) else None
         kind = kind or local.get("error_type")
+        if kind in {"ProcessCleanupError", "worker_unavailable"}:
+            # A proven lifecycle failure is not ambiguous planner OOM, even if
+            # Docker's historical OOMKilled flag remains set on this worker.
+            return retry("solver_worker_service_error")
         if isinstance(worker, dict) and worker.get("oom_killed"):
             return retry("solver_worker_oom", ambiguous=True)
         if kind in {"FileNotFoundError", "PermissionError"}:

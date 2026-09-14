@@ -255,7 +255,9 @@ class OptionalEvidenceOrchestrationTests(unittest.TestCase):
         self.assertEqual(optional["traced_tool_call_count"], 1)
         self.assertEqual(optional["agent_trace_record_count"], 1)
         self.assertEqual(optional["analysis_evidence_manifest"]["status"], "complete")
-        self.assertEqual(manifest["raw_evidence"]["file_count"], 1)
+        self.assertEqual(manifest["raw_evidence"]["file_count"], 2)
+        self.assertIn('full_trace_audit.json',
+                      [row['path'] for row in manifest['raw_evidence']['files']])
         self.assertEqual(
             manifest["analysis_attribution"]["status"],
             "analysis_text_observed",

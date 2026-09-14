@@ -156,4 +156,9 @@ def transform(source, module, filename):
     }
     if counts != expected.get(module):
         raise RuntimeError(f'checkpoint native source mismatch: {module}: {counts}, expected {expected.get(module)}')
+    try:
+        from native_audit import instrument_python
+    except ImportError:  # Host-side source validation uses the package import.
+        from agent_formalizer.results.native_audit import instrument_python
+    tree = instrument_python(tree, module)
     return compile(ast.fix_missing_locations(tree), filename, 'exec')

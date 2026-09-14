@@ -157,7 +157,7 @@ class AgentWorkspace:
             "container_resources"
         ]
         cmd = [
-            "docker", "run", "-d",
+            "docker", "run", "-d", "--init",
             "--pull", "never",
             "--name", self.container_name,
             *label_args(self._resource_labels),
@@ -239,11 +239,16 @@ class AgentWorkspace:
         """Verify owned resource removal without changing the collected result."""
         try:
             self.stop_model_gateway_monitor()
-            if self._deadline_broker is not None:
-                self._deadline_broker.close()
-                self._deadline_broker = None
         except Exception:
             logger.exception("Could not stop cleanup monitors for %s", self.container_name)
+        for attribute in ('_native_audit_collector', '_deadline_broker'):
+            resource = getattr(self, attribute, None)
+            if resource is not None:
+                try:
+                    resource.close()
+                    setattr(self, attribute, None)
+                except Exception:
+                    logger.exception("Could not close %s for %s", attribute, self.container_name)
         record = self._network_record or self._network_resources.pending_record
         cleaned = record is None or self._network_resources.cleanup(record)
         if cleaned:
@@ -578,6 +583,7 @@ class AgentWorkspace:
         evidence_dir.chmod(0o700)
         for name in (
             "provider_reasoning.jsonl",
+            "provider_full_trace.jsonl",
             "reasoning_capture_status.json",
         ):
             evidence_path = evidence_dir / name
@@ -698,7 +704,7 @@ class AgentWorkspace:
             raise RuntimeError(f"Unsupported model gateway transport: {transport}")
 
         cmd = [
-            "docker", "run", "-d", "--pull", "never",
+            "docker", "run", "-d", "--init", "--pull", "never",
             "--name", self.gateway_name,
             *label_args(self._resource_labels),
             "--network", self.network_name,
@@ -753,6 +759,7 @@ class AgentWorkspace:
                 "PDDL_GATEWAY_REASONING_STATUS_PATH="
                 f"{container_evidence_dir}/reasoning_capture_status.json"
             ),
+            "-e", f"PDDL_GATEWAY_FULL_TRACE_PATH={container_evidence_dir}/provider_full_trace.jsonl",
             "--mount",
             (
                 f"type=bind,source={control_path.parent},"
@@ -840,7 +847,7 @@ class AgentWorkspace:
             raise RuntimeError(f"Controlled-web gateway missing: {WEB_GATEWAY_SCRIPT}")
         allowlist = self.adapter.network_policy()["controlled_web_allowlist"]
         cmd = [
-            "docker", "run", "-d", "--pull", "never",
+            "docker", "run", "-d", "--init", "--pull", "never",
             "--name", self.web_gateway_name,
             *label_args(self._resource_labels),
             "--network", self.network_name,
@@ -924,7 +931,7 @@ class AgentWorkspace:
                 "-v", f"{self._gateway_evidence_dir}:/run/benchmark-evidence",
             ])
         cmd = [
-            "docker", "run", "-d", "--pull", "never",
+            "docker", "run", "-d", "--init", "--pull", "never",
             "--name", name,
             *label_args(self._resource_labels),
             "--network", self.network_name,
@@ -1467,11 +1474,9 @@ class AgentWorkspace:
             "domain": artifact["workspace_domain_file"],
             "problem": artifact["workspace_problem_file"],
         }
-        paused = False
-        pause = subprocess.run(
-            ["docker", "pause", self.container_name], capture_output=True
+        subprocess.run(
+            ["docker", "pause", self.container_name], capture_output=True, timeout=20
         )
-        paused = pause.returncode == 0
         outputs: dict[str, bytes | None] = {}
         try:
             with tempfile.TemporaryDirectory(prefix="pddl-artifact-freeze-") as temp:
@@ -1483,10 +1488,31 @@ class AgentWorkspace:
                     )
                     outputs[role] = destination.read_bytes() if copied else None
         finally:
-            if paused:
-                subprocess.run(
-                    ["docker", "unpause", self.container_name], capture_output=True
-                )
+            # Do not resume native background jobs after the execution boundary.
+            # Stop the entire PID namespace, then restart ONLY the configured
+            # inert init/tail for read-only collector commands and mount cleanup.
+            # The measured clock has already stopped; frozen outputs are final.
+            state = subprocess.run(
+                ["docker", "inspect", "--format", "{{.State.Running}}", self.container_name],
+                capture_output=True, text=True, timeout=20,
+            )
+            if state.returncode != 0:
+                raise RuntimeError("Cannot verify agent process termination")
+            if state.stdout.strip() == "true":
+                stopped = subprocess.run(["docker", "kill", self.container_name],
+                                         capture_output=True, text=True, timeout=30)
+                if stopped.returncode != 0:
+                    raise RuntimeError("Cannot stop completed agent process tree: " + stopped.stderr)
+            state = subprocess.run(
+                ["docker", "inspect", "--format", "{{.State.Running}}", self.container_name],
+                capture_output=True, text=True, timeout=20,
+            )
+            if state.returncode != 0 or state.stdout.strip() != "false":
+                raise RuntimeError("Agent process tree did not stop before collection")
+            restarted = subprocess.run(["docker", "start", self.container_name],
+                                       capture_output=True, text=True, timeout=30)
+            if restarted.returncode != 0:
+                raise RuntimeError("Cannot start inert collection container: " + restarted.stderr)
         return outputs
 
     def _read_file(self, container_path: str) -> str | None:

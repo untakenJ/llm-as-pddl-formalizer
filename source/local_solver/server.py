@@ -35,6 +35,7 @@ DEFAULT_IMAGE = "pddl-local-solver:planutils-v1"
 DEFAULT_ALLOWED_SOLVERS = ("dual-bfws-ffparser",)
 WORKER_SECURITY_MODES = frozenset({"restricted", "userns", "privileged"})
 TASK_PATH = re.compile(r"^/check/([0-9a-f]{32})/?$")
+PROCESS_CLEANUP_VERSION = "subreaper-v1"
 
 
 def _now() -> str:
@@ -93,6 +94,7 @@ class DockerWorkerPool:
         self._names: list[str] = []
         self._lock = threading.Lock()
         self._closed = False
+        self._unavailable: dict[str, str] = {}
         self.image_id = ""
 
     @staticmethod
@@ -124,7 +126,7 @@ class DockerWorkerPool:
 
     def _start_worker(self, name: str) -> None:
         command = [
-            "docker", "run", "-d", "--pull", "never",
+            "docker", "run", "-d", "--init", "--pull", "never",
             "--name", name,
             "--label", f"pddl.local-solver.owner={self.owner}",
             "--network", "none",
@@ -167,6 +169,7 @@ class DockerWorkerPool:
         return {
             "available": True,
             "running": bool(state.get("Running")),
+            "init_enabled": bool(value.get("HostConfig", {}).get("Init")),
             "oom_killed": bool(state.get("OOMKilled")),
             "exit_code": state.get("ExitCode"),
             "status": state.get("Status"),
@@ -198,16 +201,24 @@ class DockerWorkerPool:
             raise RuntimeError(
                 f"local solver image lacks allowed package(s): {', '.join(missing)}"
             )
+        if description.get("process_cleanup") != PROCESS_CLEANUP_VERSION:
+            raise RuntimeError("local solver image lacks required subreaper cleanup; rebuild the image")
 
     def _replace_worker(self, name: str) -> None:
-        self._run(["docker", "rm", "-f", "-v", name])
+        removed = self._run(["docker", "rm", "-f", "-v", name])
+        if removed.returncode != 0:
+            raise RuntimeError(f"cannot remove failed worker {name}: {removed.stderr.strip()}")
         self._start_worker(name)
+        self._verify_worker(name)
 
     def execute(self, request: dict[str, Any]) -> dict[str, Any]:
         name = self._available.get()
         started = time.monotonic()
         replace = False
         try:
+            if name in self._unavailable:
+                return {"ok": False, "error": {"type": "worker_unavailable",
+                        "message": self._unavailable[name]}, "worker": {"name": name}}
             command = [
                 "docker", "exec", "-i", name,
                 "python3", RUNNER_CONTAINER_PATH,
@@ -241,6 +252,7 @@ class DockerWorkerPool:
             except json.JSONDecodeError:
                 response = {}
             if not isinstance(response, dict) or "ok" not in response:
+                replace = True  # The runner may have died with live descendants.
                 return {
                     "ok": False,
                     "error": {
@@ -251,6 +263,17 @@ class DockerWorkerPool:
                     },
                     "worker": {**inspect, "name": name},
                 }
+            value = response.get("result")
+            backend = value.get("local_backend") if isinstance(value, dict) else None
+            cleanup = backend.get("process_cleanup") if isinstance(backend, dict) else None
+            if response.get("ok") and not (
+                isinstance(cleanup, dict) and cleanup.get("complete") is True
+                and cleanup.get("version") == PROCESS_CLEANUP_VERSION
+            ):
+                response = {"ok": False, "error": {"type": "ProcessCleanupError",
+                            "message": "worker did not attest complete descendant cleanup"}}
+            if not response.get("ok") or result.returncode != 0:
+                replace = True
             response["worker"] = {
                 **inspect,
                 "name": name,
@@ -260,20 +283,25 @@ class DockerWorkerPool:
                 "cpus": self.config.cpus,
             }
             return response
+        except BaseException:
+            replace = True
+            raise
         finally:
             if replace and not self._closed:
                 try:
                     self._replace_worker(name)
-                except Exception:
-                    # A failed replacement is observable on the next request; do
-                    # not hide the current task's already-recorded result.
-                    pass
+                except Exception as exc:
+                    # Keep a scheduling token but quarantine the namespace:
+                    # subsequent requests fail promptly, never block forever
+                    # on an empty queue or reuse a partially replaced worker.
+                    self._unavailable[name] = str(exc)
             if not self._closed:
                 self._available.put(name)
 
     def snapshot(self) -> dict[str, Any]:
         workers = {
-            name: self._inspect(name)
+            name: (self._inspect(name) if name not in self._unavailable else
+                   {"available": False, "running": False, "error": self._unavailable[name]})
             for name in list(self._names)
         }
         return {
@@ -281,7 +309,7 @@ class DockerWorkerPool:
             "image": self.config.image,
             "image_id": self.image_id,
             "workers": len(self._names),
-            "idle_workers": self._available.qsize(),
+            "idle_workers": max(0, self._available.qsize() - len(self._unavailable)),
             "worker_status": workers,
             "resource_limits": {
                 "memory": self.config.memory,
@@ -451,7 +479,7 @@ def make_handler(state: LocalSolverState):
             if path == "/__benchmark__/health":
                 pool = state.pool.snapshot()
                 healthy = bool(pool["workers"]) and all(
-                    value.get("running", False)
+                    value.get("running", False) and value.get("init_enabled", False)
                     for value in pool["worker_status"].values()
                 )
                 self._json(

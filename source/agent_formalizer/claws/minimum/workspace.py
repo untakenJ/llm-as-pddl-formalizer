@@ -9,6 +9,7 @@ the fixed-route model gateway and, when configured, the fixed solver gateway.
 from __future__ import annotations
 
 from agent_formalizer.external_calls.control import ToolControlMonitor, read_json
+from agent_formalizer.runtime import process_lifecycle
 
 import json
 import logging
@@ -136,7 +137,8 @@ class MinimumHostWorkspace:
             "ab", buffering=0
         )
         self._log_streams.extend([stdout, stderr])
-        process = subprocess.Popen(argv, stdout=stdout, stderr=stderr, env=env)
+        process = subprocess.Popen(process_lifecycle.command(argv), stdout=stdout,
+                                   stderr=stderr, env=env, start_new_session=True)
         self._processes.append(process)
         return process
 
@@ -167,12 +169,18 @@ class MinimumHostWorkspace:
         secret_path = self._stage_secret(secret)
         policy = gateway["transient_error_policy"]
         transport = gateway.get("transport")
+        evidence_dir = self.artifact_dir / "gateway"
+        evidence_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         env = {
             **self._fixed_environment(),
             "PDDL_GATEWAY_UPSTREAM_ORIGIN": gateway["upstream_origin"],
             "PDDL_GATEWAY_MAX_MODEL_CALLS": str(gateway["max_model_calls"]),
             "PDDL_GATEWAY_MAX_ACTION_STEPS": str(gateway["max_action_steps"]),
             "PDDL_GATEWAY_AUTH_MODE": gateway["auth_mode"],
+            "PDDL_GATEWAY_PROVIDER": gateway.get("provider", "unknown"),
+            "PDDL_GATEWAY_REASONING_PATH": str(evidence_dir / "provider_reasoning.jsonl"),
+            "PDDL_GATEWAY_REASONING_STATUS_PATH": str(evidence_dir / "reasoning_capture_status.json"),
+            "PDDL_GATEWAY_FULL_TRACE_PATH": str(evidence_dir / "provider_full_trace.jsonl"),
             "PDDL_GATEWAY_API_KEY_FILE": str(secret_path),
             "PDDL_GATEWAY_ALLOWED_MODELS": json.dumps(gateway["allowed_models"]),
             "PDDL_GATEWAY_ALLOWED_PATH_PREFIXES": json.dumps(
@@ -631,19 +639,26 @@ class MinimumHostWorkspace:
                 pass
 
     def cleanup(self) -> None:
-        self.stop_model_gateway_monitor()
-        self.adapter.clear_host_execution()
+        errors = []
+        for cleanup in (self.stop_model_gateway_monitor, self.adapter.clear_host_execution):
+            try:
+                cleanup()
+            except Exception as exc:
+                errors.append(str(exc))
+                logger.exception("Could not stop minimum host monitor/state")
         for process in reversed(self._processes):
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
+            try:
+                process_lifecycle.terminate(process)
+            except Exception as exc:
+                errors.append(str(exc))
+                logger.exception("Could not drain minimum host process")
         self._processes.clear()
         for stream in self._log_streams:
-            stream.close()
+            try:
+                stream.close()
+            except Exception as exc:
+                errors.append(str(exc))
+                logger.exception("Could not close minimum process log")
         self._log_streams.clear()
         if self._secret_dir is not None:
             shutil.rmtree(self._secret_dir, ignore_errors=True)
@@ -653,3 +668,5 @@ class MinimumHostWorkspace:
         self._control_dir = None
         self._control_path = None
         self._cancel_path = None
+        if errors:
+            raise RuntimeError("minimum process cleanup failed: " + "; ".join(errors))

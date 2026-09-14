@@ -42,10 +42,12 @@ def validate(adapter):
 
 
 def prepare(workspace):
+    from ..results import native_audit
     adapter = workspace.adapter
     validate(adapter)
     checkpoint = policy(adapter) == call_checkpoint.POLICY_ID
     files = [ROOT / "logical_time.py", ROOT / "openclaw_deadlines.py", *sorted(path for path in RUNTIME.iterdir() if path.suffix in {".py", ".c", ".cjs", ".mjs"})]
+    files.append(Path(native_audit.__file__))
     if checkpoint:
         files.extend([ROOT / "call_checkpoint.py", ROOT / "checkpoint_monitor.py"])
         if adapter.name == 'zeroclaw':
@@ -60,12 +62,18 @@ def prepare(workspace):
     # The bundle is derived, isolated build output, never the installed harness.
     sources = [(path, path.name) for path in RUNTIME.iterdir() if path.suffix in {".py", ".cjs", ".mjs"}]
     sources.append((ROOT / "logical_time.py", "benchmark_logical_time.py"))
+    sources.append((Path(native_audit.__file__), "native_audit.py"))
     for path, name in sources:
         destination = bundle / name
         if not destination.exists():
             temporary = bundle / f"{name}.{uuid.uuid4().hex}.tmp"
             shutil.copyfile(path, temporary)
             temporary.replace(destination)
+    audit_node = bundle / "native-audit.cjs"
+    if not audit_node.exists():
+        temporary = bundle / f"native-audit.{uuid.uuid4().hex}.tmp"
+        temporary.write_text(native_audit.NODE_SOURCE)
+        temporary.replace(audit_node)
     library = bundle / "timeout_deadline.so"
     if not library.exists():
         temporary = bundle / f"timeout_deadline.{uuid.uuid4().hex}.so"
@@ -117,6 +125,7 @@ def prepare(workspace):
     evidence = workspace.artifact_dir / "gateway" / ("call_checkpoints.jsonl" if checkpoint else "logical_time.jsonl") if workspace.artifact_dir else None
     broker_type = call_checkpoint.CheckpointBroker if checkpoint else logical_time.DeadlineBroker
     workspace._deadline_broker = broker_type(directory, evidence)
+    workspace._native_audit_collector = native_audit.Collector(directory, workspace.artifact_dir / 'native_audit') if workspace.artifact_dir else None
     workspace._deadline_bundle = bundle
     workspace._deadline_directory = directory
     if workspace.artifact_dir:

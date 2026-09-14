@@ -1016,6 +1016,9 @@ def generate_gemini_json(
             elapsed_ms=elapsed_ms,
             response=_serialize_response(resp),
         )
+        from agent_formalizer.results.provider_reasoning import token_accounting
+        tracer.emit("token_accounting", provider=GEMINI_PROVIDER, model=model,
+                    accounting=token_accounting(_serialize_response(resp), model))
 
     text = resp.text
     if not text:

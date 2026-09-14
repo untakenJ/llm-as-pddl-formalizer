@@ -70,6 +70,8 @@ class FakeDocker:
             if not self.keep_deleted:
                 self.containers = [c for c in self.containers if c["Id"] != args[-1]]
             return args[-1]
+        if args[:2] == ["docker", "stop"]:
+            return args[-1]
         if args[:3] == ["docker", "network", "rm"]:
             if self.fail_delete:
                 raise NetworkResourceError("network has active endpoints")
@@ -172,6 +174,7 @@ class NetworkResourcesTests(unittest.TestCase):
         with self.manager._lock():
             self.manager._maintain()
         self.assertFalse(self.docker.deletions())
+        self.assertTrue(any(c[:2] == ["docker", "stop"] for c in self.docker.commands))
         record["phase"] = "cleanup_ready"
         self.manager._write_record(record)
         with self.manager._lock():

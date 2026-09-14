@@ -4,6 +4,7 @@ import pandas as pd
 import re
 import argparse
 from pathlib import Path
+from agent_formalizer.runtime import process_lifecycle
 
 from batch_utils import format_problem_name, run_parallel
 from agent_formalizer.results.execution_validity import (
@@ -75,7 +76,18 @@ def validate_plan(domain, problem_file_path, plan_filepath):
     
     command = [validate_executable, "-v", domain_path, problem_file_path, plan_filepath]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        process = subprocess.Popen(process_lifecycle.command(command), stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            stdout, stderr = process.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            process_lifecycle.terminate(process)
+            stdout, stderr = process.communicate(timeout=2)
+            return f"Error: VAL infrastructure timeout after 120 seconds\n{stdout}\n{stderr}"
+        finally:
+            process_lifecycle.terminate(process)
+        result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        result.check_returncode()
         return f"Validation Output:\n{result.stdout}"
         
     except subprocess.CalledProcessError as e:

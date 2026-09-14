@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Iterable
 
 from agent_formalizer.result_types import AgentResult
+from agent_formalizer.runtime import process_lifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -131,32 +132,37 @@ def run_process_with_attempt_clock(
 ) -> subprocess.CompletedProcess:
     """Run a process against active time rather than a fixed wall timeout."""
     proc = subprocess.Popen(
-        cmd,
+        process_lifecycle.command(cmd),
         stdout=subprocess.PIPE if capture_output else None,
         stderr=subprocess.PIPE if capture_output else None,
         text=text,
         env=env,
+        start_new_session=True,
     )
-    while True:
-        if clock.cancellation_reason() is not None:
-            proc.kill()
-            stdout, stderr = proc.communicate()
-            return subprocess.CompletedProcess(cmd, -1, stdout, stderr)
-        remaining = clock.remaining()
-        if remaining <= 0:
-            proc.kill()
-            stdout, stderr = proc.communicate()
-            raise subprocess.TimeoutExpired(
-                cmd,
-                clock.limit_seconds,
-                output=stdout,
-                stderr=stderr,
-            )
-        try:
-            stdout, stderr = proc.communicate(timeout=min(0.25, remaining))
-            return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
-        except subprocess.TimeoutExpired:
-            continue
+    try:
+        while True:
+            if clock.cancellation_reason() is not None:
+                process_lifecycle.terminate(proc)
+                stdout, stderr = proc.communicate()
+                return subprocess.CompletedProcess(cmd, -1, stdout, stderr)
+            remaining = clock.remaining()
+            if remaining <= 0:
+                process_lifecycle.terminate(proc)
+                stdout, stderr = proc.communicate()
+                raise subprocess.TimeoutExpired(
+                    cmd,
+                    clock.limit_seconds,
+                    output=stdout,
+                    stderr=stderr,
+                )
+            try:
+                stdout, stderr = proc.communicate(timeout=min(0.25, remaining))
+                return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        # A monitor/decoder exception must not detach a still-running command.
+        process_lifecycle.terminate(proc)
 
 
 class BaseClawAdapter:

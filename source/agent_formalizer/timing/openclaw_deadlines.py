@@ -36,6 +36,13 @@ def transform(path, *, checkpoint=False):
     source = path.read_text()
     count = 0
     if checkpoint and path.name.startswith("proxy-"):
+        source = replace_one(source,
+            "const result = await prepared.tool.execute(prepared.toolCall.id, prepared.args, signal, (partialResult) => {",
+            "const result = await prepared.tool.execute(prepared.toolCall.id, prepared.args, signal, (partialResult) => {\n"
+            "__benchmarkAudit.record('tool_progress', {call_id:prepared.toolCall.id, tool:prepared.toolCall.name, result:partialResult});")
+        source = replace_one(source, "\tlet result = executed.result;",
+            "\t__benchmarkAudit.record('tool_result', {call_id:prepared.toolCall.id, tool:prepared.toolCall.name, arguments:prepared.args, result:executed.result, is_error:executed.isError}, true);\n\tlet result = executed.result;")
+        source = "import __benchmarkAudit from '/opt/benchmark-deadlines/native-audit.cjs';\n" + source
         # Preserve the exact pending native continuation, including tool calls
         # already chosen by the model. No transcript replay or new prompt.
         for name, args, context in (

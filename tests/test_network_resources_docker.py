@@ -12,11 +12,48 @@ import uuid
 
 from agent_formalizer.configuration.config import BASE_IMAGE
 from agent_formalizer.docker.network_resources import DEFAULT_OPTIONS, NetworkResources, label_args
+from agent_formalizer.workspace import AgentWorkspace
+from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
+from types import SimpleNamespace
 
 
 @unittest.skipUnless(os.environ.get("RUN_NETWORK_RESOURCE_DOCKER_TESTS") == "1",
                      "set RUN_NETWORK_RESOURCE_DOCKER_TESTS=1 for local Docker lifecycle smoke")
 class NetworkResourcesDockerTests(unittest.TestCase):
+    def test_freeze_kills_background_jobs_and_retains_collectable_files(self):
+        manager = NetworkResources()
+        name = "pddl-end-boundary-smoke-" + uuid.uuid4().hex
+        record, labels = manager.create(name + "-net", [name], "end-boundary-smoke")
+        def command(args):
+            return subprocess.run(args, capture_output=True, text=True, timeout=30, check=True).stdout
+        try:
+            command(["docker", "run", "-d", "--init", "--pull", "never", "--name", name,
+                     "--network", name + "-net", *label_args(labels), BASE_IMAGE, "tail", "-f", "/dev/null"])
+            script = ("from pathlib import Path; import time; "
+                      "Path('/workspace').mkdir(exist_ok=True); "
+                      "Path('/workspace/domain.pddl').write_bytes(b'domain\\r\\n'); "
+                      "Path('/workspace/problem.pddl').write_bytes(b'problem\\r\\n'); "
+                      "\nwhile True:"
+                      "\n with open('/workspace/ticks','a') as f: f.write('x')"
+                      "\n time.sleep(.01)")
+            command(["docker", "exec", "-d", name, "python3", "-c", script])
+            for _ in range(50):
+                result = subprocess.run(["docker", "exec", name, "test", "-f", "/workspace/ticks"], capture_output=True)
+                if result.returncode == 0:
+                    break
+                time.sleep(.02)
+            adapter = SimpleNamespace(resolved_config=load_benchmark_profile().resolve("hermes"))
+            workspace = AgentWorkspace(name, name, adapter)
+            outputs = workspace.freeze_pddl_outputs()
+            self.assertEqual(outputs, {"domain": b"domain\r\n", "problem": b"problem\r\n"})
+            before = command(["docker", "exec", name, "cat", "/workspace/ticks"])
+            time.sleep(.2)
+            self.assertEqual(command(["docker", "exec", name, "cat", "/workspace/ticks"]), before)
+            top = command(["docker", "top", name, "-eo", "pid,comm"])
+            self.assertEqual(len(top.strip().splitlines()), 3, top)  # header + init + tail
+        finally:
+            self.assertTrue(manager.cleanup(record), "Cleanup failed; do not force retry")
+
     def test_dead_process_empty_network_recovered_without_touching_live_owner(self):
         manager = NetworkResources(options={**DEFAULT_OPTIONS, "orphan_grace_seconds": 1})
         before = set(manager._command(["docker", "network", "ls", "-q", "--no-trunc"]).split())

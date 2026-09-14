@@ -309,6 +309,9 @@ class MinimumRuntimeTests(unittest.TestCase):
             self.assertFalse((root / "problem.pddl").exists())
             transcript = json.loads((root / "transcript.json").read_text())
             self.assertEqual(transcript["status"], "failed")
+            calls = [row for row in transcript['events'] if row.get('event') == 'model_call']
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[-1]['response_text'], 'the final reflection did not follow the contract')
 
 
 class _FakeCompletionHandler(BaseHTTPRequestHandler):

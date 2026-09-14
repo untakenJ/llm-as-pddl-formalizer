@@ -1,9 +1,10 @@
-"""Provider-specific extraction and durable capture of readable reasoning.
+"""Provider reasoning extraction and separate complete readable-output audit.
 
 This module is mounted beside ``model_gateway.py`` in the gateway sidecar.  It
-only extracts response fields whose provider wire semantics identify them as
-readable reasoning/thinking content.  It never changes the response delivered
-to a harness and never infers whether that harness parsed or exposed a field.
+reasoning sink only extracts fields whose provider wire semantics identify
+readable reasoning/thinking. Its separate full-trace sink preserves model/tool
+text and usage without changing responses delivered to the harness. Neither
+sink infers whether the harness parsed or exposed a captured field.
 """
 
 from __future__ import annotations
@@ -12,11 +13,93 @@ import datetime
 import hashlib
 import json
 import threading
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
 
 SCHEMA_VERSION = 1
+
+# Standard on-demand Vertex Global pricing, verified 2026-09-10. Costs are
+# estimates, not billing data; cached tokens are a subset of input tokens and
+# OpenAI reasoning tokens are a subset of completion tokens.
+GEMINI_FLASH_LITE_PRICING = {
+    "model": "gemini-3.1-flash-lite", "currency": "USD", "region": "global",
+    "input_per_million": 0.25, "cached_input_per_million": 0.025,
+    "output_including_thinking_per_million": 1.50,
+    "verified_date": "2026-09-10",
+    "source": "https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing",
+}
+
+
+def token_accounting(payload: Any, model: str = "") -> dict[str, Any] | None:
+    """Normalize an authoritative usage snapshot, without inventing missing data."""
+    if not isinstance(payload, dict):
+        return None
+    usage = payload.get("usageMetadata") or payload.get("usage_metadata")
+    gemini = isinstance(usage, dict)
+    if not gemini:
+        usage = payload.get("usage")
+    if not isinstance(usage, dict) or not usage:
+        nested = payload.get("response")
+        return token_accounting(nested, model) if isinstance(nested, dict) else None
+
+    def count(*keys, default=None):
+        for key in keys:
+            value = usage.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                return value
+        return default
+
+    if gemini:
+        input_tokens = count("promptTokenCount", "prompt_token_count")
+        cached = count("cachedContentTokenCount", "cached_content_token_count", default=0)
+        thinking = count("thoughtsTokenCount", "thoughts_token_count", default=0)
+        visible = count("candidatesTokenCount", "candidates_token_count")
+        output = None if visible is None else visible + thinking
+    else:
+        input_tokens = count("prompt_tokens", "input_tokens")
+        output = count("completion_tokens", "output_tokens")
+        input_details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
+        output_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
+        cached = input_details.get("cached_tokens", 0)
+        thinking = output_details.get("reasoning_tokens")
+    result = {
+        "input_tokens": input_tokens, "cached_input_tokens": cached,
+        "output_tokens_including_thinking": output, "thinking_tokens": thinking,
+        "provider_usage": usage, "estimated_cost_usd": None,
+        "cost_status": "usage_incomplete_or_model_unpriced",
+    }
+    resolved_model = model or str(payload.get("modelVersion") or payload.get("model_version") or payload.get("model") or "")
+    if ("gemini-3.1-flash-lite" in resolved_model and input_tokens is not None
+            and output is not None and isinstance(cached, int)
+            and not isinstance(cached, bool) and 0 <= cached <= input_tokens):
+        rates = GEMINI_FLASH_LITE_PRICING
+        result.update({
+            "estimated_cost_usd": ((input_tokens - cached) * rates["input_per_million"]
+                                   + cached * rates["cached_input_per_million"]
+                                   + output * rates["output_including_thinking_per_million"]) / 1_000_000,
+            "cost_status": "estimated_vertex_global_standard_on_demand",
+            "pricing": dict(rates),
+        })
+    return result
+
+
+def readable_audit_payload(value: Any) -> Any:
+    """Keep complete message/tool text; omit credentials and opaque replay blobs.
+
+    This is a separate evidence surface, never the content-free call ledger.
+    No HTTP headers or process environment are accepted by this interface.
+    """
+    if isinstance(value, dict):
+        excluded = {"thoughtsignature", "thinking_signature", "thinkingsignature",
+                    "textsignature", "encrypted_content", "openclawreasoningreplay",
+                    "authorization", "x-goog-api-key", "api_key", "apikey"}
+        return {key: ("<opaque-or-secret-field-omitted>" if key.lower() in excluded
+                      else readable_audit_payload(item)) for key, item in value.items()}
+    if isinstance(value, list):
+        return [readable_audit_payload(item) for item in value]
+    return value
 
 _PROVIDER_ALIASES = {
     "google": "gemini",
@@ -260,10 +343,17 @@ class ProviderReasoningRecorder:
         provider: str,
         records_path: str | Path | None,
         status_path: str | Path | None,
+        *,
+        full_trace_path: str | Path | None = None,
     ):
         self.capability = reasoning_capture_capability(provider)
         self.records_path = Path(records_path) if records_path else None
         self.status_path = Path(status_path) if status_path else None
+        self.full_trace_path = Path(full_trace_path) if full_trace_path else None
+        self._full_records = 0
+        self._full_stream = None
+        self._last_status_write = 0.0
+        self._usage_by_response: dict[tuple[str, Any], dict] = {}
         self._lock = threading.Lock()
         self._fragments = 0
         self._characters = 0
@@ -306,6 +396,8 @@ class ProviderReasoningRecorder:
             "write_errors": self._write_errors,
             "capture_errors": self._capture_errors,
             "last_error_type": self._last_error_type,
+            "full_trace_file": self.full_trace_path.name if self.full_trace_path else None,
+            "full_trace_records": self._full_records,
             "updated_at": _now(),
         }
 
@@ -325,8 +417,11 @@ class ProviderReasoningRecorder:
                 "write_errors": self._write_errors - write_errors_before,
             }
 
-    def _write_status_locked(self) -> None:
+    def _write_status_locked(self, *, force: bool = True) -> None:
         if self.status_path is None:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_status_write < 0.25:
             return
         try:
             self.status_path.parent.mkdir(parents=True, exist_ok=True)
@@ -340,6 +435,7 @@ class ProviderReasoningRecorder:
                 encoding="utf-8",
             )
             self.status_path.chmod(0o600)
+            self._last_status_write = now
         except OSError as exc:
             self._record_write_error_locked(exc)
 
@@ -370,6 +466,27 @@ class ProviderReasoningRecorder:
         }
         return {key: context.get(key) for key in allowed if key in context}
 
+    def _append_full_locked(self, record: dict) -> None:
+        if self.full_trace_path is None:
+            return
+        try:
+            if self._full_stream is None:
+                self.full_trace_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                self._full_stream = self.full_trace_path.open("a", encoding="utf-8", buffering=1)
+                self.full_trace_path.chmod(0o600)
+            self._full_stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self._full_records += 1
+        except OSError as exc:
+            self._record_write_error_locked(exc)
+
+    def capture_request(self, payload: Any, *, context: dict[str, Any]) -> None:
+        with self._lock:
+            self._append_full_locked({
+                "schema_version": 1, "record_type": "harness_request",
+                "captured_at": _now(), **self._safe_context(context),
+                "payload": readable_audit_payload(payload),
+            })
+
     def capture_payload(
         self, payload: Any, *, context: dict[str, Any]
     ) -> dict[str, int]:
@@ -385,6 +502,17 @@ class ProviderReasoningRecorder:
         response_id = str(context.get("response_id") or "unknown")
         with self._lock:
             errors_before = self._write_errors
+            self._append_full_locked({
+                "schema_version": 1, "record_type": "provider_payload",
+                "captured_at": _now(), **self._safe_context(context),
+                "provider": self.capability["provider"],
+                "payload": readable_audit_payload(payload),
+            })
+            accounting = token_accounting(payload, str(context.get("model") or ""))
+            if accounting is not None:
+                # Streaming usage is normally cumulative: retain the last
+                # snapshot for this physical attempt, never sum its chunks.
+                self._usage_by_response[(response_id, context.get("physical_attempt"))] = accounting
             for fragment in fragments:
                 text = fragment["text"]
                 encoded = text.encode("utf-8")
@@ -419,7 +547,7 @@ class ProviderReasoningRecorder:
                     old_fragments + written,
                     old_characters + characters,
                 )
-            self._write_status_locked()
+            self._write_status_locked(force=False)
             return {
                 "fragments": written,
                 "characters": characters,
@@ -434,7 +562,7 @@ class ProviderReasoningRecorder:
         response_complete: bool,
         downstream_state: str,
     ) -> dict[str, int]:
-        if self.capability["support"] != "implemented":
+        if self.capability["support"] != "implemented" and self.full_trace_path is None:
             return {"write_errors": 0}
         response_id = str(context.get("response_id") or "unknown")
         with self._lock:
@@ -453,7 +581,24 @@ class ProviderReasoningRecorder:
                 "reasoning_characters": characters,
                 "agent_visibility": "not_inferred_by_gateway",
             }
+            self._append_full_locked({
+                **record,
+                "token_accounting": self._usage_by_response.pop(
+                    (response_id, context.get("physical_attempt")), None),
+                "accounting_scope": "physical_attempt_not_logical_call",
+            })
             if self._append_locked(record):
                 self._boundaries += 1
             self._write_status_locked()
             return {"write_errors": self._write_errors - errors_before}
+
+    def close(self) -> None:
+        with self._lock:
+            if self._full_stream is not None:
+                self._full_stream.close()
+                self._full_stream = None
+
+    def __del__(self):
+        stream = getattr(self, "_full_stream", None)
+        if stream is not None:
+            stream.close()

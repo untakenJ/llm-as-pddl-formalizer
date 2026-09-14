@@ -13,6 +13,25 @@ to the existing solver/VAL-compatible layout.
 
 ## Code organization
 
+### Execution-end process lifecycle
+
+Agent and gateway containers use Docker `--init`. Native asynchronous tools
+remain untouched while an execution is active. At completion the official PDDL
+is snapshotted under container pause, the entire agent PID namespace is stopped,
+and only its inert init/tail is restarted for evidence collection. Native jobs
+are never resumed after this boundary. Verified owned-container/network removal
+still follows collection; cleanup errors block further admission.
+
+Host minimum/runtime services use the dedicated subreaper supervisor in
+`runtime/process_lifecycle.py`, not process-wide subreaping in a threaded runner.
+Detached descendants are reaped on normal exit and cancellation. VAL has a
+120-second infrastructure watchdog; timeout is explicitly diagnosed, not called
+PDDL unsolvability. An owner-dead managed container may be stopped while keeping
+its uncollected crash evidence; unowned legacy containers are never auto-pruned.
+
+These are lifecycle implementation changes, not changes to native tool timeout,
+checkpoint recovery, prompt, model, skill, or semantic baseline configuration.
+
 `orchestrator.py` and `workspace.py` retain the shared execution flow and
 workspace lifecycle. Feature-specific implementation lives in:
 
@@ -740,7 +759,12 @@ output/llm-as-formalizer-agent/<domain>/<dataset>/<model_label>/<problem>/
     model_call_ledger.jsonl
     gateway/
       provider_reasoning.jsonl
+      provider_full_trace.jsonl
       reasoning_capture_status.json
+    full_trace_audit.json
+    native_audit/
+      native_tools.jsonl
+      files/<sha256>
     *_trace.jsonl
     sessions/...
 ```
@@ -754,13 +778,74 @@ was not implemented. Its attribution never treats a missing field as model
 behavior unless a semantically authoritative direct record supports that
 conclusion.
 
+### Full readable-output audit and costs
+
+The full-audit implementation adds a separate, restricted evidence surface to
+the older reasoning-only capture. It does **not** put prompt/response bodies in
+`model_call_ledger.jsonl` and does not modify model generation settings or the
+native context/output budgets.
+
+- `gateway/provider_full_trace.jsonl`: complete parsed provider response events
+  (including ordinary text, readable reasoning, tool arguments and usage),
+  incoming harness conversation bodies, and physical-attempt boundaries. This
+  includes responses discarded by transparent retries. Credential headers and
+  opaque signatures/encrypted replay are excluded. Provider-hidden thoughts
+  cannot be reconstructed, and the gateway does not enable extra thinking.
+- `native_audit/native_tools.jsonl`: tool results observed before subsequent
+  history compression, even when no next model call occurs. Native output
+  caps remain native; a tool that never returned bytes cannot have those bytes
+  recovered from the model request. Generic additionally records its complete
+  captured process stdout before its `smart_format` reduction.
+  ZeroClaw additionally copies its existing `runtime-trace*.jsonl` into
+  `sessions/`, covering native approval denials before tool dispatch. Its
+  original log redaction/limits are unchanged; it is supporting evidence,
+  not a replacement for the full provider/tool sinks.
+- `native_audit/files/<sha256>`: text snapshots of workspace files and direct
+  `/tmp` auxiliary `.py`, `.pddl`, `.sh`, `.txt` programs at tool boundaries.
+  A manifest maps paths to these blobs. Binary files, symlink targets, private
+  harness HOME and arbitrary files created/deleted entirely inside one command
+  are not claimed as complete filesystem history. Written source/code also
+  remains in the original model/tool arguments.
+- `full_trace_audit.json`: collection/parse status, native event counts and
+  per-physical-attempt normalized token/cost estimates. Cumulative streaming
+  usage is counted once. Cached input is subtracted from ordinary input;
+  Gemini candidate and thinking tokens are added, whereas OpenAI-compatible
+  completion tokens already include their reasoning-token subset. Missing
+  usage or an unpriced model yields `null`, not a zero-cost claim. The known
+  subtotal includes discarded attempts; benchmark-clock credits are not
+  billing credits.
+
+Gemini 3.1 Flash Lite estimates use standard on-demand Vertex **Global** rates
+verified on 2026-09-10: $0.25/M input, $0.025/M cached input, and $1.50/M output
+including thinking. The exact rates, official URL and verification date are
+embedded in the accounting record and should be frozen with campaign
+provenance. These are estimates, not an invoice, and do not assume credits,
+discounts, batch pricing or priority service.
+
+The passive native instrumentation lives in `results/native_audit.py`; the
+existing version-checked overlay builders load it without editing installed
+harness sources. Its write-only request/acknowledgement socket sends evidence
+to a host collector. Neither history nor file snapshots are mounted back into
+the agent, so capture does not create an extra readable context-recovery file.
+It does not decide retries, deadlines, invalidation or agent
+continuations. Health metadata is throttled during streams; complete payload
+records remain line-flushed. Verify capture on actual native loops before a
+campaign, including outputs not reused in model context.
+
+Minimum retains full rejected/malformed responses before parsing and uses the
+same gateway evidence sink. The standalone API generator retains raw outputs,
+SDK responses and accounting; interrupted reruns archive their previous trace
+and files under `execution_history/`, and successful pairs get an
+`api_completion.json` with output and trace hashes for resume checks.
+
 `gateway/provider_reasoning.jsonl` is a restricted (`0600`) optional evidence
 artifact and can contain verbatim provider-returned reasoning. It stores one
 semantically identified fragment at a time, its provider field path and hash,
 the logical/physical response identity, and a response boundary stating whether
 the provider response was complete and whether it was delivered downstream.
-The gateway does not request extra thinking, copy the ordinary final answer, or
-store opaque Gemini thought signatures. In particular, Gemini capture covers
+The reasoning-only artifact does not copy the ordinary final answer. The
+gateway does not request extra thinking or store opaque Gemini thought signatures.
+In particular, Gemini capture covers
 native `thought: true` text, Interactions thought-summary steps/deltas, and
 explicit `reasoning_content` on compatibility responses; DeepSeek capture covers
 Chat/Completions `reasoning_content` and Responses reasoning-text records/deltas.

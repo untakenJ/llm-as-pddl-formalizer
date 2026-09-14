@@ -71,6 +71,27 @@ Defaults:
   run reliably. The privilege changes only the container runtime permission;
   it does not change the planner, manifest, input, deadline, or cgroup limits.
 
+### Per-task process cleanup
+
+Workers use Docker `--init` as a final orphan reaper. Each dedicated runner also
+enables Linux `PR_SET_CHILD_SUBREAPER`: after normal completion, failure, or
+timeout it terminates and waits for **all** its descendants, including detached
+`setsid` / double-fork children. Cleanup has a two-second TERM grace and a
+five-second total bound; it does not extend the planner's configured deadline.
+Only the persistent init/idle worker processes remain between requests.
+
+Output is spooled to temporary files and collected only after cleanup, avoiding
+an indefinite pipe-EOF wait caused by inherited file descriptors. Successful
+results carry `local_backend.process_cleanup` evidence. Missing evidence,
+cleanup failure, or a crashed runner causes worker replacement before reuse;
+failed replacement quarantines the worker and fails further requests promptly.
+Structured cleanup faults are infrastructure errors, never proof of bad PDDL.
+
+Rebuild the worker image to deploy this revision; startup rejects old images
+without `subreaper-v1` support. Existing services and frozen campaign images are
+not automatically upgraded. Record the new server/image identity and repeat
+preflight before any authorized resume; do not rewrite historical artifacts.
+
 This mode has materially greater host security exposure than an ordinary
 container. The service therefore gives workers no network, accepts only an
 allowlisted solver package, and never invokes a caller-provided shell command.

@@ -1195,8 +1195,8 @@ class OpenClawAdapter(BaseClawAdapter):
             },
             "normalized_analysis": {
                 "status": "partial",
+                "readable_thinking_text": "preserved_without_truncation",
                 "known_loss_modes": [
-                    "thinking_text_over_500_characters_is_truncated",
                     "opaque_signature_or_replay_fields_are_truncated_or_omitted",
                 ],
             },
@@ -1413,7 +1413,7 @@ def _sanitize_content_block(block: dict) -> dict:
         elif key == "openclawReasoningReplay":
             out[key] = "<omitted>"
         elif key == "thinking" and isinstance(val, str):
-            out[key] = _truncate_text(val)
+            out[key] = val
         else:
             out[key] = val
     return out
@@ -1510,7 +1510,7 @@ def _session_entry_to_steps(entry: dict, step_idx: int) -> list[dict]:
                 steps.append({
                     **sub,
                     "event": "assistant_thinking",
-                    "thinking": _truncate_text(block.get("thinking") or ""),
+                    "thinking": block.get("thinking") or "",
                 })
             elif btype == "toolCall":
                 steps.append({

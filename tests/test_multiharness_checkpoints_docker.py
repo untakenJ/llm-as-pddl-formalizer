@@ -42,6 +42,8 @@ class LoopBackend(BaseHTTPRequestHandler):
             available = [t['function']['name'] for t in request.get('tools', [])]
             if name not in available:
                 self.server.error = f'{name} missing from {available}'
+            if getattr(self.server, 'unknown_tool', False):
+                name = 'nonexistent-audit-fixture-tool'
             command = 'cd /workspace && pddl-solver'
             if self.server.harness == 'zeroclaw':
                 # Its native command policy permits Python, not arbitrary
@@ -100,12 +102,13 @@ class LoopBackend(BaseHTTPRequestHandler):
 
 @unittest.skipUnless(os.environ.get('RUN_EXTERNAL_CALLS_DOCKER_TESTS') == '1', 'opt-in native Docker test')
 class MultiHarnessLoopTests(unittest.TestCase):
-    def run_loop(self, harness, *, short_shell=False, slow_solver=False, background=False, short_model=False):
+    def run_loop(self, harness, *, short_shell=False, slow_solver=False, background=False, short_model=False, unknown_tool=False):
         bridge = json.loads(subprocess.check_output(['docker', 'network', 'inspect', 'bridge'], text=True))[0]['IPAM']['Config'][0]['Gateway']
         model = ThreadingHTTPServer((bridge, 0), LoopBackend)
         solver = ThreadingHTTPServer((bridge, 0), DelayedBackend)
         model.requests, model.harness, model.error = [], harness, None
         model.background = background
+        model.unknown_tool = unknown_tool
         model.failure_delay = 3 if short_model else 0.3
         solver.requests, solver.responses = [], ([SUBMIT, PLAN] if slow_solver or background else [SUBMIT, TIMEOUT, SUBMIT, PLAN])
         solver.final_delay = 8 if background else 5 if slow_solver else 0
@@ -156,7 +159,12 @@ class MultiHarnessLoopTests(unittest.TestCase):
                     if short_model:
                         self.assertFalse(json.loads(model.requests[0]).get('stream'), 'fixture must exercise reqwest total deadline')
                     final_context = json.loads(model.requests[-1])['messages']
-                    if slow_solver:
+                    if unknown_tool:
+                        # The native approval gate precedes execute_one_tool.
+                        # EOF is a native denial; do not auto-approve unknown
+                        # tools merely to make the audit fixture pass.
+                        self.assertIn('Denied by user.', json.dumps(final_context), output)
+                    elif slow_solver:
                         self.assertIn('Command timed out after 3s and was killed', json.dumps(final_context), output)
                         self.assertNotIn('(move a b)', json.dumps(final_context), output)
                     else:
@@ -169,13 +177,30 @@ class MultiHarnessLoopTests(unittest.TestCase):
                     if background:
                         self.assertTrue(any(row.get('external_call_timing_mode') == 'running_wall' for row in ledger), ledger)
                     calls = list((Path(directory) / 'gateway/solver_calls').glob('call-*/outcome.json'))
-                    self.assertEqual(len(calls), 1, output)
-                    self.assertEqual(json.loads(calls[0].read_text())['action'], 'native_deadline' if slow_solver else 'return',
+                    self.assertEqual(len(calls), 0 if unknown_tool else 1, output)
+                    if calls:
+                        self.assertEqual(json.loads(calls[0].read_text())['action'], 'native_deadline' if slow_solver else 'return',
                         {'output': output, 'solver_outcome': json.loads(calls[0].read_text()),
                          'settlements': (Path(directory) / 'gateway/call_checkpoints.jsonl').read_text(),
                          'clock': clock.snapshot()})
-                    self.assertEqual(len(solver.requests), 2 if slow_solver or background else 4, output)
+                    self.assertEqual(len(solver.requests), 0 if unknown_tool else 2 if slow_solver or background else 4, output)
                     self.assertEqual(workspace.validate_state_isolation()['status'], 'pass')
+                    from agent_formalizer.results.optional_evidence import collect_full_trace_evidence
+                    audit = collect_full_trace_evidence(Path(directory), harness, workspace.container_name)
+                    self.assertEqual(audit['native_collection'], 'host_stream', audit)
+                    self.assertNotEqual(workspace.run_in_container('test -e /tmp/benchmark-full-trace').exit_code, 0)
+                    if not unknown_tool:
+                        self.assertGreaterEqual(audit['native_events'].get('tool_result', 0), 1, audit)
+                    self.assertEqual(audit['parse_errors'], 0, audit)
+                    native_text = (Path(directory) / 'native_audit/native_tools.jsonl').read_text()
+                    if unknown_tool:
+                        collection=adapter.backup_session(identity,Path(directory),container_name=workspace.container_name)
+                        self.assertEqual(collection['status'],'persisted',collection)
+                        native_logs='\n'.join(p.read_text() for p in (Path(directory)/'sessions').glob('*.jsonl'))
+                        self.assertIn('Denied by user.',native_logs)
+                    else:
+                        self.assertIn('(move a b)' if not slow_solver else 'timed out', native_text)
+                    self.assertTrue((Path(directory) / 'gateway/provider_full_trace.jsonl').is_file())
                     print(harness, 'native model→tool→model:', clock.snapshot(),
                           'streaming:', [json.loads(raw).get('stream') for raw in model.requests],
                           'other native calls:', [{k: row.get(k) for k in ('routing_reason', 'routing_class', 'status_code')}
@@ -198,6 +223,9 @@ class MultiHarnessLoopTests(unittest.TestCase):
 
     def test_zeroclaw_native_loop(self):
         self.run_loop('zeroclaw')
+
+    def test_zeroclaw_unknown_tool_early_return_is_audited(self):
+        self.run_loop('zeroclaw', unknown_tool=True)
 
     def test_zeroclaw_retry_longer_than_native_shell_deadline(self):
         self.run_loop('zeroclaw', short_shell=True)

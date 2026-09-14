@@ -524,6 +524,113 @@ def inspect_tagged_response_logs(
     }
 
 
+def collect_full_trace_evidence(artifact_dir: Path, harness: str, container_name: str) -> dict:
+    """Collect passive native evidence and summarize physical-attempt accounting.
+
+    Never treat absent usage as zero dollars. Keep all cost estimates, including
+    discarded attempts; selection/benchmark-clock policy does not erase bills.
+    """
+    import subprocess
+    from .provider_reasoning import token_accounting
+
+    artifact_dir = Path(artifact_dir)
+    native = artifact_dir / "native_audit"
+    copy_status = "not_applicable_host_minimum"
+    if (native / "capture_status.json").is_file():
+        copy_status = "host_stream"
+    elif harness != "minimum":
+        try:
+            result = subprocess.run(
+                ["docker", "cp", f"{container_name}:/tmp/benchmark-full-trace", str(native)],
+                capture_output=True, timeout=30,
+            )
+            copy_status = "copied" if result.returncode == 0 else "not_collected"
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            copy_status = type(exc).__name__
+    snapshots = {}
+    boundaries = {}
+    payload_counts = {}
+    parse_errors = 0
+    path = artifact_dir / "gateway" / "provider_full_trace.jsonl"
+    if path.exists():
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    row = json.loads(line)
+                    key = (row.get("logical_call_index"), row.get("physical_attempt"))
+                    if row.get("record_type") == "provider_payload":
+                        payload_counts[key] = payload_counts.get(key, 0) + 1
+                        usage = token_accounting(row.get("payload"), row.get("model") or "")
+                        if usage is not None:
+                            snapshots[key] = usage
+                    elif row.get("record_type") == "response_boundary":
+                        boundaries[key] = row
+                        if row.get("token_accounting") is not None:
+                            snapshots[key] = row["token_accounting"]
+                except (ValueError, TypeError, AttributeError):
+                    parse_errors += 1
+    calls = []
+    for key in sorted(payload_counts.keys() | boundaries.keys(), key=str):
+        usage = snapshots.get(key)
+        boundary = boundaries.get(key, {})
+        calls.append({"logical_call_index": key[0], "physical_attempt": key[1],
+                      "payload_records": payload_counts.get(key, 0),
+                      "response_complete": boundary.get("response_complete"),
+                      "downstream_state": boundary.get("downstream_state"),
+                      "accounting": usage})
+    priced = [r["accounting"]["estimated_cost_usd"] for r in calls
+              if r["accounting"] is not None and r["accounting"].get("estimated_cost_usd") is not None]
+    native_counts = {}
+    native_path = native / "native_tools.jsonl"
+    if native_path.exists():
+        with native_path.open(encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    row = json.loads(line)
+                    event = str(row.get("event"))
+                    native_counts[event] = native_counts.get(event, 0) + 1
+                except (ValueError, TypeError, AttributeError):
+                    parse_errors += 1
+    capture_health = {}
+    for label, status_path in (("native", native / "capture_status.json"),
+                               ("provider", artifact_dir / "gateway/reasoning_capture_status.json")):
+        try:
+            capture_health[label] = json.loads(status_path.read_text())
+        except FileNotFoundError:
+            capture_health[label] = None
+        except (OSError, ValueError, UnicodeError) as exc:
+            capture_health[label] = {"status_error_type": type(exc).__name__}
+            parse_errors += 1
+    native_errors = (capture_health.get("native") or {}).get("errors", 0)
+    provider_health = capture_health.get("provider") or {}
+    capture_errors = native_errors + provider_health.get("write_errors", 0) + provider_health.get("capture_errors", 0)
+    # A disconnected client cannot update its host sink; surface its independent
+    # stderr diagnostic too. Never include the log contents in this metadata.
+    warning_count = 0
+    for log in artifact_dir.glob("agent_*.log"):
+        with log.open(errors="replace") as stream:
+            warning_count += sum("BENCHMARK_FULL_TRACE_ERROR" in line for line in stream)
+    report = {"schema_version": 1, "harness": harness,
+              "provider_trace": str(path.relative_to(artifact_dir)) if path.exists() else None,
+              "native_collection": copy_status, "native_events": native_counts,
+              "parse_errors": parse_errors, "capture_errors": capture_errors,
+              "native_capture_warnings": warning_count, "capture_health": capture_health,
+              "physical_attempts": calls,
+              "priced_physical_attempts": len(priced),
+              "unpriced_physical_attempts": len(calls) - len(priced),
+              "estimated_cost_usd_known_subtotal": sum(priced),
+              "estimated_cost_usd": sum(priced) if calls and len(priced) == len(calls) else None,
+              "cost_scope": "all_observed_physical_attempts_including_discarded_responses",
+              "limitations": ["provider-hidden thoughts cannot be recovered",
+                              "native tool output limits and context compression remain unchanged",
+                              "binary files and opaque replay signatures are not readable text",
+                              "arbitrary transient files deleted inside one command are not filesystem snapshots"]}
+    destination = artifact_dir / "full_trace_audit.json"
+    destination.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+    destination.chmod(0o600)
+    return report
+
+
 def inspect_provider_reasoning_capture(artifact_dir: Path) -> dict[str, Any]:
     """Inspect the gateway capture while keeping its readable text out of metadata."""
     artifact_dir = Path(artifact_dir)
@@ -725,9 +832,10 @@ def build_analysis_evidence_manifest(
         str(getattr(adapter, "model", "unknown")).split("/", 1)[0]
     )
     spec["provider_analysis_capture"] = provider_capability
-    raw_inventory = inventory_raw_evidence(
-        artifact_dir, adapter.raw_evidence_roots(artifact_dir)
-    )
+    roots = list(adapter.raw_evidence_roots(artifact_dir))
+    roots.extend(path for path in (Path(artifact_dir)/'native_audit',
+                                  Path(artifact_dir)/'full_trace_audit.json') if path.exists())
+    raw_inventory = inventory_raw_evidence(artifact_dir, roots)
     try:
         observation = normalize_collection_report(
             adapter.inspect_analysis_evidence(artifact_dir),

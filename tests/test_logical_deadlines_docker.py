@@ -478,6 +478,13 @@ console.log(JSON.stringify({executions,elapsed:Date.now()-started,messages:agent
                     self.assertEqual(len(ledger), 2)
                     self.assertEqual([e["action"] for e in ledger[0]["checkpoint_events"]], ["checkpoint", "rollback", "commit"])
                     self.assertGreater(value["elapsed"], 8000)
+                    from agent_formalizer.results.optional_evidence import collect_full_trace_evidence
+                    audit = collect_full_trace_evidence(Path(directory), 'openclaw', workspace.container_name)
+                    self.assertEqual(audit['native_collection'], 'host_stream', audit)
+                    self.assertNotEqual(workspace.run_in_container('test -e /tmp/benchmark-full-trace').exit_code, 0)
+                    self.assertEqual(audit['native_events'].get('tool_result'), 1, audit)
+                    self.assertEqual(audit['parse_errors'], 0, audit)
+                    self.assertIn('(move a b)', (Path(directory) / 'native_audit/native_tools.jsonl').read_text())
                     print("native checkpoint loop:", {"physical_ms": value["elapsed"], "active_seconds": clock.snapshot()["active_duration_seconds"], "stream_events": 10000})
                 finally:
                     workspace.cleanup()

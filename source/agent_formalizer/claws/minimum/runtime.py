@@ -382,7 +382,6 @@ def execute(config: dict[str, Any]) -> dict[str, Any]:
 
             request_messages = copy.deepcopy(messages)
             content, usage, provider_response = _chat_completion(config, messages)
-            parsed = parse_response(content)
             event = {
                 "event": "model_call",
                 "logical_call_index": call_index,
@@ -392,11 +391,13 @@ def execute(config: dict[str, Any]) -> dict[str, Any]:
                 "request_messages": request_messages,
                 "response_text": content,
                 "response_sha256": _sha256_text(content),
-                "parsed": parsed,
                 "usage": usage,
                 "provider_response": provider_response,
             }
             transcript["events"].append(event)
+            save()  # Preserve rejected/malformed responses as well as valid ones.
+            parsed = parse_response(content)
+            event["parsed"] = parsed
             messages.append({"role": "assistant", "content": content})
             latest = parsed
             save()

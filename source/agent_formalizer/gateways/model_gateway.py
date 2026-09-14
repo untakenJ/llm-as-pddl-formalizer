@@ -183,6 +183,7 @@ REASONING_RECORDER = ProviderReasoningRecorder(
     GATEWAY_PROVIDER,
     REASONING_PATH,
     REASONING_STATUS_PATH,
+    full_trace_path=os.environ.get("PDDL_GATEWAY_FULL_TRACE_PATH"),
 )
 try:
     INFRA_DIAGNOSTICS = InfraDiagnosticsRecorder.from_config_path(
@@ -426,12 +427,19 @@ def _capture_buffered_reasoning(
         streaming=False,
     )
     try:
+        sequence = 0
         for sequence, payload in enumerate(
             _iter_structured_response_payloads(body, headers), start=1
         ):
             report = REASONING_RECORDER.capture_payload(
                 payload,
                 context={**context, "payload_sequence": sequence},
+            )
+            _merge_reasoning_report(ledger, report)
+        if sequence == 0 and body:
+            report = REASONING_RECORDER.capture_payload(
+                {"unparsed_response_text": body.decode("utf-8", errors="replace")},
+                context={**context, "payload_sequence": 1},
             )
             _merge_reasoning_report(ledger, report)
     except Exception as exc:
@@ -980,6 +988,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 ledger["duration_ms"] = round((time.monotonic() - started) * 1000, 3)
                 State.ledger.append(ledger)
 
+        if count_attempt and incoming_body:
+            try:
+                REASONING_RECORDER.capture_request(
+                    json.loads(incoming_body),
+                    context={"logical_call_index": ledger["index"], "model": model,
+                             "api_path": parsed_path},
+                )
+            except Exception as exc:
+                _merge_reasoning_report(ledger, REASONING_RECORDER.record_capture_error(exc))
+
         if rejection:
             self._json(
                 {
@@ -1125,6 +1143,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
                     if upstream.status >= 400:
                         error_body = upstream.read()
+                        audit_error_body = error_body.replace(API_KEY.encode(), b"<credential-redacted>") if len(API_KEY) > 8 else error_body
+                        error_context = _capture_buffered_reasoning(
+                            audit_error_body, upstream.headers, ledger,
+                            physical_attempt=upstream_index,
+                        )
+                        _record_reasoning_boundary(ledger, context=error_context,
+                            response_complete=True, downstream_state="provider_http_error")
                         route, reason = _classify_upstream_response(
                             upstream.status, error_body
                         )

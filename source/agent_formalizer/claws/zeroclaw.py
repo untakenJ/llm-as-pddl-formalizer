@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 
 from agent_formalizer.claws.common import (
     EnvConfiguredAdapter,
@@ -298,6 +299,40 @@ strict_tool_parsing = false
             artifact_dir / "gateway",
         ]
 
+    def backup_session(self, agent_id: str, dest: Path, *, session_id=None,
+                       session_file=None, container_name=None) -> dict:
+        """Copy existing native logs, including pre-dispatch approval denials.
+
+        Do not enable extra native logging or create agent-readable history.
+        Full provider/tool evidence remains in the independent host sinks;
+        this preserves the native control events those boundaries cannot see.
+        """
+        report = {"collector":"zeroclaw-native-runtime-log", "files_copied":0}
+        if not container_name:
+            return {**report,"status":"failed","reason":"container_name_unavailable"}
+        output = Path(dest) / 'sessions'; output.mkdir(parents=True,exist_ok=True)
+        try:
+            found = subprocess.run(['docker','exec',container_name,'find',
+                CONTAINER_WORKSPACE,ZEROCLAW_CONFIG_DIR,'-type','f','-name','runtime-trace*.jsonl'],
+                capture_output=True,text=True,timeout=30)
+            if found.returncode != 0:
+                return {**report,"status":"failed","copy_exit_code":found.returncode}
+            for index, source in enumerate(sorted(set(found.stdout.splitlines()))):
+                path = Path(source)
+                if '..' in path.parts or not any(path.is_relative_to(root) for root in
+                        (CONTAINER_WORKSPACE,ZEROCLAW_CONFIG_DIR)):
+                    raise ValueError('Unexpected native log path')
+                destination = output / f'zeroclaw-runtime-{index:03d}.jsonl'
+                result = subprocess.run(['docker','cp',f'{container_name}:{source}',str(destination)],
+                    capture_output=True,timeout=30)
+                if result.returncode != 0 or not destination.is_file() or destination.is_symlink():
+                    return {**report,"status":"failed","copy_exit_code":result.returncode}
+                destination.chmod(0o600)
+                report['files_copied'] += 1
+            return {**report,"status":"persisted" if report['files_copied'] else "missing"}
+        except (OSError,subprocess.TimeoutExpired,ValueError) as exc:
+            return {**report,"status":"failed","error_type":type(exc).__name__}
+
     def analysis_evidence_spec(self) -> dict:
         return {
             "schema_version": 1,
@@ -309,13 +344,14 @@ strict_tool_parsing = false
                 "opaque_fields": [],
             },
             "raw_session": {
-                "adapter_persistence": "not_implemented",
-                "collector": "none",
+                "adapter_persistence": "implemented",
+                "collector": "zeroclaw-native-runtime-log",
             },
             "normalized_analysis": {
                 "status": "not_implemented",
                 "known_loss_modes": [
-                    "adapter_collects_usage_but_no_native_conversation"
+                    "native_runtime_log_is_not_a_complete_conversation; use host provider/tool audit",
+                    "native_log_redaction_and_limits_are_unchanged"
                 ],
             },
         }

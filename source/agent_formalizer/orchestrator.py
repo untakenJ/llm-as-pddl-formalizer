@@ -211,6 +211,11 @@ def _record_optional_evidence(
     )
     session_id = agent_result.session_id if agent_result else None
     session_file = agent_result.session_file if agent_result else None
+    from agent_formalizer.results.optional_evidence import collect_full_trace_evidence
+    try:
+        collect_full_trace_evidence(artifact_dir, adapter.name, container_name)
+    except Exception as exc:
+        tracer.emit("full_trace_collection_error", error_type=type(exc).__name__)
     try:
         session_collection = adapter.backup_session(
             session_agent_id,

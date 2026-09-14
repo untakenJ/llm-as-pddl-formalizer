@@ -2,8 +2,9 @@
 
 Never changes the installed binary/source or its runtime lock. The derived
 binary retains the recorded original release/default-feature build settings.
-Only named shell/model-gateway deadlines and propagation of the non-secret
-deadline runtime into the env-cleared child are adapted.
+Named shell/model-gateway deadlines and propagation of the non-secret runtime
+into the env-cleared child are adapted. A separate passive host-only audit sink
+observes native tool outcomes without changing their value or model context.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SOURCE = (ROOT / '.cache/harness-runtimes/zeroclaw-source').resolve()
 PREFIX = (ROOT / '.cache/harness-runtimes/zeroclaw').resolve()
 RUNTIME = Path(__file__).with_name('runtime')
+AUDIT_MODULE = Path(__file__).resolve().parents[1] / 'results/native_audit.py'
 SHELL = 'crates/zeroclaw-runtime/src/tools/shell.rs'
 HELPER = 'crates/zeroclaw-runtime/src/tools/benchmark_deadline.rs'
 REQWEST = PREFIX / '.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.12.28'
@@ -42,6 +44,7 @@ def identity():
             manifest[str(path.relative_to(SOURCE))] = sha(path)
     digest = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode() +
                             Path(__file__).read_bytes() + (RUNTIME / 'zeroclaw-deadline.rs').read_bytes() +
+                            AUDIT_MODULE.read_bytes() +
                             b''.join((REQWEST / p).read_bytes() for p in ('src/async_impl/client.rs', 'src/async_impl/body.rs', 'src/async_impl/response.rs'))).hexdigest()
     return digest, manifest
 
@@ -145,6 +148,7 @@ def prepared():
 
 
 def build():
+    from agent_formalizer.results.native_audit import instrument_zeroclaw
     directory, source_manifest = location()
     if (directory / 'manifest.json').exists():
         return prepared()
@@ -156,9 +160,50 @@ def build():
         shell.write_text(transform(shell.read_text()))
         shutil.copy2(RUNTIME / 'zeroclaw-deadline.rs', checkout / HELPER)
         patch_reqwest(checkout)
+        tool_source = checkout / 'crates/zeroclaw-runtime/src/agent/tool_execution.rs'
+        tool_source.write_text(instrument_zeroclaw(tool_source.read_text()))
     else:
         if (checkout / SHELL).read_text() != transform((SOURCE / SHELL).read_text()):
             raise RuntimeError('Derived source changed; refusing unsafe build resume')
+        tool_relative = 'crates/zeroclaw-runtime/src/agent/tool_execution.rs'
+        if (checkout / tool_relative).read_text() != instrument_zeroclaw((SOURCE / tool_relative).read_text()):
+            raise RuntimeError('Derived audit source changed; refusing unsafe build resume')
+    # Python-only audit collector changes need not recompile identical Rust.
+    # Reuse is allowed only after comparing the ENTIRE derived source closure
+    # (including patched reqwest, Cargo.lock and all build inputs), not just a
+    # tool marker or an unverified cached binary. Retain the original build
+    # provenance and explicitly record this byte-identical reuse.
+    def closure(root):
+        return {str(p.relative_to(root)): ('symlink:' + os.readlink(p) if p.is_symlink() else sha(p))
+                for p in sorted(root.rglob('*')) if (p.is_file() or p.is_symlink())
+                and not {'.git', 'target', '__pycache__'}.intersection(p.relative_to(root).parts)}
+    wanted = None
+    for previous_path in sorted(directory.parent.glob('*/manifest.json')):
+        if previous_path.parent == directory:
+            continue
+        previous = json.loads(previous_path.read_text())
+        if previous.get('source_sha256') != source_manifest:
+            continue
+        previous_binary = previous_path.parent / 'zeroclaw'
+        previous_source = previous_path.parent / 'source'
+        if not previous_source.is_dir() or not previous_binary.is_file() or sha(previous_binary) != previous.get('binary_sha256'):
+            continue
+        if wanted is None:
+            wanted = closure(checkout)
+        if closure(previous_source) != wanted:
+            continue
+        binary = directory / 'zeroclaw'
+        shutil.copy2(previous_binary, binary)
+        if sha(binary) != previous['binary_sha256']:
+            raise RuntimeError('Reused ZeroClaw binary copy mismatch')
+        manifest = {**previous, 'adapter_sha256': sha(__file__),
+                    'native_audit_sha256': sha(AUDIT_MODULE),
+                    'equivalent_compiled_source_reuse': str(previous_path),
+                    'verified_derived_source_sha256': hashlib.sha256(json.dumps(wanted,sort_keys=True).encode()).hexdigest()}
+        temporary = directory / 'manifest.json.tmp'
+        temporary.write_text(json.dumps(manifest,indent=2) + '\n')
+        temporary.replace(directory / 'manifest.json')
+        return binary, manifest
     env = {**os.environ, 'CARGO_HOME': str(PREFIX / '.cargo'), 'RUSTUP_HOME': str(PREFIX / '.rustup'),
            'PATH': str(PREFIX / '.cargo/bin') + os.pathsep + os.environ.get('PATH', '')}
     target = ROOT / '.cache/zeroclaw-deadlines/build-target'
@@ -172,6 +217,7 @@ def build():
     manifest = {'implementation': 'zeroclaw-shell-checkpoint-v1',
                 'source_sha256': source_manifest, 'binary_sha256': sha(binary),
                 'adapter_sha256': sha(__file__), 'deadline_helper_sha256': sha(RUNTIME / 'zeroclaw-deadline.rs'),
+                'native_audit_sha256': sha(AUDIT_MODULE),
                 'build_command': command, 'original_binary_sha256': sha(PREFIX / '.cargo/bin/zeroclaw'),
                 'physical_clocks_modified': False,
                 'coverage': ['native Rust shell timeout', 'GNU timeout in shell children',

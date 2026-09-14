@@ -126,6 +126,7 @@ Local compatible-service additions (the server/runner remain uncoupled):
 | Runner `FileNotFoundError`, `PermissionError` | Invalidate runtime/configuration failure |
 | Runner `ValueError`, `KeyError` | Ambiguous worker failure, not configuration proof; poll-stage repeated terminal failures return the last diagnostic |
 | Worker protocol failure, unexpected worker/server exception without input-dependent evidence | Retry; persistent exhaustion invalidates |
+| `ProcessCleanupError`, quarantined `worker_unavailable` | Infrastructure retry; persistent exhaustion invalidates, even if the worker has a historical `oom_killed` flag. Never return an unverified-cleanup plan as an agent-visible result. |
 | Planner `local_backend.timed_out` | Same three-solve timeout rule as public terminal timeout |
 
 Only ambiguous **terminal solve** failures count toward the three-failure
