@@ -1,14 +1,18 @@
-"""Controller CLI: bundle, submit, status, events, collect and explicit resume."""
+"""Controller CLI: frozen jobs, incremental sync, collect and explicit recovery."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 
 from .bundle import build
 from .client import Client
 from .protocol import identifier, private_json, read_json, safe_path, validate_job
+from .checkpoints import recovery_bundle, restore
+from .store import lock
 
 
 def main():
@@ -39,20 +43,39 @@ def main():
     submit.add_argument("--job", type=Path, required=True)
     commands.add_parser("health")
     commands.add_parser("list")
-    for name in ("status", "events", "progress", "collect", "resume"):
+    export = commands.add_parser("recovery-bundle", help="Package only durably received execution checkpoints")
+    export.add_argument("--mirror", type=Path, required=True, help="DEST/JOB_ID from sync")
+    export.add_argument("--archive", type=Path, required=True)
+    recover = commands.add_parser("restore", help="Offline restore on an empty replacement node; worker must be stopped")
+    recover.add_argument("--config", type=Path, required=True)
+    recover.add_argument("--archive", type=Path, required=True)
+    recover.add_argument("--reason", required=True)
+    recover.add_argument("--source-node-retired", action="store_true",
+                         help="Attest old VM is terminated/fenced, not just unreachable")
+    for name in ("status", "events", "progress", "collect", "resume", "sync"):
         command = commands.add_parser(name)
         command.add_argument("job_id")
         if name == "events":
             command.add_argument("--after", type=int, default=0)
-        if name == "collect":
+        if name in {"collect", "sync"}:
             command.add_argument("--destination", type=Path, required=True)
+        if name == "collect":
             command.add_argument("--generation", type=int)
+        if name == "sync":
+            command.add_argument("--follow", action="store_true", help="Reconnect and collect until pipeline terminal")
+            command.add_argument("--interval", type=int, default=5)
         if name == "resume":
             command.add_argument("--generation", type=int, required=True)
             command.add_argument("--reason", required=True)
     args = parser.parse_args()
     if args.command == "bundle":
         result = build(args.root, args.include, args.archive)
+    elif args.command == "recovery-bundle":
+        with lock(args.mirror / ".sync.lock", blocking=True):
+            result = recovery_bundle(args.mirror, args.archive)
+    elif args.command == "restore":
+        result = restore(args.archive, read_json(args.config), reason=args.reason,
+                         source_node_retired=args.source_node_retired)
     elif args.command == "job":
         from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
         profile = load_benchmark_profile(safe_path(args.root, args.profile))
@@ -83,6 +106,29 @@ def main():
             result = client.request(f"/jobs/{identifier(args.job_id)}/progress")
         elif args.command == "collect":
             result = client.collect(args.job_id, args.destination, generation=args.generation)
+        elif args.command == "sync":
+            if not 1 <= args.interval <= 60:
+                parser.error("--interval must be between 1 and 60 seconds")
+            while True:
+                try:
+                    result = client.sync(args.job_id, args.destination)
+                    if not args.follow:
+                        break
+                    print(json.dumps(result), flush=True)
+                    if result["status"] in {"completed", "failed"}:
+                        result["final_collection"] = client.collect(args.job_id, args.destination)
+                        break
+                    if result["status"] == "needs_attention":
+                        break  # Do not guess ownership or automatically resample.
+                except HTTPError as exc:
+                    if not args.follow or exc.code < 500:
+                        raise
+                    print(json.dumps({"sync": "reconnecting", "http_status": exc.code}), flush=True)
+                except (URLError, ConnectionError, TimeoutError):
+                    if not args.follow:
+                        raise
+                    print(json.dumps({"sync": "reconnecting"}), flush=True)
+                time.sleep(args.interval)
         else:
             result = client.resume(args.job_id, args.generation, args.reason)
     print(json.dumps(result, indent=2, ensure_ascii=False))

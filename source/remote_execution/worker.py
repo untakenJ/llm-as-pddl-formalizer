@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import bundle
+from . import checkpoints
 from .protocol import (CHUNK_SIZE, TERMINAL, canonical, digest, exact, file_hash,
                        private_json, read_json, safe_path, secret_file, sha256,
                        validate_job, validate_node)
@@ -135,8 +136,14 @@ class Node:
                                   "known_unfilled_attempts": missing})
                 except (OSError, ValueError, TypeError, AttributeError):
                     warnings.append(name)
+        units = checkpoints.catalog(self.store.directory(job_id))["checkpoints"]
+        ack_root = self.store.directory(job_id) / "checkpoint-acks"
+        health_path = self.store.directory(job_id) / "checkpoint-status.json"
         return {"job_id": job_id, "status": row["status"], "generation": row["generation"],
                 "cells": cells, "unreadable": warnings,
+                "sealed_execution_checkpoints": sum(u["kind"] == "execution" for u in units),
+                "acknowledged_checkpoints": sum((ack_root / (u["checkpoint_id"] + ".json")).is_file() for u in units),
+                "checkpoint_health": read_json(health_path) if health_path.is_file() else {"status": "not_started"},
                 "note": "Read-only partial validity snapshots; not a correctness score or final denominator"}
 
     def read_artifact(self, job_id, generation, name, offset):
@@ -200,13 +207,28 @@ def execute(config, job_id):
                        "PYTHONUNBUFFERED": "1", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "UTC"}
                 with (directory / "logs" / f"benchmark-{generation}.log").open("xb") as output:
                     phase = "run_benchmark_pipeline"
-                    result = subprocess.run([config["python"], "-B", str(entry),
+                    with subprocess.Popen([config["python"], "-B", str(entry),
                         "--job", str(evidence / f"request-{generation}.json"), "--node", str(directory / "node.json"),
                         "--directory", str(directory), "--generation", str(generation)],
                         cwd=workspace, env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
-                        pass_fds=(owner_lock.fileno(),))
-                detail = {"returncode": result.returncode}
-                status = "completed" if result.returncode == 0 else "failed"
+                        pass_fds=(owner_lock.fileno(),)) as process:
+                        while True:
+                            try:
+                                code = process.wait(timeout=config.get("checkpoint_interval_seconds", 2))
+                            except subprocess.TimeoutExpired:
+                                code = None
+                            try:
+                                checkpoints.publish_ready(directory, spec, config, generation)
+                                private_json(directory / "checkpoint-status.json", {"status": "ok", "generation": generation})
+                            except (OSError, ValueError, TypeError, KeyError) as exc:
+                                # Transport trouble must not invalidate or resample a
+                                # measured agent. Retry the SAME evidence next poll.
+                                private_json(directory / "checkpoint-status.json", {
+                                    "status": "retrying", "generation": generation, "error_type": type(exc).__name__})
+                            if code is not None:
+                                break
+                detail = {"returncode": code}
+                status = "completed" if code == 0 else "failed"
                 # Snapshot/resume needs the original node paths; never rewrite
                 # completion records during transfer to make them look local.
                 private_json(evidence / f"path-map-{generation}.json", {
@@ -219,6 +241,10 @@ def execute(config, job_id):
             manifest = seal_artifacts(directory, generation)
             detail["artifacts_sha256"] = digest(manifest)
             detail["artifact_files"] = len(manifest["files"])
+            health_path = directory / "checkpoint-status.json"
+            if health_path.exists() and read_json(health_path).get("status") != "ok":
+                status = "needs_attention"
+                detail["reason"] = "execution_checkpoint_sealing_failed"
         except Exception as exc:
             status = "needs_attention"
             detail = {"reason": "artifact_sealing_failed", "error_type": type(exc).__name__}
@@ -270,6 +296,37 @@ def make_server(node, port=0):
                     return self.response(200, node.store.events(job_id, int(query.get("after", [0])[0])))
                 if len(path) == 3 and path[2] == "progress" and self.command == "GET":
                     return self.response(200, node.progress(job_id))
+                if len(path) == 3 and path[2] == "checkpoints" and self.command == "GET":
+                    node.store.get(job_id)
+                    directory = node.store.directory(job_id)
+                    index = checkpoints.catalog(directory)
+                    row = node.store.get(job_id)
+                    config_path = directory / "node.json"
+                    index["origin"] = {"spec": row["spec"], "generation": row["generation"],
+                        "node_config": read_json(config_path) if config_path.is_file() else node.config,
+                        "remote_job_root": str(directory)}
+                    index["acknowledged"] = [u["checkpoint_id"] for u in index["checkpoints"]
+                        if (directory / "checkpoint-acks" / (u["checkpoint_id"] + ".json")).is_file()]
+                    return self.response(200, index)
+                if len(path) == 3 and path[2] == "checkpoint" and self.command == "GET":
+                    node.store.get(job_id)
+                    return self.response(200, checkpoints.checkpoint_manifest(node.store.directory(job_id), query["id"][0]))
+                if len(path) == 3 and path[2] == "checkpoint-ack" and self.command == "POST":
+                    node.store.get(job_id)
+                    value = json.loads(body)
+                    return self.response(200, checkpoints.acknowledge(node.store.directory(job_id), value["checkpoint_id"], value))
+                if len(path) == 3 and path[2] == "checkpoint-file" and self.command == "GET":
+                    node.store.get(job_id)
+                    checkpoint_id = sha256(query["id"][0])
+                    directory = node.store.directory(job_id)
+                    manifest = checkpoints.checkpoint_manifest(directory, checkpoint_id)
+                    name = query["path"][0]; offset = int(query.get("offset", [0])[0])
+                    if name not in manifest["files"] or not 0 <= offset <= manifest["files"][name]["size"]:
+                        raise ValueError("Unknown checkpoint member/offset")
+                    target = safe_path(directory / "checkpoints" / checkpoint_id, name)
+                    with target.open("rb") as stream:
+                        stream.seek(offset)
+                        return self.response(200, stream.read(CHUNK_SIZE), binary=True)
                 if len(path) == 3 and path[2] == "resume" and self.command == "POST":
                     value = json.loads(body); exact(value, {"reason", "generation"})
                     if type(value["generation"]) is not int:

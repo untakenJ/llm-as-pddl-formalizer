@@ -59,6 +59,8 @@ does not import this component and remains available.
 | `worker.py` | Loopback authenticated API, admission, detached owners and read-only progress |
 | `benchmark.py` | Profile identity/service preflight; call the existing formalizer → solver → VAL pipeline |
 | `client.py`, `__main__.py` | Controller API/CLI, resumable transfer, verified read-only mirrors |
+| `checkpoints.py` | Per-terminal-execution sealing, durable receipts, explicit node-loss recovery |
+| `vllm.py`, `deploy/` | GPU-agnostic BF16/FP8 model-service recipe and supervision templates |
 
 The node does not independently maintain experiment logic. Deploy a pinned
 copy of this component and install each benchmark release from the controller.
@@ -263,6 +265,106 @@ See [vLLM reasoning output documentation](https://docs.vllm.ai/en/latest/feature
 Local GPU costs are not invented as API prices: unpriced usage remains unpriced.
 Real-model parser/tool-call compatibility still requires a remote canary.
 
+### Configurable vLLM deployment (single or multiple NVIDIA GPUs)
+
+Use [deploy/vllm.example.json](deploy/vllm.example.json) as a **deployment
+example**, not a benchmark baseline. Two L40 On-Demand GPUs are one possible
+starting host; neither GPU model nor count is hardcoded. The model service is
+shared by agent workers, not replicated once per case. The launch helper runs
+the pinned vLLM container and leaves the existing uv environment unchanged.
+
+Before use, copy the example to `/srv/formalizer-node/vllm.json` on the **new
+execution node** and replace every placeholder. Pin the image's registry digest,
+exact vLLM version, Hugging Face model/tokenizer commit and actual template hash.
+Download that revision directly on the GPU node into `model_path` (for example,
+with `hf download REPOSITORY --revision FULL_COMMIT --local-dir MODEL_DIRECTORY`
+using a separately provisioned downloader). Weights and tokenizer must be in
+the same local snapshot, with a regular `chat_template.jinja`. Do not mount an
+HF snapshot whose weight symlinks resolve outside the mounted directory. Pull
+the pinned engine image once; service starts use `--pull never` and offline HF
+mode. No model weights pass through Contabo or a per-job release archive.
+
+The placeholder template intentionally fails validation until pins are filled.
+Its 32K context and four sequence slots are **illustrative deployment choices**,
+not a guarantee that all benchmark requests fit or that every GPU has sufficient
+memory. Select and canary these settings before freezing an experiment. They
+are not copied into the canonical benchmark profile or silently reduced on OOM.
+
+Supported configuration includes:
+
+- Explicit GPU indices/UUIDs and `tensor_parallel_size * pipeline_parallel_size
+  == number of selected GPUs`. TP1/PP1 works for one card; TP2/PP1, TP1/PP2,
+  TP4/PP1 or other valid splits are explicit alternatives. Inspect topology and
+  verify the pinned model implementation supports the chosen split. No NVLink
+  or homogeneous GPU model is assumed; successful distributed startup still
+  requires compatible drivers, kernels and peer communication.
+- BF16 is the example's default: `precision: "bf16"`, no quantization flag.
+  FP8 is explicit: set `precision: "fp8"` plus `fp8_mode: "checkpoint"` for a
+  native FP8 checkpoint, or `"online"` to explicitly request vLLM's runtime FP8
+  conversion of BF16 weights. Checkpoint and online FP8 are distinct conditions.
+  Current scope excludes INT8/INT4/AWQ/GPTQ/NVFP4 and mixed lower-bit checkpoints.
+  Activations use `bfloat16` where the engine is not applying its FP8 kernels;
+  KV-cache uses `auto` with BF16 dtype, **not implicit FP8 KV quantization**.
+- GPU memory utilization, maximum model length, maximum concurrent sequences,
+  private bind address, shared memory size, tool/reasoning parsers and generation
+  defaults are explicit. Prefix caching is explicitly off in the example to
+  avoid cross-case cache timing effects; changing it needs an experiment decision.
+  No speculative/draft model is enabled. Preserve native harness prompts/tools.
+
+The helper checks BF16 native compute capability >= 8.0, and FP8 >= 8.9; this is
+a coarse hardware gate, not proof of support for every model/kernel combination.
+It records actual GPU names, UUIDs, memory, driver, topology, Docker image ID and
+deployment hash at startup. Model revision is operator-attested from the pinned
+download; this is not a full weight-content attestation. Hardware or engine
+failure never triggers a hidden BF16-to-FP8 switch or a smaller context.
+
+References: [vLLM multi-GPU guidance](https://docs.vllm.ai/en/stable/serving/parallelism_scaling/),
+[FP8 implementation](https://github.com/vllm-project/vllm/blob/main/docs/features/quantization/llm_compressor/fp8.md),
+[Qwen3.8 recipe](https://recipes.vllm.ai/Qwen/Qwen3.8-27B).
+The example uses `qwen3` reasoning and `qwen3_coder` tool parsing from that recipe;
+these are model-specific selectable settings, not generic defaults for other models.
+
+Provision `/srv/formalizer-node/private/vllm.env` as an owner-only file containing
+**only** `VLLM_API_KEY=<32+ URL-safe random characters>`. Put the same value under
+`SELF_HOSTED_API_KEY` in the separate benchmark runner secret file. Do not put
+keys in JSON, shell argv, images or release archives. Configure the runner's
+`SELF_HOSTED_BASE_URL` to reach the model from the gateway, e.g.
+`http://host.docker.internal:8000/v1` when that resolves to the configured private
+bind address. Verify the actual host interface: `172.17.0.1` is an example,
+not a promise about the node's Docker topology. Keep the port firewalled from
+the Internet; vLLM authentication does not cover every non-API endpoint.
+
+Commands below are **on the GPU node**:
+
+```bash
+PYTHONPATH=source uv run --no-sync --offline python -B -m remote_execution.vllm plan --config /srv/formalizer-node/vllm.json
+PYTHONPATH=source uv run --no-sync --offline python -B -m remote_execution.vllm inspect --config /srv/formalizer-node/vllm.json
+PYTHONPATH=source uv run --no-sync --offline python -B -m remote_execution.vllm service --config /srv/formalizer-node/vllm.json
+```
+
+`plan` is pure configuration validation and prints secret-free argv. `inspect`
+performs read-only local hardware/image/model-config checks. `service` emits the
+`node.json` `services.model` entry from this same config, including precision,
+parallelism, model identity and deployment hash; avoid separately hand-maintained
+copies. Install/adapt [benchmark-vllm.service](deploy/benchmark-vllm.service),
+then start it explicitly. If renaming `container_name`, update both the unit name
+and its exact `ExecStop` target. An existing same-name container is not forcibly
+deleted by the launcher; inspect ownership if it prevents restart. vLLM startup
+logs are available in the service journal; per-start GPU evidence is retained
+under `model-launches`. Retain both for deployment audit.
+
+Keep a distinct served ID/profile/study for BF16 versus FP8, even when the base
+model is the same. No change is made to the canonical Gemini/local baseline.
+Freeze engine/model/precision/parallelism/parser settings before the real sweep;
+canary tool calls, readable thinking, usage, long-context requests and concurrent
+inference for **each selected harness** before claiming deployment compatibility.
+
+To repeat provisioning, reuse pinned container images, downloaded snapshot cache
+and these small config/unit files (or automate them with cloud-init). Never bake
+credentials, node identities, old job queues, leases or agent memory into images.
+No GPU driver installation, cloud account operations or remote service startup
+is performed by editing or testing this repository.
+
 ## Controller workflow
 
 Use the existing uv environment, without synchronizing it during another sweep:
@@ -310,7 +412,11 @@ PYTHONPATH=source uv run --no-sync --offline python -B -m remote_execution job \
    Upload, submit and status calls are independent; no long-lived controller
    session is required. `progress` reads native validity snapshots without
    modifying them. It is partial progress, not a correctness score.
-5. Run `collect JOB_ID --destination output/NEW_REMOTE_RESULTS`. Interrupted
+5. While the job runs, use `sync JOB_ID --destination output/NEW_REMOTE_RESULTS
+   --follow --interval 5` under a controller supervisor (see below). It saves
+   terminal executions without waiting for other cases or evaluation. After
+   pipeline completion it also collects the final full-generation snapshot.
+   Alternatively run `collect JOB_ID --destination output/NEW_REMOTE_RESULTS`. Interrupted
    uploads/downloads resume at a verified offset on the next invocation. The
    same destination can be reused; matching evidence is skipped, different
    existing files are refused. Use `--generation N` to fetch an older snapshot.
@@ -333,6 +439,10 @@ state/
     logs/, evidence/               generation-specific pipeline/config/health evidence
     snapshots/<generation>/        immutable copies; never hardlinks to mutable output
     artifacts-<generation>.json    path/size/SHA-256 inventory
+    checkpoints/<content-sha>/     immutable per-execution evidence + manifest
+    checkpoint-index.json          atomic catalog of available checkpoints
+    checkpoint-acks/               idempotent controller receipt acknowledgements
+    checkpoint-status.json         latest sealing health (not agent validity)
 ```
 
 `collect` creates `DEST/JOB_ID/generation-N/`, with original bytes plus
@@ -343,6 +453,98 @@ validity records. For read-only analysis, use
 remote evidence reference to the verified local copy. Native resume/repair and
 write-oriented validity commands must operate on the authoritative node output,
 not on this mirror. Cross-node/manual validity editing is not an RPC in v1.
+
+### Incremental results and node-loss recovery
+
+The detached owner polls for native `execution_result.json` / `infra_invalid.json`
+every two seconds (`node.checkpoint_interval_seconds`, configurable 1–60). These
+markers are written after native collection and cleanup. It copies each terminal
+execution's entire regular-file tree plus its execution-specific infra diagnostics
+and available frozen job/config/service evidence. It does **not** copy a live
+execution, process lease, mutable cell view, or another case's live session DB.
+Invalid and valid-but-wrong executions are preserved equally. Append-only manual
+adjudication ledgers are captured as separate versioned snapshots under the
+native cell lock; materialized validity is rebuilt on recovery.
+
+Contabo's `sync` verifies SHA-256 and fsyncs the files/directories before writing
+a durable receipt and sending its idempotent ACK. Lost ACKs only repeat ACKs;
+interrupted file downloads resume, never trigger another model call. Existing
+different evidence is refused, not overwritten. `progress` reports sealed and
+acknowledged checkpoint counts independently of agent success. The owner records
+sealing errors in `checkpoint-status.json` and retries the same evidence without
+changing agent validity. Monitor both owner sealing health and controller sync
+service: a terminal pipeline status alone does not prove off-node durability.
+
+Run this **on Contabo**, with an independently supervised SSH tunnel:
+
+```bash
+PYTHONPATH=source uv run --no-sync --offline python -B -m remote_execution \
+  --endpoint http://127.0.0.1:18876 --token-file /path/to/private/control-token \
+  sync JOB_ID --destination output/NEW_REMOTE_RESULTS --follow --interval 5
+```
+
+For terminal/Codex independence, adapt and enable
+[benchmark-result-sync@.service](deploy/benchmark-result-sync@.service) for the
+job instead of relying on an interactive terminal. `--follow` reconnects after
+transport failures, stops on `needs_attention` without guessing ownership, and
+collects the final snapshot on `completed`/`failed`. Installing a unit template
+does not automatically supervise the SSH tunnel. The controller needs disk
+capacity; there is no promise of surviving loss of the controller disk itself.
+
+**Durability boundary:** only a complete, verified controller receipt is a
+guarantee of off-node preservation. A just-completed execution within the polling,
+copy or transfer window can still be lost. As approved, unsynchronized executions
+may be discarded and rerun after confirmed node loss. There is no fsync/ACK barrier
+in the agent loop and no pause of other agents waiting for Contabo. Thus during a
+long network outage the unsynchronized backlog is NOT bounded by worker count.
+
+Agent generation is checkpointed independently of evaluation. Solver/VAL results
+are retained in the final full-generation collection; if the node disappears
+before that, recovery reruns evaluation on the preserved PDDL, not the agent.
+No completed wrong answer is resampled. The original native terminal JSON bytes
+are preserved; incremental recovery can use `execution_result.json` without
+manufacturing or rewriting the compatibility `completion.json`.
+
+If the **old VM is actually terminated/fenced** (not merely unreachable):
+
+1. On Contabo, export only fully collected checkpoints. Partial download files
+   and unconfirmed executions are excluded automatically. If no executions have
+   arrived yet, the recorded job origin still permits an empty recovery bundle
+   that will rerun all slots with the same frozen request:
+
+```bash
+PYTHONPATH=source uv run --no-sync --offline python -B -m remote_execution \
+  recovery-bundle --mirror output/NEW_REMOTE_RESULTS/JOB_ID \
+  --archive output/NEW_RECOVERY.tar.gz
+```
+
+2. Provision the replacement VM with the same paths, frozen release, runtime
+   locks, images, model/solver configuration and dependencies. Keep
+   `state_dir`, job ID, and all absolute output paths identical so original
+   evidence references remain valid without rewriting. A different `node_id`
+   and rotated control token are allowed. Upload/install the original release
+   with the ordinary upload command. Transfer the recovery archive using SSH;
+   it contains result evidence, not model weights. Stop the replacement worker
+   before the offline import; it must have an empty queue and no old job owners.
+
+```bash
+PYTHONPATH=source uv run --no-sync --offline python -B -m remote_execution \
+  restore --config /srv/formalizer-node/node.json --archive /path/to/NEW_RECOVERY.tar.gz \
+  --source-node-retired --reason "Old VM confirmed terminated; restore controller-acknowledged executions"
+```
+
+3. Start the replacement worker/tunnel/collector. The import queues a new job
+   generation with the **same** frozen request and preserved execution numbers.
+   Native identity/validity checks reuse valid results and run missing/invalid
+   slots, followed by solver and VAL. Recovery archive hash, retirement
+   attestation, reason, prior node and all checkpoint manifests remain in
+   `evidence/node-loss-recovery.json`; no old lease or queue is copied. A failed
+   import does not admit a partially restored job. Keep the Contabo mirror and
+   original archive as authoritative recovery evidence.
+
+This is deliberate coarse recovery, not live process migration, automatic cloud
+reprovisioning or permission to race two live nodes and select better outcomes.
+New deployments use this implementation; historical releases remain unchanged.
 
 Networking stays inside the existing benchmark runner. A completed execution
 collects its evidence and tears down its own containers/networks **before** the
@@ -370,7 +572,7 @@ installing a service alone never grants the agent access to it.
 
 ```bash
 PYTHONPATH=source:tests uv run --no-sync --offline python -B -m unittest \
-  test_remote_execution test_self_hosted_model -v
+  test_remote_execution test_self_hosted_model test_remote_checkpoints test_remote_vllm -v
 ```
 
 These tests use temporary directories and loopback random ports, including real

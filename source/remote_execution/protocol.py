@@ -162,7 +162,8 @@ def validate_job(raw):
 
 def validate_node(raw):
     exact(raw, {"schema_version", "node_id", "state_dir", "python", "token_file"},
-          {"max_jobs", "max_formalizer_workers", "allow_probe", "bindings", "services", "max_bundle_bytes"})
+          {"max_jobs", "max_formalizer_workers", "allow_probe", "bindings", "services", "max_bundle_bytes",
+           "checkpoint_interval_seconds", "max_recovery_bytes"})
     if raw["schema_version"] != VERSION or type(raw["schema_version"]) is not int:
         raise ValueError("Unsupported node schema")
     identifier(raw["node_id"])
@@ -172,6 +173,8 @@ def validate_node(raw):
     positive(raw.get("max_jobs", 1), 64)
     positive(raw.get("max_formalizer_workers", 4), 256)
     positive(raw.get("max_bundle_bytes", 2 * 1024**3), 32 * 1024**3)
+    positive(raw.get("max_recovery_bytes", 64 * 1024**3), 1024**4)
+    positive(raw.get("checkpoint_interval_seconds", 2), 60)
     if type(raw.get("allow_probe", False)) is not bool:
         raise ValueError("allow_probe must be boolean")
     bindings = raw.get("bindings", {})
