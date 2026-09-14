@@ -264,6 +264,8 @@ class OpenClawAdapter(BaseClawAdapter):
             )
         if self.provider == GOOGLE_VERTEX_PROVIDER:
             google_vertex_settings(self.provider_options)
+        if self.provider == "self-hosted":
+            self.upstream_api_base()
 
     def tool_policy(self) -> dict:
         """Effective tool policy for this benchmark run (recorded in trace)."""
@@ -324,6 +326,9 @@ class OpenClawAdapter(BaseClawAdapter):
         }
 
     def upstream_api_base(self) -> str:
+        if self.provider == "self-hosted":
+            from agent_formalizer.compute_platforms.self_hosted import api_base
+            return api_base(self.provider_options)
         if self.provider == GOOGLE_VERTEX_PROVIDER:
             options = self.provider_options.get("google_vertex", {})
             location = options.get("location") or "global"

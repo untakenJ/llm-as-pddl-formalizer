@@ -55,6 +55,14 @@ model ids such as `logits/Qwen/Qwen3.5-4B`; see the
 
 ## Agent Harness Formalizer
 
+Optional local/remote execution nodes are documented in
+[source/remote_execution/README.md](source/remote_execution/README.md). The
+controller can dispatch frozen benchmark cells to a GPU node while the existing
+runner, gateways, solver and VAL execute there. This is opt-in; existing local
+commands and frozen-campaign resume paths are unchanged. Development alongside
+a running sweep must use `uv run --no-sync` and preserve its installed runtimes,
+shared services and frozen output.
+
 The agent pipeline supports `openclaw`, `hermes`, `nanobot`,
 `zeroclaw`, `generic` (GenericAgent), and the benchmark-owned `minimum`
 baseline. Non-OpenClaw harness configuration, tool policy, memory, and session

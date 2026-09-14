@@ -107,6 +107,7 @@ _PROVIDER_ALIASES = {
 }
 
 _EXTRACTOR_IDS = {
+    "self-hosted": ["openai-compatible-reasoning-content-v1", "vllm-chat-reasoning-v1"],
     "deepseek": [
         "openai-compatible-reasoning-content-v1",
         "deepseek-responses-reasoning-text-v1",
@@ -308,7 +309,26 @@ def _gemini_reasoning(payload: Any) -> list[dict[str, str]]:
     return result
 
 
+def _self_hosted_reasoning(payload: Any) -> list[dict[str, str]]:
+    # vLLM documents reasoning in choices[].message/delta; older releases use
+    # reasoning_content. Never infer arbitrary nested fields to be reasoning.
+    # https://docs.vllm.ai/en/latest/features/reasoning_outputs/
+    result = _explicit_reasoning_fields(payload)
+    if not isinstance(payload, dict) or not isinstance(payload.get("choices"), list):
+        return result
+    for index, choice in enumerate(payload["choices"]):
+        if not isinstance(choice, dict):
+            continue
+        for key in ("message", "delta"):
+            message = choice.get(key)
+            if isinstance(message, dict) and isinstance(message.get("reasoning"), str) and message["reasoning"]:
+                result.append({"extractor_id": "vllm-chat-reasoning-v1",
+                               "source_path": f"$.choices[{index}].{key}.reasoning", "text": message["reasoning"]})
+    return result
+
+
 _PROVIDER_EXTRACTORS = {
+    "self-hosted": _self_hosted_reasoning,
     "deepseek": _deepseek_reasoning,
     "gemini": _gemini_reasoning,
 }
