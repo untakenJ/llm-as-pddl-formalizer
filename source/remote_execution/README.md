@@ -63,6 +63,7 @@ does not import this component and remains available.
 | `api.py` | Reuse the standalone API formalizer; immutable generation records, first-valid resume and separate solver/VAL generations |
 | `client.py`, `__main__.py` | Controller API/CLI, resumable transfer, verified read-only mirrors |
 | `checkpoints.py` | Per-terminal-execution sealing, durable receipts, explicit node-loss recovery |
+| `deploy.py` | Read-only update plans, isolated code/uv preparation and explicit deployment checks; no automatic service activation |
 | `vllm.py`, `deploy/` | GPU-agnostic BF16/FP8 model-service recipe and supervision templates |
 
 The node does not independently maintain experiment logic. Deploy a pinned
@@ -139,6 +140,153 @@ Internet. API-only and `minimum` run in host subprocesses on the execution node;
 select an origin resolvable from that host (`http://127.0.0.1:8000/v1` for a
 host-local service, or an appropriate private interface address). Do not assume
 the Docker-only `host.docker.internal` alias resolves in those subprocesses.
+
+## Updating an existing execution node
+
+Use `python -m remote_execution.deploy` **on the execution node**, either in an
+SSH session or invoked over SSH from Contabo. It is a repository-maintained
+deployment tool, not a campaign script. Run it from the proposed new checkout
+(or a received release workspace), using Python 3.12; its planning/preparation
+code needs only the standard library and an installed `uv` supporting `sync
+--check`. Do not run `uv run` without `--no-sync` just to invoke this tool: that
+could update the installation you meant to preserve.
+
+### When to use it
+
+| Change | Required action |
+| --- | --- |
+| Only task data, complete profiles, prompts or ordinary benchmark Python code; dependencies unchanged | Usually package/upload a new campaign release. The job already runs release-local code; no worker reinstall is required. A deployment plan is an optional compatibility check. |
+| `remote_execution` worker/queue/transport/checkpoint implementation or protocol | Prepare/check a new worker installation, review old/new protocol compatibility, then explicitly activate it during a maintenance window. |
+| `pyproject.toml` / `uv.lock` | Run the tool. A lockfile in an uploaded archive does **not** install dependencies. Reuse an actually compatible environment, otherwise prepare an isolated one. |
+| Pinned harness, agent Dockerfile, native timing source/overlay | Run checks before new cases. Provision the mismatched component separately; do not regenerate a lock from whatever happens to be installed. |
+| Solver/VAL/model-server code, model revision or inference settings | Review and explicitly update that service separately, then check its declared health/limits. This tool never restarts or changes shared services. |
+| README-only or unrelated source change | No remote environment update is normally necessary. |
+
+Keep the existing live worker source checkout untouched; obtain the candidate
+code in a **separate** checkout/directory. Do not `git pull` beneath an active
+worker, run `uv sync` in its shared environment, or reinstall its harness cache.
+The optional `--installed-source` reports per-component **source differences**,
+not proof that the installed environment matches. No Git branch/commit equality
+is required; the actual selected files are hashed with the release packager's
+existing rules.
+
+### Plan → prepare → check → explicit activation
+
+Example Hyperstack paths below are illustrative; use the **existing node's**
+real config/state paths and service name. Run as the account that owns its queue
+and Docker resources, not as root. The destination is a new, dedicated directory
+on the persistent volume, **outside** node state and results. The script refuses
+to adopt an unrelated existing directory. It does not initialize a brand-new
+node's queue; complete initial provisioning first.
+
+1. Run a read-only plan; this is allowed while the worker is running:
+
+```bash
+PYTHONPATH=source python3 -B -m remote_execution.deploy plan \
+  --source /home/ubuntu/agentic-formlizer/candidate-checkout \
+  --config /home/ubuntu/agentic-formlizer/formalizer-state/node.json \
+  --destination /home/ubuntu/agentic-formlizer/formalizer-deployments \
+  --installed-source /home/ubuntu/agentic-formlizer/formalizer-node
+```
+
+The JSON contains `plan_sha256`, environment reuse/preparation, component
+fingerprints and queued/running job states. Default checks cover all five native
+harnesses, API-only, minimum and all configured services. Narrow an intended
+installation with repeated `--harness` and `--service` arguments, for example
+`--harness openclaw --service solver`. API/minimum checks are host import checks,
+not native Docker validation or validation of every possible n/profile/model.
+
+2. Stop submissions, let jobs finish, synchronize their evidence, then stop the
+**control worker service only** using its actual service name. This is an
+operator step, not performed by the script. `KillMode=process` deliberately lets
+detached jobs survive, so a stopped service is not proof of an idle node.
+`apply`/`check` acquire the existing `worker.lock`, hold per-job owner locks,
+check surviving process groups, and refuse queued/launching/running/
+`needs_attention` jobs. Resolve uncertain work using normal evidence/recovery
+procedures, never by editing queue state to pass deployment checks. The guard
+covers this node's queue, not unrelated campaigns sharing the same machine.
+
+3. Apply the reviewed plan, with the same options and the printed SHA:
+
+```bash
+PYTHONPATH=source python3 -B -m remote_execution.deploy apply \
+  --source /home/ubuntu/agentic-formlizer/candidate-checkout \
+  --config /home/ubuntu/agentic-formlizer/formalizer-state/node.json \
+  --destination /home/ubuntu/agentic-formlizer/formalizer-deployments \
+  --expect-plan PLAN_SHA256
+```
+
+This packages only `source`, `pyproject.toml`, `uv.lock` and `README.md`; campaign
+inputs/data are still sent with campaign releases, not the worker deployment.
+It uses create-only releases and writes:
+
+- `releases/<source-sha>/workspace/`: pinned candidate worker/benchmark code;
+- `environments/<dependency-sha>/venv/`: only when the current Python environment
+  fails an offline, non-mutating locked compatibility check; reused across code
+  revisions with the same dependency inputs. No CUDA extras or weights are installed;
+- `prepared/<plan-sha>/request.json`, `original-node.json`, `node.json`,
+  `worker.service`: original configuration snapshot and candidate configuration/
+  unit, not replacements for live files.
+
+An existing compatible environment is never synchronized. A previously prepared
+environment that has drifted is rejected, not repaired in place. Interrupted
+new-environment installation may be retried before its ready marker is written.
+Failed/partial artifacts are retained for inspection; there is no automatic
+prune or deletion. Repeating a successful preparation is idempotent. New source,
+config or dependency compatibility changes require reviewing a new plan SHA.
+
+4. Verify the returned `prepared` path:
+
+```bash
+PYTHONPATH=source python3 -B -m remote_execution.deploy check \
+  --prepared /home/ubuntu/agentic-formlizer/formalizer-deployments/prepared/PLAN_SHA256
+```
+
+This runs **the staged code with the staged/selected Python**, verifies frozen
+files and dependencies, checks selected `remote-text-v1` harness closures and
+the actual agent image, checks the matching ZeroClaw checkpoint overlay when
+selected, probes each selected supervised service, and checks that the expected
+VAL executable exists. It writes a new `checks/<time>.json` on every invocation.
+Runtime diagnostics are separate from service errors. Nonzero exit means the
+candidate must not be activated. The bounded Docker capability probes are not
+agent executions; no inference request or planning solve is made.
+
+If a harness/image/overlay fails, use the existing pinned installer/builders in
+an explicitly provisioned **new** runtime location, then create a new candidate
+node config/plan pointing to it; do not overwrite a runtime still needed by an
+old study. For ZeroClaw see the overlay instructions in
+[the formalizer README](../agent_formalizer/README.md). This first version
+automates worker code and Python environment preparation, **not** full machine
+provisioning, automatic harness installation, image rebuilding, or GPU setup.
+Service checks do not independently attest model weights or VAL semantics.
+After deployment checks pass, run an explicit, separately authorized small
+real-model/solver/VAL canary with fresh job IDs before a formal sweep.
+
+5. Review and retain the previous systemd unit/config. Explicitly install the
+candidate `worker.service` as the **existing** control-service unit and start
+that unit; never start a second worker against the same queue/port. The generated
+unit uses the invoking account, pinned source/Python/config paths, loopback port
+8876 and `KillMode=process`. Adjust/review site-specific supervision before
+installation. The script never invokes `sudo`, installs a unit, or starts,
+stops or restarts a service. Check the control endpoint and perform the canary.
+
+### Old jobs, rollback and retention
+
+Existing releases, results, original `node.json`, runtime bindings, secrets,
+solver/VAL and vLLM are never rewritten. If `old_job_config_compatible` is false
+(for example a new Python path), new jobs may use the candidate, but resuming an
+old job under the changed node config will deliberately fail the existing drift
+guard. To resume old work, restore its original worker unit/config and retained
+environment during an idle maintenance window; never rewrite its saved config
+or release. Retain previous code/environments until no historical job needs them.
+Even when the config is unchanged, protocol/checkpoint-format compatibility of a
+new worker with an old queue requires review; a successful deployment probe is
+not a blanket compatibility guarantee.
+
+These managed directories/records are node-local operational artifacts, not
+source-controlled files. The reusable script, tests and these instructions
+belong in Git. Neither preparing nor checking a deployment modifies the local
+benchmark CLI, canonical baseline, or a frozen Contabo sweep.
 
 ## Remote agent-runtime comparability (`remote-text-v1`)
 

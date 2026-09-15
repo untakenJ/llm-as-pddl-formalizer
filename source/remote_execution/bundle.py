@@ -21,8 +21,8 @@ def allowed(name):
     return not any(part in EXCLUDED or part.startswith(".env") for part in parts) and not name.endswith((".pyc", ".safetensors", ".gguf"))
 
 
-def build(root: Path, includes: list[str], destination: Path):
-    """Explicit includes only. Destination is create-only, outside included trees."""
+def inventory(root: Path, includes: list[str]):
+    """Read-only inventory, using exactly the same input rules as packaging."""
     root = root.resolve(strict=True)
     rows = {}
     for name in includes:
@@ -42,13 +42,19 @@ def build(root: Path, includes: list[str], destination: Path):
                 continue
             if not stat.S_ISREG(item.stat().st_mode):
                 raise ValueError("Release inputs must be regular files")
-            if item.resolve() == destination.resolve():
-                raise ValueError("Archive cannot contain itself")
             rows[rel] = {"sha256": file_hash(item), "size": item.stat().st_size,
                          "executable": bool(item.stat().st_mode & 0o111)}
     if not rows:
         raise ValueError("Empty release")
-    manifest = {"schema_version": 1, "files": dict(sorted(rows.items()))}
+    return {"schema_version": 1, "files": dict(sorted(rows.items()))}
+
+
+def build(root: Path, includes: list[str], destination: Path):
+    """Explicit includes only. Destination is create-only, outside included trees."""
+    root = root.resolve(strict=True)
+    manifest = inventory(root, includes)
+    if any((root / name).resolve() == destination.resolve() for name in manifest["files"]):
+        raise ValueError("Archive cannot contain itself")
     release_id = digest(manifest)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("xb") as target, gzip.GzipFile(filename="", mode="wb", fileobj=target, mtime=0) as compressed:
@@ -64,7 +70,7 @@ def build(root: Path, includes: list[str], destination: Path):
                 if file_hash(root / name) != row["sha256"]:
                     raise ValueError("Release source changed during packaging; discard this archive")
     return {"release_id": release_id, "archive_sha256": file_hash(destination),
-            "bytes": destination.stat().st_size, "files": len(rows)}
+            "bytes": destination.stat().st_size, "files": len(manifest["files"])}
 
 
 def verify(release: Path):
