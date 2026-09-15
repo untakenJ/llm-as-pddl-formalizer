@@ -44,14 +44,28 @@ useful for CPU-side development and dependency checks. The agent pipeline also
 requires Docker. Its Hermes, NanoBot, ZeroClaw, and GenericAgent runtimes can be
 installed into the ignored repository cache with
 `bash source/agent_formalizer/runtime/install_harnesses.sh all`; OpenClaw keeps its
-existing host installation. VAL is an external binary;
-install it separately and configure its executable through `source/run_val.py`.
+existing host installation. VAL is an external binary from
+[KCL-Planning/VAL](https://github.com/KCL-Planning/VAL).
+Build a pinned revision separately and retain the expected
+`build/linux64/Release/bin/Validate` tree used by `source/run_val.py`.
+Execution-node deployments bind the VAL project root; record its revision and
+binary hash for comparisons across machines.
 
 OpenAI scripts read their API key from `_private/key.txt`. The API-based Gemini
 scripts load credentials from `_private/.env`; see their module documentation
 for the required variables. Logits uses `LOGITS_API_KEY` and explicit dynamic
 model ids such as `logits/Qwen/Qwen3.5-4B`; see the
 [Logits adapter documentation](source/agent_formalizer/compute_platforms/logits/README.md).
+
+The formalizer/planner `*-api.py` entrypoints also accept
+`--model self-hosted/SERVED_MODEL_ID` for a locally deployed OpenAI-compatible
+Chat Completions server such as vLLM. Set `SELF_HOSTED_BASE_URL` (ending in `/v1`)
+and `SELF_HOSTED_API_KEY` in the runner-only environment. This route uses JSON
+mode, no hosted tools, and the existing standalone transient retry policy;
+full provider responses, including returned reasoning and usage, are traced.
+"API-only" means no agent loop, not necessarily a commercial model provider.
+Remote API-only jobs and configurable minimum-agent reflection cells are
+documented in [execution nodes](source/remote_execution/README.md#api-only-and-minimum-agent-cells).
 
 ## Agent Harness Formalizer
 

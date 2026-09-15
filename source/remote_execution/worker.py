@@ -42,9 +42,10 @@ class Node:
         manifest = read_json(release / "manifest.json")
         if digest(manifest) != spec["release_id"]:
             raise ValueError("Release is not installed with the requested identity")
-        if spec["kind"] == "agent_cell":
+        if spec["kind"] in {"agent_cell", "api_cell"}:
             p = spec["parameters"]
-            for key in ("benchmark_profile", "operational_config"):
+            keys = ("benchmark_profile", "operational_config") if spec["kind"] == "agent_cell" else ("operational_config",)
+            for key in keys:
                 if p[key] not in manifest["files"]:
                     raise ValueError("Job configuration must be part of the frozen release")
             for name in p["services"]:
@@ -117,6 +118,23 @@ class Node:
         row = self.store.get(job_id)
         root = self.store.directory(job_id) / "output"
         cells = []; warnings = []
+        if row["spec"]["kind"] == "api_cell" and root.is_dir() and not root.is_symlink():
+            from batch_utils import format_problem_name
+            from .api import case_directory, selected_case
+            selected = 0
+            p = row["spec"]["parameters"]
+            for number in p["indices"]:
+                problem = format_problem_name(number)
+                path = case_directory(root, p, problem)
+                try:
+                    safe_path(root, path.relative_to(root).as_posix())
+                    # Status is a lightweight terminal-record snapshot. Resume
+                    # and evaluation verify complete trace/artifact hashes.
+                    selected += selected_case(path, verify_files=False) is not None
+                except (OSError, ValueError, KeyError, TypeError):
+                    warnings.append(problem)
+            cells.append({"path": "llm-as-formalizer-api", "selected_valid_attempts": selected,
+                          "known_unfilled_attempts": len(p["indices"]) - selected})
         if root.is_dir() and not root.is_symlink():
             for path in sorted(root.rglob("execution_validity.json")):
                 name = path.relative_to(root).as_posix()

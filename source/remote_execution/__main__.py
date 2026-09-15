@@ -36,6 +36,13 @@ def main():
     plan.add_argument("--operational", required=True, help="Release-relative operational config")
     plan.add_argument("--service", action="append", default=[])
     plan.add_argument("--destination", type=Path, required=True)
+    api = commands.add_parser("api-job", help="Freeze an API-only cell (no agent tools or reflection)")
+    api.add_argument("--root", type=Path, default=Path.cwd())
+    for name in ("job-id", "release-id", "model", "domain", "dataset", "indices", "operational"):
+        api.add_argument("--" + name, required=True)
+    api.add_argument("--solver-backend", choices=("local", "public", "public_then_local"), default="local")
+    api.add_argument("--service", action="append", default=[])
+    api.add_argument("--destination", type=Path, required=True)
     upload = commands.add_parser("upload")
     upload.add_argument("--archive", type=Path, required=True)
     upload.add_argument("--release-id", required=True)
@@ -76,6 +83,15 @@ def main():
     elif args.command == "restore":
         result = restore(args.archive, read_json(args.config), reason=args.reason,
                          source_node_retired=args.source_node_retired)
+    elif args.command == "api-job":
+        from api_providers import validate_api_model
+        safe_path(args.root, args.operational).resolve(strict=True)
+        result = validate_job({"schema_version": 1, "job_id": args.job_id, "release_id": args.release_id,
+            "kind": "api_cell", "parameters": {"model": validate_api_model(args.model), "domain": args.domain,
+                "dataset": args.dataset, "indices": [int(item) for item in args.indices.split(",")],
+                "operational_config": args.operational, "solver_backend": args.solver_backend,
+                "services": args.service}})
+        private_json(args.destination, result, replace=False)
     elif args.command == "job":
         from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
         profile = load_benchmark_profile(safe_path(args.root, args.profile))

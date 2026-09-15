@@ -151,6 +151,48 @@ class MinimumProfileTests(unittest.TestCase):
 
 
 class MinimumRuntimeTests(unittest.TestCase):
+    def test_self_hosted_different_reflection_counts_and_solver_feedback(self):
+        for n in (0, 1, 10):
+            for enabled in (False, True):
+                with self.subTest(n=n, solver=enabled), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    raw = json.loads(MINIMUM_PROFILE_PATH.read_text())
+                    minimum = raw["condition_profile"]["overrides"]["minimum_agent"]
+                    minimum["reflection_count"] = n
+                    minimum["solver_feedback"]["enabled"] = enabled
+                    path = root / "profile.json"; path.write_text(json.dumps(raw))
+                    adapter = get_adapter("minimum", model="self-hosted/example/bf16", api_key="test-key",
+                        benchmark_profile=load_benchmark_profile(path),
+                        credential_provider_options={"self_hosted": {"base_url": "http://localhost:8000/v1"}})
+                    self.assertEqual(adapter.upstream_api_base(), "http://localhost:8000/v1")
+                    self.assertEqual(adapter.agent_tools(), [])
+                    self.assertEqual(adapter.resolved_config.minimum_agent["reflection_count"], n)
+                    config = {"api_base": "http://localhost:8000/v1", "model": "example/bf16",
+                              "initial_prompt": adapter.build_task_prompt("domain", "problem"),
+                              "reflection_count": n, "reflection_prompt": minimum["prompt_template"]["reflection"],
+                              "solver_feedback": minimum["solver_feedback"], "solver_gateway": "http://localhost:8768",
+                              "domain_output_path": str(root / "domain.pddl"),
+                              "problem_output_path": str(root / "problem.pddl"),
+                              "transcript_path": str(root / "transcript.json")}
+                    calls = []
+                    def chat(_config, messages):
+                        calls.append(copy.deepcopy(messages))
+                        usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+                        return structured_response(len(calls)), usage, {
+                            "choices": [{"message": {"reasoning_content": "provider thinking"}}], "usage": usage}
+                    with patch("agent_formalizer.claws.minimum.runtime._validate_output_path", side_effect=Path), \
+                         patch("agent_formalizer.claws.minimum.runtime._chat_completion", side_effect=chat), \
+                         patch("agent_formalizer.claws.minimum.runtime._solver_feedback",
+                               return_value=("<solver_feedback>test plan</solver_feedback>", {"event": "fixed_solver_call"})) as solver:
+                        transcript = execute(config)
+                    self.assertEqual(len(calls), n + 1)
+                    self.assertEqual(solver.call_count, n if enabled else 0)
+                    self.assertEqual(transcript["model_calls_completed"], n + 1)
+                    self.assertIn(f"version {n + 1}", (root / "domain.pddl").read_text())
+                    self.assertIn("provider thinking", (root / "transcript.json").read_text())
+                    if n and enabled:
+                        self.assertIn("test plan", calls[-1][-1]["content"])
+
     def test_parser_enforces_exact_contract(self):
         parsed = parse_response("prefix\n" + structured_response(1) + "\nsuffix")
         self.assertIn("version 1", parsed["reasoning"])
@@ -357,6 +399,12 @@ class _FakeCompletionHandler(BaseHTTPRequestHandler):
 
 class MinimumHostWorkspaceTests(unittest.TestCase):
     def test_host_runtime_preserves_usage_transcript_and_reasoning_trace(self):
+        self._assert_host_runtime("openai/test-model")
+
+    def test_self_hosted_runtime_through_real_loopback_gateway(self):
+        self._assert_host_runtime("self-hosted/test-model")
+
+    def _assert_host_runtime(self, model):
         _FakeCompletionHandler.calls = 0
         try:
             upstream = ThreadingHTTPServer(
@@ -370,9 +418,11 @@ class MinimumHostWorkspaceTests(unittest.TestCase):
         profile = load_benchmark_profile(MINIMUM_PROFILE_PATH)
         adapter = get_adapter(
             "minimum",
-            model="openai/test-model",
+            model=model,
             api_key="secret",
             benchmark_profile=profile,
+            credential_provider_options={"self_hosted": {"base_url": f"http://127.0.0.1:{upstream.server_port}/v1"}}
+            if model.startswith("self-hosted/") else None,
         )
         direct_base = f"http://127.0.0.1:{upstream.server_port}/v1"
         try:

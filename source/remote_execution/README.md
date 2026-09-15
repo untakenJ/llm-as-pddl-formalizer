@@ -1,19 +1,21 @@
 # Execution nodes (opt-in, protocol v1)
 
 Run benchmark cells on either this machine or a remote GPU machine, using the
-same `agent_formalizer` runner, adapters, gateways, timers, solver and VAL. The
+same `agent_formalizer` runner, adapters, gateways, timers, solver and VAL, or
+the existing standalone API-only formalizer. The
 controller sends frozen code/data/configuration and receives evidence. Model
 weights and GPU inference stay on the execution node.
 
-This component uses only the Python standard library; the benchmark itself uses
+The control/transport layer uses only the Python standard library; the benchmark bridges use
 the project's existing **uv** environment. No new dependencies or default
 benchmark/operational profile changes are required. The original local CLI path
 does not import this component and remains available.
 
 ## Boundaries and guarantees
 
-- **One job owns one fixed comparison cell**: one harness, model/complete
-  profile, domain/dataset and explicit fixed indices. The controller decides
+- **One job owns one fixed comparison cell**: one harness (including `minimum`),
+  model/complete profile, domain/dataset and explicit fixed indices, or an
+  `api_cell` with its explicit standalone model/evaluation settings. The controller decides
   the matrix; the node executes each cell using the existing pipeline's worker
   counts. Do not split one cell into competing jobs or replicate it across
   nodes and then choose the better results. Use a stable, unique job ID.
@@ -58,6 +60,7 @@ does not import this component and remains available.
 | `store.py` | Durable queue/events, ownership guards and sealed evidence snapshots |
 | `worker.py` | Loopback authenticated API, admission, detached owners and read-only progress |
 | `benchmark.py` | Profile identity/service preflight; call the existing formalizer → solver → VAL pipeline |
+| `api.py` | Reuse the standalone API formalizer; immutable generation records, first-valid resume and separate solver/VAL generations |
 | `client.py`, `__main__.py` | Controller API/CLI, resumable transfer, verified read-only mirrors |
 | `checkpoints.py` | Per-terminal-execution sealing, durable receipts, explicit node-loss recovery |
 | `vllm.py`, `deploy/` | GPU-agnostic BF16/FP8 model-service recipe and supervision templates |
@@ -105,8 +108,13 @@ does not isolate installed runtimes. For the existing frozen campaign:
    authoritative; a different build is not silently treated as equivalent.
    If a locked image has no registry source, provision it once by an explicitly
    approved image export/import. Images are not sent per task.
-4. Install VAL with its expected `build/linux64/Release/bin` tree. The `val`
+4. Build VAL from the official [KCL-Planning/VAL](https://github.com/KCL-Planning/VAL)
+   repository, pinning the source revision and recording the executable hash.
+   Follow its Linux build instructions (`scripts/linux/build_linux64.sh`) and
+   retain the expected `build/linux64/Release/bin/Validate` tree. The `val`
    binding below points to the **VAL project root**, not just the binary.
+   For the Hyperstack layout this can be
+   `/home/ubuntu/agentic-formlizer/VAL`; `/opt` is not required.
 5. For GPU inference, provision NVIDIA drivers/container runtime and a pinned
    compatible server such as vLLM. Download a pinned model/tokenizer revision
    directly on the remote node and keep its weight cache there. Select the
@@ -125,8 +133,10 @@ The gateway sidecar must be able to reach the model service: its `127.0.0.1`
 is **not** the node host. For Docker harnesses an explicitly configured origin
 such as `http://host.docker.internal:8000/v1` can use the existing host-gateway
 mapping. Bind/firewall the model port for that private interface, not the public
-Internet. If using host-only `minimum`, select an origin also resolvable from
-the host (e.g. an appropriate private interface address).
+Internet. API-only and `minimum` run in host subprocesses on the execution node;
+select an origin resolvable from that host (`http://127.0.0.1:8000/v1` for a
+host-local service, or an appropriate private interface address). Do not assume
+the Docker-only `host.docker.internal` alias resolves in those subprocesses.
 
 ## Node configuration and supervision
 
@@ -564,15 +574,151 @@ listed as exclusions; no symlinks or device files are followed into secrets.
 The v1 control API is for a small trusted research deployment over SSH, not a
 multi-tenant public service. There is no arbitrary shell-command endpoint,
 automatic hardware provisioning, public TLS termination, GPU scheduler, live
-migration or direct-API-only campaign adapter. Add future tools to the existing
+migration. Add future tools to the existing
 agent tool registry and optionally name their supervised services here;
 installing a service alone never grants the agent access to it.
+
+## API-only and minimum-agent cells
+
+Remote execution location and model location are independent. All five native
+harnesses, minimum agents and API-only cells can run on the remote node while
+calling either its vLLM service **or a supported external provider**. vLLM/GPU
+installation is not required for an external-provider-only node. Provider
+support still follows each existing adapter: this is not automatic compatibility
+with arbitrary wire protocols (e.g. minimum does not implement direct Anthropic
+Messages transport).
+
+For external Vertex/DeepSeek/OpenAI agent cells, retain the ordinary
+`google-vertex/...`, `deepseek/...`, or `openai/...` profile model, provision the
+selected credentials on the execution node, and allow outbound HTTPS to that
+provider. API-only uses its existing standalone model names described below.
+Omit `--service model` from these job requests: the node does not require or
+contact a local vLLM service unless explicitly requested. `--service solver`
+is still mandatory when evaluation or a tool selects local/public_then_local;
+the choice of model provider does not change the solver backend. Both provider
+paths use the same release, evidence transfer, resume and evaluation mechanics.
+
+Both paths also support self-hosted models. The model route is
+`self-hosted/SERVED_MODEL_ID`; the suffix must match the server's `/v1/models`
+ID, not necessarily its Hugging Face repository name. Weights are downloaded
+once on the GPU node and are never included in job or result transfers.
+Use the same pinned model/tokenizer revision, dtype, parser/template and
+generation configuration across the comparison cells. BF16 and FP8 are
+separate conditions, not transparent alternatives.
+
+### API-only
+
+`api-job` creates an `api_cell`, which calls the existing
+`source/llm-as-formalizer-api.py::run_formalizer_gpt`, then `run_solver.py` and
+`run_val.py`. It has one valid generation per problem, no model-selectable or
+hosted tools, no reflection loop, and the standalone prompt and retry policy.
+Agent profile time/action budgets are **not** silently applied to this distinct
+baseline. Its condition is frozen by the request and release hashes; operational
+worker counts and credentials use the same operational-config schema as agents.
+
+After including `configs/node-ops.json` and its credential registry in the
+release, create a request on the controller (replace `RELEASE_SHA256` with the
+actual `bundle` result):
+
+```bash
+PYTHONPATH=source uv run --no-sync python -m remote_execution api-job \
+  --root . --job-id qwen-api-barman-bf16 --release-id RELEASE_SHA256 \
+  --model self-hosted/qwen-bf16 --domain barman \
+  --dataset Heavily_Templated_Barman-100 --indices 1,2,3 \
+  --operational configs/node-ops.json --solver-backend local \
+  --service model --service solver --destination qwen-api-barman.job.json
+```
+
+Cloud API names remain supported, e.g. `gemini-3.1-flash-lite` or
+`deepseek-v4-flash` (the standalone spelling, without the agent provider prefix).
+Node credentials are explicitly selected from the release's registry; they are
+not included in the job. For self-hosted cells, the registry's
+`provider_options.self_hosted.base_url` and named secret configure the client.
+The supervised model and local solver preflight requirements still apply.
+
+Use the existing `upload`, `submit`, `progress`, `sync --follow`, `collect`, and
+explicit `resume` commands, with no separate controller service:
+
+```bash
+PYTHONPATH=source uv run --no-sync python -m remote_execution \
+  --endpoint http://127.0.0.1:18876 --token-file /PRIVATE/CONTROL-TOKEN \
+  submit --job qwen-api-barman.job.json
+PYTHONPATH=source uv run --no-sync python -m remote_execution \
+  --endpoint http://127.0.0.1:18876 --token-file /PRIVATE/CONTROL-TOKEN \
+  sync qwen-api-barman-bf16 --destination output/remote-qwen --follow
+```
+
+Generation evidence is sealed under
+`output/llm-as-formalizer-api/DOMAIN/DATASET/MODEL/pNN/executions/execution-NNNNNN/`.
+The directory contains original prompts, full provider responses (including
+available reasoning/thinking, token usage and generated file contents), PDDL
+artifacts, `api_request.json`, and `execution_result.json` or `infra_invalid.json`.
+A malformed or empty delivered assistant response is a valid failed generation:
+resume does not draw a replacement answer. Exhausted provider transients or
+unknown runner/protocol failures (including a missing assistant message) retain
+an invalid execution; a subsequent explicit job
+resume fills the missing valid slot. Interrupted, uncommitted executions are
+not advertised as completed checkpoints. Input/identity mismatch or evidence
+corruption stops recovery rather than triggering another sample.
+
+Terminal API executions use the same periodic sealing, incremental transfer,
+durable receipt/ACK and node-loss recovery protocol as agent executions. They
+can reach the controller before the rest of the cell or its evaluation finishes.
+After restore, received valid outcomes are reused; unreceived work may run again.
+Evaluation uses verified copies of selected PDDL in
+`output/evaluation-GENERATION/llm-as-formalizer-api/...`, then the existing
+solver/VAL routines with independent `solver_workers` and `val_workers` counts.
+It does not alter generation records or previous evaluation generations.
+`cell-summary-GENERATION.json` identifies the selected executions and current
+evaluation root; the latter contains the ordinary result CSV. Evaluation is
+rerunnable after node loss without recalling the model. This additional
+execution management is specific to remote `api_cell`; legacy standalone CLI
+resume/layout remain available unchanged.
+
+For local-model costs, provider-measured token usage is retained when supplied.
+An unknown self-hosted token price is not evidence of zero cost: compute GPU
+cost separately using deployment/runtime records. No reasoning text that the
+server omits can be reconstructed from token counts.
+
+### Minimum agent, configurable n
+
+No new runtime is needed: submit `job --harness minimum --profile ...` using a
+complete, reviewed minimum profile derived from the maintained baseline. Follow
+the [minimum adapter contract](../agent_formalizer/README.md#minimum-formalizer-agent-baseline)
+for the explicit host-loop prompt and compatible timing settings; do not use a
+historical test profile as a campaign preset or assume Docker call-checkpoint
+settings automatically apply to the host loop. This change does not modify the
+maintained native baseline or the minimum runtime's semantics.
+
+In each separate derived profile select:
+
+- `benchmark_envelope.control_model: "self-hosted/qwen-bf16"`;
+- `condition_profile.overrides.minimum_agent.reflection_count: n`;
+- `minimum_agent.solver_feedback.enabled: true` or `false`;
+- local evaluation via `condition_profile.overrides.solver_backend: "local"`;
+- no `agent_tools` and no experiment skills for this fixed-loop baseline.
+
+Here **n means reflection rounds after the initial generation**: n=0/1/10 gives
+1/2/11 logical model calls. It is not `attempts_per_case`; changing n requires a
+different frozen profile and job ID. With solver feedback enabled, the harness
+makes exactly n fixed solver calls, each before the corresponding reflection.
+The model itself does not choose these tool calls. Keep the profile's model-call
+and action guards large enough for n+1; excessive n is rejected, never truncated.
+Full reasoning, complete replacement PDDL, provider usage and fixed solver
+observations remain in the ordinary minimum transcript/step evidence. Minimum
+cells use the existing agent-cell checkpoint and first-valid recovery path.
+
+For initial Hyperstack acceptance, test API-only, minimum n=1 and n=10 (with
+and without fixed solver feedback), and each of the five native harnesses on a
+small fixed index set before a full matrix. Validate at least one delivered
+pair through local solver **and VAL**, and inspect incremental receipt/restore.
+These deployment tests must use separate job IDs/output, never an old campaign.
 
 ## Tests and remaining validation
 
 ```bash
 PYTHONPATH=source:tests uv run --no-sync --offline python -B -m unittest \
-  test_remote_execution test_self_hosted_model test_remote_checkpoints test_remote_vllm -v
+  test_remote_execution test_remote_api test_self_hosted_model test_remote_checkpoints test_remote_vllm test_minimum_agent -v
 ```
 
 These tests use temporary directories and loopback random ports, including real

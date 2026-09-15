@@ -34,6 +34,8 @@ Parser.add_argument("--workers", type=int, default=1,
                     help="parallel worker threads for independent problems (default 1 = sequential)")
 
 def _model_output_name(model):
+    if model.startswith("self-hosted/"):
+        return model.replace("/", "__").replace(":", "_").replace(" ", "_")
     if model.startswith("logits/"):
         return model.replace("/", "__")
     if "/" not in model:

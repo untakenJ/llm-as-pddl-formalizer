@@ -64,6 +64,8 @@ Parser.add_argument(
 
 
 def _model_output_name(model):
+    if model.startswith("self-hosted/"):
+        return model.replace("/", "__").replace(":", "_").replace(" ", "_")
     if model.startswith("logits/"):
         return model.replace("/", "__")
     if "/" not in model:

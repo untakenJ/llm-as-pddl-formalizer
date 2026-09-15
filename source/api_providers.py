@@ -36,6 +36,7 @@ import socket
 import ssl
 import time
 from email.utils import parsedate_to_datetime
+from urllib.parse import urlsplit
 
 from openai import OpenAI
 import requests
@@ -59,6 +60,7 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 LOGITS_PROVIDER = "logits"
 LOGITS_BACKEND = "logits-public-rest-openai-adapter"
 LOGITS_API_KEY_ENV = "LOGITS_API_KEY"
+SELF_HOSTED_PROVIDER = "self-hosted"
 
 # The standalone API pipelines own this policy independently of agent_formalizer.
 # SDK retries are disabled for their clients so every application-visible
@@ -165,12 +167,16 @@ def is_logits_model(model: str) -> bool:
     return model.startswith("logits/") and len(model.split("/", 1)[1]) > 0
 
 
+def is_self_hosted_model(model: str) -> bool:
+    return model.startswith("self-hosted/") and bool(model.split("/", 1)[1].strip())
+
+
 def validate_api_model(model: str) -> str:
-    if model in API_MODELS or is_logits_model(model):
+    if model in API_MODELS or is_logits_model(model) or is_self_hosted_model(model):
         return model
     raise ValueError(
         f"Unsupported API model {model!r}. Use a known model name or an explicit "
-        "dynamic Logits route such as logits/Qwen/Qwen3.5-4B."
+        "dynamic route such as logits/Qwen/Qwen3.5-4B or self-hosted/SERVED_MODEL_ID."
     )
 
 
@@ -180,7 +186,7 @@ def is_reasoning_model(model: str) -> bool:
 
 def default_tools_for_model(model: str) -> tuple[list | None, dict | None]:
     """Return hosted tools only for models served by OpenAI Responses."""
-    if is_gemini_model(model) or is_deepseek_model(model) or is_logits_model(model):
+    if is_gemini_model(model) or is_deepseek_model(model) or is_logits_model(model) or is_self_hosted_model(model):
         return None, None
     executors = OPENAI_TOOL_EXECUTORS or None
     return OPENAI_TOOLS, executors
@@ -275,7 +281,7 @@ def sanitize_model_name(model: str) -> str:
     return model.replace("/", "__").replace(":", "_").replace(" ", "_")
 
 
-def build_gemini_client():
+def build_gemini_client(*, api_key=None):
     """Construct a Vertex ``google.genai.Client`` using ``GOOGLE_CLOUD_API_KEY``.
 
     Pins ``api_version="v1"`` for ``generate_content`` (formalizer-api /
@@ -286,7 +292,7 @@ def build_gemini_client():
     from google import genai
     from google.genai.types import HttpOptions, HttpRetryOptions
 
-    cfg = require_gemini_vertex_api_key_config()
+    cfg = {"api_key": api_key} if api_key is not None else require_gemini_vertex_api_key_config()
     return genai.Client(
         api_key=cfg["api_key"],
         vertexai=True,
@@ -297,9 +303,9 @@ def build_gemini_client():
     )
 
 
-def build_deepseek_client():
+def build_deepseek_client(*, api_key=None):
     """Construct the OpenAI-compatible DeepSeek client with SDK retries off."""
-    cfg = require_deepseek_api_key_config()
+    cfg = {"api_key": api_key} if api_key is not None else require_deepseek_api_key_config()
     return OpenAI(
         api_key=cfg["api_key"],
         base_url=DEEPSEEK_BASE_URL,
@@ -307,14 +313,14 @@ def build_deepseek_client():
     )
 
 
-def build_logits_client(model: str):
+def build_logits_client(model: str, *, api_key=None):
     """Build the direct public-REST client used by the API-only pipelines."""
     import atexit
 
     from agent_formalizer.configuration.config import LOGITS_MODEL_ASSETS_ROOT
     from agent_formalizer.compute_platforms.logits.logits_openai_bridge import JsonlLedger, LogitsChatBackend
 
-    cfg = require_logits_api_key_config()
+    cfg = {"api_key": api_key} if api_key is not None else require_logits_api_key_config()
     upstream_model = model.split("/", 1)[1]
     client = LogitsChatBackend(
         model=upstream_model,
@@ -369,15 +375,30 @@ def build_gemini_interactions_client():
     return genai.Client(api_key=cfg["api_key"], vertexai=False)
 
 
-def build_provider_client(model: str) -> tuple[str, object]:
+def build_provider_client(model: str, *, api_key=None, provider_options=None) -> tuple[str, object]:
     """Return the standalone API provider name and its configured client."""
+    if is_self_hosted_model(model):
+        # Explicit routing only: never silently send a local model to OpenAI.
+        options = provider_options if provider_options is not None else {
+            "base_url": os.environ.get("SELF_HOSTED_BASE_URL", "")}
+        origin = options.get("base_url", "").rstrip("/")
+        url = urlsplit(origin)
+        if (url.scheme not in {"http", "https"} or not url.hostname
+                or url.username or url.password or url.query or url.fragment
+                or not url.path.endswith("/v1")):
+            raise ValueError("Self-hosted API requires an explicit HTTP(S) base_url ending in /v1, without credentials/query/fragment")
+        key = api_key if api_key is not None else os.environ.get("SELF_HOSTED_API_KEY", "")
+        if not key:
+            raise ValueError("SELF_HOSTED_API_KEY is required (configure the same key on the inference server)")
+        return SELF_HOSTED_PROVIDER, OpenAI(api_key=key, base_url=origin, max_retries=0)
+    kwargs = {"api_key": api_key} if api_key is not None else {}
     if is_gemini_model(model):
-        return GEMINI_PROVIDER, build_gemini_client()
+        return GEMINI_PROVIDER, build_gemini_client(**kwargs)
     if is_deepseek_model(model):
-        return DEEPSEEK_PROVIDER, build_deepseek_client()
+        return DEEPSEEK_PROVIDER, build_deepseek_client(**kwargs)
     if is_logits_model(model):
-        return LOGITS_PROVIDER, build_logits_client(model)
-    return "openai", OpenAI(api_key=_read_key_file("key.txt"), max_retries=0)
+        return LOGITS_PROVIDER, build_logits_client(model, **kwargs)
+    return "openai", OpenAI(api_key=api_key if api_key is not None else _read_key_file("key.txt"), max_retries=0)
 
 
 def _now() -> str:
@@ -1045,8 +1066,9 @@ def generate_deepseek_json(
     schema: dict,
     *,
     tracer=None,
+    provider=DEEPSEEK_PROVIDER,
 ) -> str:
-    """Generate a JSON object through DeepSeek Chat Completions.
+    """Generate JSON through DeepSeek or an explicitly selected self-hosted API.
 
     DeepSeek's JSON mode requires the prompt to explicitly request JSON. It
     does not currently enforce arbitrary JSON Schema server-side, so the
@@ -1059,8 +1081,9 @@ def generate_deepseek_json(
         + json.dumps(schema, ensure_ascii=False, sort_keys=True)
     )
     messages = [{"role": "system", "content": json_instruction}, *input_items]
+    self_hosted = provider == SELF_HOSTED_PROVIDER
     request = {
-        "model": model,
+        "model": model.split("/", 1)[1] if self_hosted else model,
         "messages": messages,
         "response_format": {"type": "json_object"},
     }
@@ -1068,9 +1091,9 @@ def generate_deepseek_json(
         tracer.emit(
             "request",
             round=0,
-            provider=DEEPSEEK_PROVIDER,
-            backend=DEEPSEEK_BACKEND,
-            api_key_env=DEEPSEEK_API_KEY_ENV,
+            provider=provider,
+            backend="openai-compatible-chat-completions" if self_hosted else DEEPSEEK_BACKEND,
+            api_key_env="SELF_HOSTED_API_KEY" if self_hosted else DEEPSEEK_API_KEY_ENV,
             kwargs=request,
         )
 
@@ -1079,14 +1102,14 @@ def generate_deepseek_json(
         resp = call_with_transient_retry(
             lambda: client.chat.completions.create(**request),
             tracer=tracer,
-            provider=DEEPSEEK_PROVIDER,
+            provider=provider,
         )
     except Exception as e:
         if tracer:
             tracer.emit(
                 "api_error",
                 round=0,
-                provider=DEEPSEEK_PROVIDER,
+                provider=provider,
                 elapsed_ms=(time.monotonic() - t0) * 1000.0,
                 error_type=type(e).__name__,
                 error_message=str(e),
@@ -1098,7 +1121,7 @@ def generate_deepseek_json(
         tracer.emit(
             "response",
             round=0,
-            provider=DEEPSEEK_PROVIDER,
+            provider=provider,
             elapsed_ms=elapsed_ms,
             response=_serialize_response(resp),
         )
@@ -1109,7 +1132,7 @@ def generate_deepseek_json(
     if not text:
         finish_reason = getattr(choices[0], "finish_reason", None) if choices else None
         raise RuntimeError(
-            "DeepSeek returned empty JSON content "
+            f"{'DeepSeek' if provider == DEEPSEEK_PROVIDER else provider} returned empty JSON content "
             f"(finish_reason={finish_reason or 'UNKNOWN'})"
         )
     return text
@@ -1206,6 +1229,11 @@ def _respond_logits(client, model, input_items, text_format, tracer=None) -> str
 def respond_with_tools(provider: str, client, model, input_items, text_format,
                        tools=None, tool_executors=None, tool_choice="auto",
                        max_tool_rounds=8, tracer=None) -> str:
+    if provider == SELF_HOSTED_PROVIDER:
+        if tools:
+            raise ValueError("Self-hosted Direct API baseline does not use hosted tools")
+        return generate_deepseek_json(client, model, input_items, text_format["schema"],
+                                      tracer=tracer, provider=provider)
     if provider == GEMINI_PROVIDER or provider == "gemini":
         if tools:
             # OpenAI-hosted tools are not available on the Gemini path.

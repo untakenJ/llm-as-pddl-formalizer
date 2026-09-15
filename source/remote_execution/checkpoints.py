@@ -81,7 +81,8 @@ def validate_manifest(manifest):
         raise ValueError("Checkpoint node/output root mismatch")
     key = manifest["key"]
     if manifest["kind"] == "execution":
-        if not re.fullmatch(r"output/llm-as-formalizer-agent/[^/]+/[^/]+/[^/]+/p[0-9]+/executions/execution-[0-9]+", key):
+        pipeline = "api" if spec["kind"] == "api_cell" else "agent"
+        if not re.fullmatch(r"output/llm-as-formalizer-" + pipeline + r"/[^/]+/[^/]+/[^/]+/p[0-9]+/executions/execution-[0-9]+", key):
             raise ValueError("Invalid execution checkpoint path")
         relative(key)
         if not any(key + "/" + terminal in manifest["files"] for terminal in ("execution_result.json", "infra_invalid.json")):
@@ -160,7 +161,7 @@ def publish_ready(directory, spec, node, generation):
     No outcome-based selection: valid failures and every infra-invalid terminal
     execution are published. Shared adjudication ledgers have separate revisions.
     """
-    if spec["kind"] != "agent_cell":
+    if spec["kind"] not in {"agent_cell", "api_cell"}:
         return catalog(directory)
     from agent_formalizer.configuration.operational_config import safe_operational_component
     from agent_formalizer.results.execution_validity import cell_dir_for_model_dir
@@ -169,15 +170,18 @@ def publish_ready(directory, spec, node, generation):
         index = catalog(directory)
         known = {(row["kind"], row["key"]) for row in index["checkpoints"]}
         # Do not recursively traverse the potentially large trace trees on each poll.
-        output = directory / "output" / "llm-as-formalizer-agent"
+        is_api = spec["kind"] == "api_cell"
+        output = directory / "output" / ("llm-as-formalizer-api" if is_api else "llm-as-formalizer-agent")
         cells = set()
         for execution in sorted(output.glob("*/*/*/p*/executions/execution-*")):
             safe_path(directory, execution.relative_to(directory).as_posix())
             if not re.fullmatch(r"execution-[0-9]+", execution.name):
                 continue
-            model_dir = execution.parents[2]
-            cell, attempt = cell_dir_for_model_dir(model_dir)
-            cells.add(cell)
+            attempt = 1
+            if not is_api:
+                model_dir = execution.parents[2]
+                cell, attempt = cell_dir_for_model_dir(model_dir)
+                cells.add(cell)
             key = execution.relative_to(directory).as_posix()
             if ("execution", key) in known:
                 continue

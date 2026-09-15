@@ -8,6 +8,9 @@ Supports:
 - **DeepSeek** via the OpenAI-compatible Chat Completions API using JSON mode.
 - **Logits** via its public sampling REST API and an audited model-family chat
   convention (currently Qwen3.5).
+- **Self-hosted** via OpenAI-compatible Chat Completions, including local vLLM.
+  Use ``self-hosted/SERVED_MODEL_ID``, ``SELF_HOSTED_BASE_URL`` (ending in /v1)
+  and ``SELF_HOSTED_API_KEY``. No hosted tools are enabled on this route.
 
 Credentials in ``_private/.env`` (python-dotenv) or shell env:
 - OpenAI: ``_private/key.txt``
@@ -91,7 +94,8 @@ PDDL_OUTPUT_SCHEMA = {
 
 
 def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=None,
-                       tool_executors=None, record_trace=True, out_dir_root=None):
+                       tool_executors=None, record_trace=True, out_dir_root=None,
+                       output_directory=None):
     domain_description = Path(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_domain.txt').read_text()
     problem_description = Path(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_problem.txt').read_text()
 
@@ -112,7 +116,7 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
 
     out_root = out_dir_root or f'{ROOT_DIR}/output'
     model_label = sanitize_model_name(model)
-    out_dir = f'{out_root}/llm-as-formalizer-api/{domain}/{data}/{model_label}/{problem}'
+    out_dir = str(output_directory) if output_directory is not None else f'{out_root}/llm-as-formalizer-api/{domain}/{data}/{model_label}/{problem}'
     os.makedirs(out_dir, exist_ok=True)
     trace_path = f'{out_dir}/{problem}_{model_label}_trace.jsonl' if record_trace else None
     # Preserve interrupted or explicitly repeated API executions. The ordinary
@@ -160,6 +164,8 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
         return_dict = json.loads(return_string)
         domain_file = return_dict["domain file"]
         problem_file = return_dict["problem file"]
+        if not isinstance(domain_file, str) or not isinstance(problem_file, str):
+            raise TypeError("PDDL output fields must be strings")
 
         df_path = f'{out_dir}/{problem}_{model_label}_df.pddl'
         pf_path = f'{out_dir}/{problem}_{model_label}_pf.pddl'

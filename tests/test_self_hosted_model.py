@@ -17,6 +17,23 @@ from test_streaming_model_gateway import running_gateway, _request, _ledger
 
 
 class SelfHostedTests(unittest.TestCase):
+    def test_native_and_minimum_adapters_keep_external_provider_routes(self):
+        from profile_fixtures import HISTORICAL_PROFILES_DIR
+        from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
+        minimum = load_benchmark_profile(HISTORICAL_PROFILES_DIR / "native_safety_minimum_agent.json")
+        for harness in ("openclaw", "hermes", "nanobot", "generic", "zeroclaw", "minimum"):
+            for model in ("deepseek/deepseek-v4-flash", "google-vertex/gemini-3.1-flash-lite", "openai/gpt-4o-mini"):
+                with self.subTest(harness=harness, model=model):
+                    adapter = get_adapter(harness, model=model, api_key="test-external-key",
+                        benchmark_profile=minimum if harness == "minimum" else DEFAULT_BENCHMARK_PROFILE,
+                        credential_provider_options={"google_vertex": {"project": "test-project"}}
+                        if model.startswith("google-vertex/") else None)
+                    self.assertEqual(adapter.resolved_config.model, model)
+                    gateway = adapter.model_gateway()
+                    self.assertTrue(gateway)
+                    self.assertNotIn("test-external-key", json.dumps(adapter.effective_config()))
+                    self.assertNotIn("localhost:8000", adapter.upstream_api_base())
+
     def test_all_harness_routes_share_gateway_not_direct_model_access(self):
         for harness in ("openclaw", "hermes", "nanobot", "generic", "zeroclaw"):
             with self.subTest(harness=harness):

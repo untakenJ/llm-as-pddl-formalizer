@@ -72,12 +72,14 @@ def prepare(spec, node, workspace: Path, directory: Path, generation: int):
     p = spec["parameters"]
     if p["domain"] not in DOMAINS or p["dataset"] not in DATASETS:
         raise ValueError("Unknown benchmark dataset/domain")
-    profile_path = safe_path(workspace, p["benchmark_profile"])
     op_path = safe_path(workspace, p["operational_config"])
-    profile = load_benchmark_profile(profile_path)
-    resolved = profile.resolve(p["harness"])
-    if resolved.sha256 != p["resolved_config_sha256"]:
-        raise ValueError("Resolved profile identity does not match the submitted job")
+    profile = resolved = None
+    if spec["kind"] == "agent_cell":
+        profile_path = safe_path(workspace, p["benchmark_profile"])
+        profile = load_benchmark_profile(profile_path)
+        resolved = profile.resolve(p["harness"])
+        if resolved.sha256 != p["resolved_config_sha256"]:
+            raise ValueError("Resolved profile identity does not match the submitted job")
     op = load_operational_config(op_path)
     raw = deepcopy(op.raw)
     if raw["scheduling"]["formalizer_workers"] > node.get("max_formalizer_workers", 4):
@@ -101,25 +103,28 @@ def prepare(spec, node, workspace: Path, directory: Path, generation: int):
     private_json(materialized, raw, replace=False)
     # Retain user-selected semantics; only node-local paths were materialized.
     baseline = workspace / "source/agent_formalizer/configs/benchmark_profiles/native_baseline_v1.json"
-    provenance = {"baseline_path": str(baseline.relative_to(workspace)),
-                  "baseline_sha256": file_hash(baseline), "profile_sha256": file_hash(profile_path),
-                  "resolved_config_sha256": resolved.sha256,
-                  "profile_differences": differences(read_json(baseline), profile.raw),
-                  "operational_source_sha256": file_hash(op_path),
+    provenance = {"operational_source_sha256": file_hash(op_path),
                   "operational_materialization": differences(op.raw, raw)}
+    if profile is not None:
+        provenance.update({"baseline_path": str(baseline.relative_to(workspace)),
+                           "baseline_sha256": file_hash(baseline), "profile_sha256": file_hash(profile_path),
+                           "resolved_config_sha256": resolved.sha256,
+                           "profile_differences": differences(read_json(baseline), profile.raw)})
+    else:
+        provenance.update({"api_condition": "direct-api-no-tools-v1", "request_sha256": digest(spec),
+                           "generation_attempts": 1, "hosted_tools": False,
+                           "entrypoint": "source/llm-as-formalizer-api.py",
+                           "entrypoint_sha256": file_hash(workspace / "source/llm-as-formalizer-api.py"),
+                           "note": "Standalone API prompt/retries; agent profile budgets do not apply"})
     private_json(directory / "evidence" / f"configuration-{generation}.json", provenance, replace=False)
     return profile, resolved, raw, materialized
 
 
-def run(spec, node, workspace, directory, generation):
-    from agent_formalizer.configuration.config import agent_model_label
-    from sweep_agent_pipeline import run_agent_pipeline
-
-    profile, resolved, op, materialized = prepare(spec, node, workspace, directory, generation)
+def required_service_preflight(model, solver_backend, spec, node, op, directory, generation):
     p = spec["parameters"]
     names = p["services"]
     services = node.get("services", {})
-    if resolved.solver_backend in {"local", "public_then_local"}:
+    if solver_backend in {"local", "public_then_local"}:
         if "solver" not in names:
             raise ValueError("local/public_then_local requires the shared solver service preflight")
         expected = services["solver"]["expected"]
@@ -129,18 +134,18 @@ def run(spec, node, workspace, directory, generation):
         if (expected.get("status") != "ok" or expected.get("backend") != "local-planutils"
                 or not expected.get("pool", {}).get("image_id") or not required <= config.keys()):
             raise ValueError("Solver preflight must declare its image and complete resource limits")
-        if resolved.solver_backend == "public_then_local" and config["timeout_seconds"] != 90:
+        if solver_backend == "public_then_local" and config["timeout_seconds"] != 90:
             raise ValueError("public_then_local requires a 90-second local solver")
         # The existing pipeline uses these fixed node-local origins. A health
         # check on some other service must not attest the selected solver.
         if services["solver"]["health_url"] != "http://127.0.0.1:8769/__benchmark__/health":
             raise ValueError("Solver preflight must target the benchmark's actual local endpoint")
-    if resolved.model.startswith("self-hosted/") and "model" not in names:
+    if model.startswith("self-hosted/") and "model" not in names:
         raise ValueError("Self-hosted model requires a supervised model service preflight")
     health = service_preflight(services, names, directory / "evidence" / f"services-{generation}.json",
                                secrets_env_file=op["credential"]["secrets_env_file"])
-    if resolved.model.startswith("self-hosted/"):
-        served = resolved.model.split("/", 1)[1]
+    if model.startswith("self-hosted/"):
+        served = model.split("/", 1)[1]
         models = health["model"]["health"].get("data", [])
         if not any(isinstance(item, dict) and item.get("id") == served for item in models):
             raise ValueError("Model service does not expose the selected served-model ID")
@@ -149,6 +154,19 @@ def run(spec, node, workspace, directory, generation):
                     "max_model_len", "tool_call_parser", "reasoning_parser"}
         if not required <= services["model"].get("provenance", {}).keys():
             raise ValueError("Self-hosted model deployment provenance is incomplete")
+    return health
+
+
+def run(spec, node, workspace, directory, generation):
+    if spec["kind"] == "api_cell":
+        from remote_execution.api import run as run_api
+        return run_api(spec, node, workspace, directory, generation)
+    from agent_formalizer.configuration.config import agent_model_label
+    from sweep_agent_pipeline import run_agent_pipeline
+
+    profile, resolved, op, materialized = prepare(spec, node, workspace, directory, generation)
+    p = spec["parameters"]
+    required_service_preflight(resolved.model, resolved.solver_backend, spec, node, op, directory, generation)
     scheduling = op["scheduling"]
     result = run_agent_pipeline(
         claw=p["harness"], model=resolved.model, model_label=agent_model_label(p["harness"], resolved.model),

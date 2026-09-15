@@ -134,16 +134,25 @@ def validate_job(raw):
         delay = p.get("delay_seconds", 0)
         if type(delay) not in {int, float} or not 0 <= delay <= 10:
             raise ValueError("Probe delay must be 0..10 seconds")
-    elif raw["kind"] == "agent_cell":
-        exact(p, {"harness", "domain", "dataset", "indices", "benchmark_profile",
-                  "operational_config", "resolved_config_sha256", "services"})
-        if p["harness"] not in {"openclaw", "hermes", "nanobot", "generic", "zeroclaw", "minimum"}:
-            raise ValueError("Unknown harness")
+    elif raw["kind"] in {"agent_cell", "api_cell"}:
+        common = {"domain", "dataset", "indices", "operational_config", "services"}
+        if raw["kind"] == "agent_cell":
+            exact(p, common | {"harness", "benchmark_profile", "resolved_config_sha256"})
+            if p["harness"] not in {"openclaw", "hermes", "nanobot", "generic", "zeroclaw", "minimum"}:
+                raise ValueError("Unknown harness")
+            relative(p["benchmark_profile"])
+            sha256(p["resolved_config_sha256"])
+        else:
+            exact(p, common | {"model", "solver_backend"})
+            if (not isinstance(p["model"], str) or len(p["model"]) > 256
+                    or not all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]*", part)
+                               for part in p["model"].split("/"))):
+                raise ValueError("Invalid API model route")
+            if p["solver_backend"] not in {"local", "public", "public_then_local"}:
+                raise ValueError("Unknown solver backend")
         identifier(p["domain"])
         identifier(p["dataset"])
-        for key in ("benchmark_profile", "operational_config"):
-            relative(p[key])
-        sha256(p["resolved_config_sha256"])
+        relative(p["operational_config"])
         indices = p["indices"]
         if not isinstance(indices, list) or not indices or len(indices) > 100000:
             raise ValueError("Nonempty fixed indices required")

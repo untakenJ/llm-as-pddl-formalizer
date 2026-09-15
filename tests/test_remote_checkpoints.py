@@ -17,6 +17,45 @@ from remote_execution.worker import Node, make_server
 
 
 class CheckpointTests(TemporaryCase):
+    def test_api_execution_sync_ack_and_restore_keep_valid_wrong_answer(self):
+        from remote_execution.api import case_directory, selected_case
+        spec = {"schema_version": 1, "job_id": "api-cell", "release_id": self.spec["release_id"], "kind": "api_cell",
+                "parameters": {"model": "self-hosted/example", "domain": "barman", "dataset": "Heavily_Templated_Barman-100",
+                               "indices": [1, 2, 3], "operational_config": "source/operational.json",
+                               "services": [], "solver_backend": "local"}}
+        self.node.submit(spec)
+        self.node.store.transition("api-cell", "running")
+        directory = self.node.store.directory("api-cell")
+        for problem in ("p01", "p02", "p03"):
+            execution = case_directory(directory / "output", spec["parameters"], problem) / "executions/execution-000001"
+            execution.mkdir(parents=True)
+            identity = {"request_sha256": digest(spec), "problem": problem}
+            private_json(execution / "api_request.json", identity)
+            if problem != "p03":
+                valid = problem == "p01"
+                private_json(execution / ("execution_result.json" if valid else "infra_invalid.json"), {
+                    "complete": True, "attempt_valid": valid, "generation_success": False, "identity": identity,
+                    "files": {"api_request.json": file_hash(execution / "api_request.json")}})
+        index = checkpoints.publish_ready(directory, spec, self.config, 1)
+        self.assertEqual(len(index["checkpoints"]), 2)
+        progress = self.node.progress("api-cell")
+        self.assertEqual(progress["cells"][0]["selected_valid_attempts"], 1)
+        received = self.client.sync("api-cell", self.destination)
+        self.assertEqual(received["durable_executions"], 2)
+        self.assertEqual(received["status"], "running")
+        self.assertEqual(self.node.progress("api-cell")["acknowledged_checkpoints"], 2)
+        archive = self.root / "api-recovery.tar.gz"
+        checkpoints.recovery_bundle(self.destination / "api-cell", archive)
+        self.stop_server()
+        os.rename(self.node.store.root, self.root / "retired-node")
+        store = Store(Path(self.config["state_dir"]))
+        bundle.install(self.archive, store.root / "releases", spec["release_id"])
+        recovered = checkpoints.restore(archive, self.config, source_node_retired=True, reason="API test node retired")
+        self.assertEqual(recovered["generation"], 2)
+        case = case_directory(store.directory("api-cell") / "output", spec["parameters"], "p01")
+        self.assertFalse(selected_case(case)[1]["generation_success"])
+        self.assertFalse(case.with_name("p03").exists())
+
     def setUp(self):
         super().setUp()
         private_json(self.workspace / "source/profile.json", {})
