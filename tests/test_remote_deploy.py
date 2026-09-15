@@ -1,5 +1,8 @@
 """Deployment tests use temporary nodes and mock uv/probes; no external calls."""
 import json
+import os
+import shlex
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -36,6 +39,7 @@ class DeploymentTests(unittest.TestCase):
         private_json(self.config_path, self.config)
         self.dest = self.root / "deployments"
         self.matches = patch.object(deploy, "environment_matches", return_value=True).start()
+        patch.object(deploy, "verify_unit", return_value={"status": "pass"}).start()
         self.addCleanup(patch.stopall)
 
     def plan(self, **kwargs):
@@ -213,6 +217,19 @@ class DeploymentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             deploy.check(prepared)
 
+    def test_check_rejects_unit_drift_and_records_unverified_stages(self):
+        prepared = Path(self.apply()["prepared"])
+        process = subprocess.CompletedProcess([], 0, json.dumps({"status": "pass", "checks": {}}), "")
+        with patch.object(deploy, "run_probe", return_value=process), \
+                patch.object(deploy, "verify_unit", return_value={"status": "not_verified"}):
+            result = deploy.check(prepared)
+        self.assertEqual(result["status"], "not_verified")
+        for stage in ("native_startup_acceptance", "real_model_canary", "service_activation", "unit_parsing"):
+            self.assertEqual(result["stages"][stage]["status"], "not_verified")
+        (prepared / "worker.service").write_text("[Service]\nExecStart=/bin/true\n")
+        with self.assertRaisesRegex(ValueError, "service unit changed"):
+            deploy.check(prepared)
+
     def test_check_records_failure_without_subprocess_error_text(self):
         result = self.apply()
         process = subprocess.CompletedProcess([], 1, "provider secret", "provider secret")
@@ -265,14 +282,49 @@ class ProbeTests(unittest.TestCase):
         image = "sha256:" + "1" * 64
         binary = self.root / "zeroclaw"; binary.write_text("fixture")
         with patch("agent_formalizer.runtime.runtime_lock.validate_runtime_lock", return_value={"status": "pass"}) as validate, \
+                patch.object(deploy, "timing_probe", return_value={"status": "pass"}) as timing, \
                 patch("agent_formalizer.timing.zeroclaw_deadlines.prepared", return_value=(binary, {})), \
                 patch.object(deploy.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, image, "")):
             result = deploy.probe(self.config, deploy.NATIVE, [])
         self.assertEqual(result["status"], "pass")
         self.assertEqual(validate.call_count, 5)
+        self.assertEqual(timing.call_count, 5)
         for call in validate.call_args_list:
             self.assertEqual(call.kwargs["container_image_id"], image)
             self.assertEqual(call.kwargs["lock_path"].name, "runtime_lock_text_v1.json")
+
+    def test_compiler_missing_is_not_verified_not_pass(self):
+        with patch.object(deploy.shutil, "which", return_value=None):
+            self.assertEqual(deploy.timing_probe("hermes")["status"], "not_verified")
+
+    def test_build_error_is_not_hidden_by_runtime_lock_pass(self):
+        with patch.object(deploy, "timing_probe", return_value={"status": "fail", "build_diagnostic": "unused-result"}), \
+                patch("agent_formalizer.runtime.runtime_lock.validate_runtime_lock", return_value={"status": "pass"}), \
+                patch.object(deploy.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "image", "")):
+            result = deploy.probe(self.config, ["hermes"], [])
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["checks"]["hermes"]["status"], "pass")
+        self.assertEqual(result["checks"]["timing:hermes"]["build_diagnostic"], "unused-result")
+
+    @unittest.skipUnless(shutil.which("gcc"), "requires actual GCC")
+    def test_timing_probe_reports_real_uncached_compiler_failure(self):
+        from agent_formalizer.timing import deadline_integration
+        gcc = shutil.which("gcc")
+        source = (deadline_integration.RUNTIME / "timeout_deadline.c").read_text()
+        old = source.replace("ssize_t ignored_read_result = read(fd, reply, sizeof reply);\n"
+                             "                    (void)ignored_read_result;", "(void)read(fd, reply, sizeof reply);")
+        self.assertNotEqual(source, old)
+        runtime = self.root / "old-runtime"; runtime.mkdir()
+        (runtime / "timeout_deadline.c").write_text(old)
+        compiler = self.root / "gcc"
+        compiler.write_text('#!/bin/sh\nexec ' + shlex.quote(gcc) + ' -D_FORTIFY_SOURCE=2 "$@"\n')
+        compiler.chmod(0o700)
+        with patch.object(deadline_integration, "RUNTIME", runtime), \
+                patch.dict(os.environ, {"PATH": str(self.root) + os.pathsep + os.environ.get("PATH", "")}):
+            row = deploy.timing_probe("hermes")
+        self.assertEqual(row["status"], "fail", row)
+        self.assertEqual(row["error_type"], "CalledProcessError")
+        self.assertIn("unused-result", row["build_diagnostic"])
 
     def test_individual_service_failure_is_reported_and_other_checks_continue(self):
         def health(services, names, evidence, **kwargs):
@@ -330,6 +382,43 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(checked["status"], "pass")
         self.assertTrue(checked["no_service_activated"])
         self.assertEqual(read_json(path), config)
+
+
+class SystemdUnitTests(unittest.TestCase):
+    def test_path_validation_and_field_specific_quoting(self):
+        text = deploy.unit_text(Path("/tmp/work space/中文%dir"), "/usr/bin/true", Path("/tmp/config space%.json"))
+        self.assertIn("WorkingDirectory=/tmp/work space/中文%%dir\n", text)
+        self.assertIn('Environment="PYTHONPATH=/tmp/work space/中文%%dir/source"', text)
+        self.assertIn('ExecStart=:"/usr/bin/true"', text)
+        self.assertIn('"/tmp/config space%%.json"', text)
+        for invalid in ('relative', '/tmp/a\nb', '/tmp/a\x00b', '/tmp/a\x7fb', '/tmp/a"b', '/tmp/a\\b', '/tmp/end '):
+            with self.subTest(path=invalid), self.assertRaises(ValueError):
+                deploy.unit_text(Path(invalid), "/usr/bin/true", Path("/tmp/config"))
+
+    def test_missing_systemd_is_not_verified(self):
+        with patch.object(deploy.shutil, "which", return_value=None):
+            self.assertEqual(deploy.verify_unit(Path("/unused"))["status"], "not_verified")
+
+    @unittest.skipUnless(shutil.which("systemd-analyze"), "requires real systemd parser")
+    def test_real_systemd_parser_accepts_paths_and_rejects_old_quoted_directory(self):
+        with tempfile.TemporaryDirectory(prefix="rd-unit-") as directory:
+            root = Path(directory)
+            for suffix in ("ordinary", "space 中文%value"):
+                workspace = root / suffix
+                workspace.mkdir()
+                path = root / "worker.service"
+                python = workspace / "python 中文%bin"
+                python.symlink_to("/usr/bin/true")
+                text = deploy.unit_text(workspace, python, workspace / "node config%.json")
+                path.write_text(text)
+                result = deploy.verify_unit(path)
+                self.assertEqual(result["status"], "pass", result)
+                bad = text.replace("WorkingDirectory=" + str(workspace).replace("%", "%%"),
+                                   'WorkingDirectory="' + str(workspace).replace("%", "%%") + '"')
+                path.write_text(bad)
+                result = deploy.verify_unit(path)
+                self.assertEqual(result["status"], "fail", result)
+                self.assertIn("not absolute", result["diagnostic"])
 
 
 if __name__ == "__main__":

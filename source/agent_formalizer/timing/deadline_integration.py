@@ -41,7 +41,22 @@ def validate(adapter):
             raise RuntimeError(f"{logical_time.POLICY_ID}: custom model gateway transports are not supported")
 
 
-def prepare(workspace):
+def compile_timeout_driver(destination):
+    """Always compile from source, with the same strict flags used by cases.
+
+    Destination must be new. Deployment probes use a fresh temporary directory,
+    never a historical release's runtime cache. This is setup, not agent time.
+    """
+    destination = Path(destination)
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(destination)
+    subprocess.run(["gcc", "-shared", "-fPIC", "-O2", "-Wall", "-Wextra", "-Werror",
+                    "-o", str(destination), str(RUNTIME / "timeout_deadline.c"),
+                    "-ldl", "-pthread", "-lm"], check=True, capture_output=True, text=True,
+                   timeout=60)
+
+
+def prepare(workspace, *, scratch_root=None):
     from ..results import native_audit
     adapter = workspace.adapter
     validate(adapter)
@@ -57,7 +72,9 @@ def prepare(workspace):
         from ..configuration.config import OPENCLAW_MODULE_DIR
         files += openclaw_deadlines.sources(Path(OPENCLAW_MODULE_DIR), checkpoint=checkpoint)
     digest = hashlib.sha256(policy(adapter).encode() + b"".join(p.name.encode() + p.read_bytes() for p in files)).hexdigest()
-    bundle = ROOT.parent.parent.parent / ".cache" / "deadline-runtime" / digest
+    bundle_root = (Path(scratch_root) / "bundles" if scratch_root is not None else
+                   ROOT.parent.parent.parent / ".cache" / "deadline-runtime")
+    bundle = bundle_root / digest
     bundle.mkdir(parents=True, exist_ok=True)
     # The bundle is derived, isolated build output, never the installed harness.
     sources = [(path, path.name) for path in RUNTIME.iterdir() if path.suffix in {".py", ".cjs", ".mjs"}]
@@ -77,9 +94,7 @@ def prepare(workspace):
     library = bundle / "timeout_deadline.so"
     if not library.exists():
         temporary = bundle / f"timeout_deadline.{uuid.uuid4().hex}.so"
-        subprocess.run(["gcc", "-shared", "-fPIC", "-O2", "-Wall", "-Wextra", "-Werror",
-                        "-o", str(temporary), str(RUNTIME / "timeout_deadline.c"),
-                        "-ldl", "-pthread", "-lm"], check=True, capture_output=True, text=True)
+        compile_timeout_driver(temporary)
         temporary.replace(library)
     # Check the exact installed source before spending model budget. The native
     # import loader applies the same AST transformation to the read-only source.
@@ -117,10 +132,13 @@ def prepare(workspace):
                 native_manifest['sources'][target] = hashlib.sha256(path.read_bytes()).hexdigest()
         else:
             module.transform(source.read_text(), name, str(source))
-    attempt_root = adapter.state_isolation_spec(workspace.instance_id).get("attempt_root")
+    attempt_root = (adapter.state_isolation_spec(workspace.instance_id).get("attempt_root")
+                    if scratch_root is None else None)
     state_root = (Path(attempt_root) if attempt_root else
                   workspace.artifact_dir / "runtime" if workspace.artifact_dir else
                   workspace._gateway_control_dir / "native-time")
+    if scratch_root is not None:
+        state_root = Path(scratch_root) / "state"
     directory = state_root / "logical-deadlines"
     evidence = workspace.artifact_dir / "gateway" / ("call_checkpoints.jsonl" if checkpoint else "logical_time.jsonl") if workspace.artifact_dir else None
     broker_type = call_checkpoint.CheckpointBroker if checkpoint else logical_time.DeadlineBroker

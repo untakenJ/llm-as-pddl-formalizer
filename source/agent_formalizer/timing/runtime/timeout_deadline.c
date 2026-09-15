@@ -44,7 +44,8 @@ static void control_failed(const char *operation) {
                 const char notice[] = "{\"op\":\"failure\"}\n";
                 if (send(fd, notice, sizeof notice - 1, MSG_NOSIGNAL) > 0) {
                     char reply[128];
-                    (void)read(fd, reply, sizeof reply);
+                    ssize_t ignored_read_result = read(fd, reply, sizeof reply);
+                    (void)ignored_read_result;
                 }
             }
             close(fd);

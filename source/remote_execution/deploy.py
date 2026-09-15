@@ -170,15 +170,100 @@ def create_same(path, value):
 
 
 def unit_text(workspace, python, config_path):
+    # WorkingDirectory is a path directive, NOT a systemd command-line word.
+    # Its quotes would be literal. ExecStart/Environment do use word quoting.
+    for path in (workspace, python, config_path):
+        value = str(path)
+        if (not Path(value).is_absolute() or value != value.strip() or
+                any(ord(c) < 32 or ord(c) == 127 or c in '\\"' for c in value)):
+            raise ValueError("Unit paths must be absolute, without control characters, quotes, backslashes or edge whitespace")
     def quote(value):
-        return json.dumps(str(value).replace("%", "%%"))
+        return '"' + str(value).replace("%", "%%") + '"'
     user = pwd.getpwuid(os.getuid()).pw_name
     return ("[Unit]\nDescription=Benchmark execution-node control service\nAfter=network-online.target docker.service\n\n"
-            "[Service]\nType=simple\nUser=" + user + "\nWorkingDirectory=" + quote(workspace) + "\n"
+            "[Service]\nType=simple\nUser=" + user + "\nWorkingDirectory=" + str(workspace).replace("%", "%%") + "\n"
             "Environment=" + quote("PYTHONPATH=" + str(workspace / "source")) + "\n"
             "Environment=PYTHONDONTWRITEBYTECODE=1\n"
             "ExecStart=:" + quote(python) + " -B -m remote_execution.worker --config " + quote(config_path) + " --port 8876\n"
             "Restart=on-failure\nRestartSec=3\nUMask=0077\nKillMode=process\n\n[Install]\nWantedBy=multi-user.target\n")
+
+
+def verify_unit(path):
+    """Use the host's real parser; never install a unit or talk to its manager."""
+    executable = shutil.which("systemd-analyze")
+    if executable is None:
+        return {"status": "not_verified", "reason": "systemd-analyze unavailable"}
+    try:
+        result = subprocess.run([executable, "verify", "--man=no", "--generators=no", str(path)],
+                                capture_output=True, text=True, timeout=30)
+        return {"status": "pass" if result.returncode == 0 else "fail",
+                "returncode": result.returncode, "diagnostic": (result.stdout + result.stderr)[-16000:],
+                "unit_sha256": file_hash(path), "scope": "candidate unit only; site drop-ins require separate verification"}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"status": "not_verified", "error_type": type(exc).__name__}
+
+
+def combined_status(rows):
+    statuses = [row["status"] for row in rows]
+    return "fail" if "fail" in statuses else "not_verified" if "not_verified" in statuses else "pass"
+
+
+@contextmanager
+def probe_adapter(name, root):
+    """Redirect constructor-owned scratch in the dedicated, serial probe process.
+
+    No installed runtime path is changed. Do not use this context in a worker
+    process concurrently constructing real case adapters.
+    """
+    from agent_formalizer.claws import get_adapter, openclaw
+    import atexit
+    original = openclaw.OPENCLAW_BENCHMARK_STATE_DIR
+    adapter = None
+    try:
+        openclaw.OPENCLAW_BENCHMARK_STATE_DIR = root / "openclaw-state"
+        # Preparation tests native code, not credentials/provider routing. The
+        # baseline's Vertex route otherwise needs a real project even without
+        # sending a request. This stub is never an experimental profile.
+        adapter = get_adapter(name, model="openai/gpt-4o-mini", api_key="deployment-probe-not-real")
+        yield adapter
+    finally:
+        openclaw.OPENCLAW_BENCHMARK_STATE_DIR = original
+        if adapter is not None and name == "openclaw":
+            adapter._cleanup_run_state()
+            atexit.unregister(adapter._cleanup_run_state)
+
+
+def timing_probe(name):
+    """Fresh compilation AND real native overlay preparation, without a case.
+
+    Prepare's brokers and derived output live solely in our short /tmp path;
+    installed harnesses/overlays are read-only. No model or solver is called.
+    """
+    from agent_formalizer.timing import deadline_integration
+    from types import SimpleNamespace
+    import tempfile
+
+    if shutil.which("gcc") is None:
+        return {"status": "not_verified", "reason": "gcc unavailable"}
+    with tempfile.TemporaryDirectory(prefix="rd-time-") as scratch, probe_adapter(name, Path(scratch)) as adapter:
+        root = Path(scratch)
+        workspace = SimpleNamespace(adapter=adapter, instance_id="deploy-probe",
+            artifact_dir=root / "evidence", _gateway_control_dir=root / "control",
+            _deadline_broker=None, _native_audit_collector=None)
+        try:
+            deadline_integration.prepare(workspace, scratch_root=root)
+            return {"status": "pass", "fresh_uncached_build": True,
+                    "manifest": read_json(workspace.artifact_dir / "logical_deadline_manifest.json")}
+        except Exception as exc:
+            row = {"status": "fail", "error_type": type(exc).__name__, "preparation_diagnostic": str(exc)[:8000]}
+            if isinstance(exc, subprocess.CalledProcessError):
+                # Local compiler/overlay diagnostics, not provider responses.
+                row["build_diagnostic"] = str(exc.stderr or "")[-16000:]
+            return row
+        finally:
+            for resource in (workspace._native_audit_collector, workspace._deadline_broker):
+                if resource is not None:
+                    resource.close()
 
 
 def apply(preview, expected):
@@ -250,7 +335,6 @@ def apply(preview, expected):
 def probe(config, harnesses, services):
     """Executed by the staged Python FROM the staged source, never the caller's imports."""
     from .benchmark import service_preflight
-    from agent_formalizer.claws import get_adapter
     from agent_formalizer.configuration.config import BASE_IMAGE
     from agent_formalizer.runtime.runtime_lock import TEXT_LOCK_PATH, RuntimeLockMismatch, validate_runtime_lock
     from agent_formalizer.timing.zeroclaw_deadlines import prepared as zeroclaw_prepared
@@ -258,11 +342,14 @@ def probe(config, harnesses, services):
 
     rows = {}
     for name in harnesses:
+        if name in NATIVE:
+            rows["timing:" + name] = timing_probe(name)
         try:
             if name in NATIVE:
                 image = subprocess.run(["docker", "image", "inspect", BASE_IMAGE, "--format", "{{.Id}}"],
                                        capture_output=True, text=True, check=True, timeout=30).stdout.strip()
-                rows[name] = validate_runtime_lock(get_adapter(name), container_image_id=image, lock_path=TEXT_LOCK_PATH)
+                with tempfile.TemporaryDirectory(prefix="rd-lock-") as scratch, probe_adapter(name, Path(scratch)) as adapter:
+                    rows[name] = validate_runtime_lock(adapter, container_image_id=image, lock_path=TEXT_LOCK_PATH)
                 if name == "zeroclaw":
                     binary, _ = zeroclaw_prepared()
                     rows[name]["checkpoint_overlay"] = {"path": str(binary), "sha256": file_hash(binary)}
@@ -289,7 +376,7 @@ def probe(config, harnesses, services):
     val = config.get("bindings", {}).get("val")
     rows["val"] = {"status": "pass" if val and os.access(Path(val) / "build/linux64/Release/bin/Validate", os.X_OK) else "fail",
                    "scope": "expected executable exists; semantic canary is separate"}
-    return {"status": "pass" if all(row["status"] == "pass" for row in rows.values()) else "fail", "checks": rows}
+    return {"status": combined_status(rows.values()), "checks": rows}
 
 
 class _ProbeCancelled(BaseException):
@@ -340,6 +427,10 @@ def check(prepared):
     with idle_node(config):
         if not environment_matches(workspace, config["python"]):
             raise ValueError("Prepared environment no longer matches uv.lock")
+        service = safe_path(prepared, "worker.service")
+        if service.read_text() != unit_text(workspace, config["python"], prepared / "node.json"):
+            raise ValueError("Prepared service unit changed; preserve site drop-ins separately")
+        unit = verify_unit(service)
         result = run_probe([config["python"], "-B", "-m", "remote_execution.deploy", "_probe",
             "--config", str(prepared / "node.json"), "--harnesses", ",".join(request["harnesses"]),
             "--services", ",".join(request["services"])], cwd=workspace, env=environment(workspace))
@@ -347,6 +438,20 @@ def check(prepared):
             report = {"status": "fail", "error_type": "probe_process_failed", "returncode": result.returncode}
         else:
             report = json.loads(result.stdout)
+        checks = report.setdefault("checks", {})
+        checks["systemd_unit"] = unit
+        preflight = combined_status([{"status": report["status"]}, unit])
+        timing = [row for name, row in checks.items() if name.startswith("timing:")]
+        report["status"] = preflight
+        report["stages"] = {
+            "deployment_preflight": {"status": preflight},
+            "unit_parsing": unit,
+            "native_timing_preparation": {"status": combined_status(timing) if timing else "not_verified",
+                                          "harnesses": [n for n in request["harnesses"] if n in NATIVE]},
+            "service_activation": {"status": "not_verified", "reason": "operator action, never performed by check"},
+            "native_startup_acceptance": {"status": "not_verified", "reason": "run opt-in zero-model workspace smoke separately"},
+            "real_model_canary": {"status": "not_verified", "reason": "requires a new experiment release and explicit submission"},
+        }
         report.update({"deployment_id": digest(request), "at_unix": time.time(),
                        "not_a_real_model_canary": True, "no_service_activated": True})
         target = prepared / "checks" / (str(time.time_ns()) + ".json")
@@ -392,7 +497,7 @@ def main():
                           "detail": str(exc) if isinstance(exc, ValueError) else "Deployment operation failed; no activation performed"}))
         return 2
     print(json.dumps(value, indent=2))
-    return 2 if value.get("status") == "fail" and args.command != "_probe" else 0
+    return 2 if value.get("status") in {"fail", "not_verified"} and args.command != "_probe" else 0
 
 
 if __name__ == "__main__":

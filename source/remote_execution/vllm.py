@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import uuid
 
 from .protocol import digest, exact, file_hash, identifier, positive, private_json, read_json, sha256
 
@@ -24,7 +25,8 @@ def validate(config):
           "model_path", "model_repository", "model_id", "model_revision", "tokenizer_revision", "chat_template_sha256",
           "precision", "tensor_parallel_size", "pipeline_parallel_size", "max_model_len", "max_num_seqs",
           "gpu_memory_utilization", "listen_host", "port", "api_env_file", "shm_gib",
-          "tool_call_parser", "reasoning_parser", "generation_config", "enable_prefix_caching"}, {"fp8_mode"})
+          "tool_call_parser", "reasoning_parser", "generation_config", "enable_prefix_caching"},
+          {"fp8_mode", "request_log_flag"})
     if type(config["schema_version"]) is not int or config["schema_version"] != 1:
         raise ValueError("Unsupported vLLM deployment schema")
     identifier(config["container_name"])
@@ -75,11 +77,18 @@ def validate(config):
         raise ValueError("generation_config must be explicitly auto or vllm")
     if type(config["enable_prefix_caching"]) is not bool:
         raise ValueError("Prefix caching must be explicit")
+    if config.get("request_log_flag") not in {None, "--disable-log-requests", "--no-enable-log-requests"}:
+        raise ValueError("request_log_flag must explicitly disable request logging")
     return config
 
 
 def command(config):
     validate(config)
+    # Do not assume a renamed boolean flag is accepted by historical images.
+    # Other pinned versions can declare their spelling; check-cli parses the
+    # entire generated serve command using the actual image before any run.
+    log_flag = config.get("request_log_flag") or (
+        "--no-enable-log-requests" if config["server_version"] == "0.29.0" else "--disable-log-requests")
     args = ["/usr/bin/docker", "run", "--rm", "--init", "--pull", "never", "--name", config["container_name"],
             "--label", "org.agentic-formalizer.component=model-service", "--network", "host",
             "--gpus", '"device=' + ",".join(config["gpu_devices"]) + '"',
@@ -90,7 +99,7 @@ def command(config):
             "--served-model-name", config["model_id"], "--tokenizer", "/model", "--dtype", "bfloat16",
             "--chat-template", "/model/chat_template.jinja", "--kv-cache-dtype", "auto",
             "--distributed-executor-backend", "mp", "--generation-config", config["generation_config"],
-            "--host", config["listen_host"], "--port", str(config["port"]), "--disable-log-requests"]
+            "--host", config["listen_host"], "--port", str(config["port"]), log_flag]
     for key in ("tensor_parallel_size", "pipeline_parallel_size", "max_model_len", "max_num_seqs", "gpu_memory_utilization"):
         args.extend(["--" + key.replace("_", "-"), str(config[key])])
     args.append("--enable-prefix-caching" if config["enable_prefix_caching"] else "--no-enable-prefix-caching")
@@ -101,6 +110,80 @@ def command(config):
     if config["reasoning_parser"]:
         args.extend(["--reasoning-parser", config["reasoning_parser"]])
     return args
+
+
+CLI_PROBE = '''
+import importlib.metadata, json, sys
+version = importlib.metadata.version("vllm")
+if version != sys.argv[1]:
+    raise ValueError("Installed vLLM version differs from server_version: " + version)
+# As in vLLM's CPU-only CLI utilities: constructing parser defaults can otherwise
+# fail device inference on a GPU-less probe. This process never creates an engine.
+from vllm import platforms
+if getattr(platforms.current_platform, "is_unspecified", lambda: False)():
+    from vllm.platforms.cpu import CpuPlatform
+    platforms.current_platform = CpuPlatform()
+from vllm.entrypoints.cli.serve import ServeSubcommand
+try:
+    from vllm.utils.argparse_utils import FlexibleArgumentParser
+except ImportError:
+    from vllm.utils import FlexibleArgumentParser
+parser = FlexibleArgumentParser()
+subparsers = parser.add_subparsers(dest="subcommand", required=True)
+command = ServeSubcommand()
+command.subparser_init(subparsers)
+args = parser.parse_args(json.loads(sys.argv[2]))
+if not (getattr(args, "disable_log_requests", False) or
+        getattr(args, "enable_log_requests", None) is False):
+    raise ValueError("Request logging was not disabled")
+# Never invoke cmd/validate/create_engine_config: no engine, weights or listener.
+print("BENCHMARK_CLI_PROBE=" + json.dumps({"status": "pass", "server_version": version}))
+'''
+
+
+def check_cli(config):
+    """Parse in the pinned image, without GPUs, secrets, weights or network.
+
+    This verifies CLI syntax, NOT CUDA/engine startup or inference. Resources
+    have unique ownership; a timed-out client cannot leave its container behind.
+    """
+    argv = command(config)
+    serve_args = argv[argv.index(config["image"]) + 1:]
+    name = "bench-vllm-cli-" + uuid.uuid4().hex
+    label = "org.agentic-formalizer.component=vllm-cli-probe"
+    args = ["/usr/bin/docker", "run", "--rm", "--init", "--pull", "never", "--name", name,
+            "--label", label, "--network", "none", "--cpus", "1", "--memory", "2g", "--pids-limit", "256",
+            "--env", "NVIDIA_VISIBLE_DEVICES=void",
+            "--env", "HF_HUB_OFFLINE=1", "--env", "TRANSFORMERS_OFFLINE=1", "--env", "VLLM_NO_USAGE_STATS=1",
+            "--entrypoint", "python3", config["image"], "-c", CLI_PROBE, config["server_version"], json.dumps(serve_args)]
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        if result.returncode:
+            raise ValueError("Pinned vLLM CLI parsing failed (no engine started): " + result.stderr[-8000:])
+        lines = [s.removeprefix("BENCHMARK_CLI_PROBE=") for s in result.stdout.splitlines()
+                 if s.startswith("BENCHMARK_CLI_PROBE=")]
+        if len(lines) != 1:
+            raise ValueError("Pinned vLLM parser returned no unique acceptance record")
+        row = json.loads(lines[0])
+        if row != {"status": "pass", "server_version": config["server_version"]}:
+            raise ValueError("Pinned vLLM CLI evidence mismatch")
+        return row | {"scope": "actual serve parser only; engine startup not verified",
+                      "serve_argv": serve_args, "image": config["image"]}
+    finally:
+        remaining = subprocess.run(["/usr/bin/docker", "container", "inspect", name],
+                                   capture_output=True, text=True, timeout=15)
+        if remaining.returncode == 0:
+            objects = json.loads(remaining.stdout)
+            if (len(objects) != 1 or objects[0].get("Name") != "/" + name or
+                    objects[0].get("Config", {}).get("Labels", {}).get(label.split("=")[0]) != "vllm-cli-probe"):
+                raise ValueError("Unexpected CLI probe ownership; refuse cleanup")
+            container_id = objects[0]["Id"]
+            if not re.fullmatch(r"[0-9a-f]{64}", container_id):
+                raise ValueError("Invalid CLI probe container ID")
+            subprocess.run(["/usr/bin/docker", "rm", "-f", container_id],
+                           check=True, capture_output=True, text=True, timeout=30)
+        elif "No such" not in remaining.stderr:
+            raise ValueError("Cannot verify CLI probe cleanup; inspect Docker before retrying")
 
 
 def inspect(config):
@@ -170,7 +253,7 @@ def service_config(config):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("plan", "service", "inspect", "run"))
+    parser.add_argument("action", choices=("plan", "service", "inspect", "check-cli", "run"))
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--evidence", type=Path, help="Create-only deployment evidence, required for run")
     parser.add_argument("--evidence-dir", type=Path, help="Write unique per-start evidence for supervised restarts")
@@ -183,7 +266,14 @@ def main():
     if args.action == "plan":
         print(json.dumps({"deployment_sha256": digest(config), "argv": argv}, indent=2))
         return
+    if args.action == "check-cli":
+        evidence = check_cli(config)
+        if args.evidence is not None:
+            private_json(args.evidence, evidence, replace=False)
+        print(json.dumps(evidence, indent=2))
+        return
     evidence = inspect(config)
+    evidence["cli_compatibility"] = check_cli(config)
     if args.evidence is not None and args.evidence_dir is not None:
         parser.error("Choose --evidence or --evidence-dir")
     if args.action == "run" and args.evidence is None and args.evidence_dir is None:

@@ -84,8 +84,10 @@ does not isolate installed runtimes. For the existing frozen campaign:
 3. Use fresh test directories (the tests use `TemporaryDirectory`) or new
    output subdirectories. Do not use an existing campaign directory for a node
    state root, download mirror or release archive.
-4. Mock tests below make no Docker, real model, public solver or running local
-   solver calls. Heavy builds/GPU/container canaries wait for the remote node.
+4. The default regression suite makes no real model/public solver/running local
+   solver calls. Real GCC and systemd parser checks use temporary files. Native
+   Docker smoke tests require a separate explicit opt-in; never run them against
+   existing case identities. GPU/real-model canaries wait for explicit approval.
 5. On campaign disconnect/resume, retain the native shared network guard. It
    cleans only ownership-verified, safely collectible resources. Never prune
    globally, delete live resources, delete the shared registry, or remove the
@@ -246,10 +248,36 @@ This runs **the staged code with the staged/selected Python**, verifies frozen
 files and dependencies, checks selected `remote-text-v1` harness closures and
 the actual agent image, checks the matching ZeroClaw checkpoint overlay when
 selected, probes each selected supervised service, and checks that the expected
-VAL executable exists. It writes a new `checks/<time>.json` on every invocation.
+VAL executable exists. It also runs the host's **real `systemd-analyze verify`**
+against the generated unit, and calls the actual `deadline_integration.prepare`
+for each selected native harness in a fresh temporary build/state directory.
+This recompiles `timeout_deadline.c` with the production GCC flags even if old
+`.so` caches exist, validates/builds the native overlays, starts/closes the
+preparation brokers, and retains their source/binary hashes in the check report.
+Installed harnesses/ZeroClaw overlays are read, not rebuilt or overwritten.
+The isolated preparation uses a dummy OpenAI-compatible route and no real key;
+it does not attest a future job's model route or change an experiment's profile.
+It writes a new `checks/<time>.json` on every invocation.
 Runtime diagnostics are separate from service errors. Nonzero exit means the
 candidate must not be activated. The bounded Docker capability probes are not
 agent executions; no inference request or planning solve is made.
+
+Read the individual `stages`, not just the top-level `status`:
+
+| Stage | What `check` establishes |
+| --- | --- |
+| `deployment_preflight` | Aggregate of the selected prerequisites, not production readiness |
+| `unit_parsing` | Real host parser accepts the **candidate** unit; no installation or start |
+| `native_timing_preparation` | Fresh C build and actual native preparation for the selected harnesses |
+| `service_activation` | `not_verified`; operator-managed activation is separate |
+| `native_startup_acceptance` | `not_verified`; run the opt-in zero-model smoke below |
+| `real_model_canary` | `not_verified`; submit a new experiment release separately |
+
+Missing verification tools (`gcc` or `systemd-analyze`) report `not_verified`,
+never `pass`; this also makes required preflight/check exit nonzero. Selecting
+only API/minimum leaves native timing `not_verified` without making their host
+import preflight fail. A compile error is `fail` with local build diagnostics.
+Neither imports nor timing preparation imply that a full native agent ran.
 
 If a harness/image/overlay fails, use the existing pinned installer/builders in
 an explicitly provisioned **new** runtime location, then create a new candidate
@@ -266,9 +294,85 @@ real-model/solver/VAL canary with fresh job IDs before a formal sweep.
 candidate `worker.service` as the **existing** control-service unit and start
 that unit; never start a second worker against the same queue/port. The generated
 unit uses the invoking account, pinned source/Python/config paths, loopback port
-8876 and `KillMode=process`. Adjust/review site-specific supervision before
+8876 and `KillMode=process`. `WorkingDirectory` is an **unquoted path directive**;
+`Environment`/`ExecStart` use quoted words, with literal `%` escaped as `%%`.
+Absolute paths with internal spaces and Unicode are supported. Control characters
+(including DEL), double quotes, backslashes and leading/trailing whitespace are
+rejected. `ExecStart=:` still disables environment expansion. This is not a
+generic JSON-to-systemd quoting mechanism.
+
+Preserve the existing unit name and its `.service.d/` directory: site-specific
+`RequiresMountsFor`, volume UUID/`ExecStartPre` checks, private-ingress/listener
+overrides and resource supervision are **not** disposable generated defaults.
+Review the composed unit with `systemctl cat EXISTING.service`, verify the
+installed candidate plus retained drop-ins using
+`systemd-analyze verify --man=no --generators=no /etc/systemd/system/EXISTING.service`,
+and then explicitly `daemon-reload`/start that same service. The candidate-only
+parser check does not attest site drop-ins. Adjust/review site-specific supervision before
 installation. The script never invokes `sudo`, installs a unit, or starts,
 stops or restarts a service. Check the control endpoint and perform the canary.
+
+### Deployment regression and Hyperstack re-acceptance
+
+Run the following from the candidate checkout using its compatible existing
+Python 3.12 environment (no dependency sync). They use temporary files/queues and
+local test sockets, and do **not** install/start a systemd service or call models:
+
+```bash
+PYTHONPATH=source:tests .venv/bin/python -B -m unittest \
+  test_remote_deploy test_runtime_text_lock test_remote_execution \
+  test_remote_api test_remote_checkpoints test_remote_vllm test_logical_deadlines
+```
+
+`SystemdUnitTests` invokes the real parser on ordinary and space/Unicode/percent
+paths, and requires rejection of the old quoted `WorkingDirectory`. The native
+C tests compile from scratch with the original strict flags and additionally
+with `_FORTIFY_SOURCE=2`; the latter **also compiles a temporary copy with the
+old faulty statement and requires an `unused-result` failure**. They exercise
+failure notification, missing connections, EOF and nonresponsive peers: one
+best-effort notice, bounded wait, and exit 125. The production helper retains
+its original socket limits, native timer semantics and `-Werror`.
+
+After `plan/apply/check`, separately opt in to actual native startup, using the
+**prepared workspace's source and selected Python**, and this checkout's tests.
+Replace these illustrative absolute paths with the paths returned by `apply`:
+
+```bash
+PYTHONPATH=/absolute/prepared/workspace/source:/absolute/candidate-checkout/tests \
+RUN_NATIVE_STARTUP_SMOKE=1 \
+/absolute/selected-venv/bin/python -B -m unittest \
+  test_logical_deadlines_docker.NativeStartupSmokeTests
+```
+
+This sequentially exercises all five harnesses' `AgentWorkspace.start()`, actual
+native CLI/import entry points, GNU timeout/exit, and owned Docker cleanup, with
+fresh isolated timing builds. Any accidental model request is routed to a local
+fake server and fails the zero-request assertion. It is **not** a full task or
+real-model canary. No existing case/container/network is targeted. Docker/native
+runtimes are required; without the opt-in the tests are explicitly skipped,
+which is not acceptance. Retain the test log outside historical results.
+
+For this compatibility fix, the Hyperstack acceptance sequence is:
+
+1. Obtain the new code in a separate checkout; do not edit an active deployment.
+   Run the default tests on its GCC 13.3/systemd 255 host. Contabo's GCC 12.2 /
+   systemd 252 result cannot substitute for this cross-environment check.
+2. Follow `plan → idle node → apply → check` above, then the native smoke command.
+   Required preflight, all five timing checks and smoke results must pass.
+3. Verify the pinned vLLM CLI using `check-cli` below, retaining the existing
+   image/model/dtype/budgets. A parser pass is not GPU engine acceptance.
+4. Explicitly activate the candidate **same** worker service while retaining
+   site drop-ins, mount checks and private ingress. Check its health.
+5. On Contabo, package/upload a **new experiment release containing the C fix**,
+   keeping the reviewed model/profile/operational settings and new job IDs.
+   Follow [controller workflow](#controller-workflow) to submit a small native
+   canary (then collect its traces, PDDL, solver and VAL evidence). Review before
+   any formal sweep. An old minimum 600-second timeout remains a separate issue.
+
+The worker deployment release and experiment release are different objects.
+Updating the worker alone does **not** replace `timeout_deadline.c` in an old
+job's frozen release. Never patch that old release or rewrite its identity;
+new source naturally gets a new release and derived timing bundle identity.
 
 ### Old jobs, rollback and retention
 
@@ -559,12 +663,33 @@ Commands below are **on the GPU node**:
 
 ```bash
 PYTHONPATH=source uv run --no-sync --offline python -B -m remote_execution.vllm plan --config /srv/formalizer-node/vllm.json
+PYTHONPATH=source uv run --no-sync --offline python -B -m remote_execution.vllm check-cli --config /srv/formalizer-node/vllm.json
 PYTHONPATH=source uv run --no-sync --offline python -B -m remote_execution.vllm inspect --config /srv/formalizer-node/vllm.json
 PYTHONPATH=source uv run --no-sync --offline python -B -m remote_execution.vllm service --config /srv/formalizer-node/vllm.json
 ```
 
-`plan` is pure configuration validation and prints secret-free argv. `inspect`
-performs read-only local hardware/image/model-config checks. `service` emits the
+`plan` is pure configuration validation and prints secret-free argv. `check-cli`
+uses a bounded, uniquely owned container from the pinned image to run its actual
+`ServeSubcommand` parser on the **entire generated serve argv**, and verifies the
+installed vLLM version. It has no GPU access, model mount, secrets or network;
+it never dispatches the engine. It cleans only its own container, including on
+failure/timeout. Its parser compatibility is required by CLI `inspect` and before
+`run`; unavailable/failed checks prevent startup, not a silent flag fallback.
+The GPU-less parser process selects vLLM's CPU platform for constructing parser
+defaults when no platform is detected; this never changes the GPU server argv.
+CPU-only parser/import checks may themselves reveal image incompatibilities;
+they do not attest CUDA kernels, model loading or inference.
+
+For `server_version: "0.29.0"`, command generation disables request logging with
+`--no-enable-log-requests`, matching the
+[v0.29.0 CLI](https://docs.vllm.ai/en/v0.29.0/cli/serve/#--enable-log-requests).
+Other versions keep the legacy `--disable-log-requests` default. Where needed,
+explicitly set optional `request_log_flag` to either spelling in the deployment
+JSON; both mean logging disabled. The pinned image's real parser must accept it.
+This selects spelling only, never upgrades the image or changes inference.
+
+`inspect` also performs read-only local hardware/image/model-config checks.
+`service` emits the
 `node.json` `services.model` entry from this same config, including precision,
 parallelism, model identity and deployment hash; avoid separately hand-maintained
 copies. Install/adapt [benchmark-vllm.service](deploy/benchmark-vllm.service),

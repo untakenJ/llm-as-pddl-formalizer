@@ -1,6 +1,7 @@
 """GPU-independent deployment validation; no Docker/model/GPU is invoked."""
 
 import subprocess
+import json
 import unittest
 from unittest.mock import patch
 
@@ -47,6 +48,65 @@ class DeploymentTests(TemporaryCase):
         argv = vllm.command(config | {"precision": "fp8", "fp8_mode": "checkpoint"})
         self.assertEqual(argv[argv.index("--quantization") + 1], "fp8")
         self.assertEqual(argv[argv.index("--kv-cache-dtype") + 1], "auto")
+
+    def test_request_logging_spelling_is_version_scoped(self):
+        config = self.fixture()
+        old = vllm.command(config | {"server_version": "0.6.0"})
+        new = vllm.command(config | {"server_version": "0.29.0"})
+        self.assertIn("--disable-log-requests", old)
+        self.assertNotIn("--no-enable-log-requests", old)
+        self.assertIn("--no-enable-log-requests", new)
+        self.assertNotIn("--disable-log-requests", new)
+        self.assertIn("--no-enable-log-requests", vllm.command(config | {"request_log_flag": "--no-enable-log-requests"}))
+        with self.assertRaises(ValueError):
+            vllm.command(config | {"request_log_flag": "--enable-log-requests"})
+
+    def test_real_image_parser_command_has_no_model_gpu_network_or_secret_access(self):
+        config = self.fixture() | {"server_version": "0.29.0"}
+        def output(argv, **kwargs):
+            if "inspect" in argv:
+                return subprocess.CompletedProcess(argv, 1, "", "Error: No such container")
+            return subprocess.CompletedProcess(argv, 0, "logs\nBENCHMARK_CLI_PROBE=" + json.dumps(
+                {"status": "pass", "server_version": "0.29.0"}), "")
+        with patch.object(vllm.subprocess, "run", side_effect=output) as run:
+            result = vllm.check_cli(config)
+        args = run.call_args_list[0].args[0]
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(args[args.index("--network") + 1], "none")
+        for option in ("--gpus", "--env-file", "--mount"):
+            self.assertNotIn(option, args)
+        self.assertIn("--no-enable-log-requests", result["serve_argv"])
+        self.assertIn("parser.parse_args", vllm.CLI_PROBE)
+        self.assertNotIn("command.cmd(", vllm.CLI_PROBE)
+
+    def test_cli_parse_failure_and_timeout_never_pass_and_cleanup_owned_container(self):
+        config = self.fixture()
+        for timed_out in (False, True):
+            with self.subTest(timed_out=timed_out):
+                container = {}
+                def output(argv, **kwargs):
+                    if "run" in argv:
+                        container.update({"Id": "f" * 64, "Name": "/" + argv[argv.index("--name") + 1],
+                            "Config": {"Labels": {"org.agentic-formalizer.component": "vllm-cli-probe"}}})
+                        if timed_out:
+                            raise subprocess.TimeoutExpired(argv, 120)
+                        return subprocess.CompletedProcess(argv, 2, "", "unrecognized arguments")
+                    if "inspect" in argv:
+                        return subprocess.CompletedProcess(argv, 0, json.dumps([container]), "")
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+                with patch.object(vllm.subprocess, "run", side_effect=output) as run, \
+                        self.assertRaises(subprocess.TimeoutExpired if timed_out else ValueError):
+                    vllm.check_cli(config)
+                self.assertEqual(run.call_args.args[0], ["/usr/bin/docker", "rm", "-f", "f" * 64])
+
+    def test_cli_cleanup_refuses_foreign_container(self):
+        config = self.fixture()
+        with patch.object(vllm.subprocess, "run", side_effect=[
+                subprocess.CompletedProcess([], 1, "", "failed"),
+                subprocess.CompletedProcess([], 0, '[{"Name":"/foreign"}]', "")]) as run, \
+                self.assertRaisesRegex(ValueError, "ownership"):
+            vllm.check_cli(config)
+        self.assertEqual(run.call_count, 2)
 
     def test_reject_drift_public_bind_and_ambient_overrides(self):
         config = self.fixture()
