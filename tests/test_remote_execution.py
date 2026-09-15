@@ -116,6 +116,26 @@ class BundleTests(TemporaryCase):
         release = bundle.install(archive, self.root / "releases", info["release_id"])
         self.assertEqual(list(bundle.verify(release)["files"]), ["source/hello.txt"])
 
+    def test_local_campaign_inputs_require_explicit_include_and_roundtrip(self):
+        inputs = ".local/campaign-inputs/study"
+        registry = inputs + "/credentials.json"
+        private_json(self.workspace / registry, {"schema_version": 1})
+        private_json(self.workspace / inputs / "operational.json",
+                     {"credential": {"registry_file": registry}})
+        archive, info = self.install_release()
+        release = bundle.install(archive, self.root / "releases", info["release_id"])
+        self.assertNotIn(registry, bundle.verify(release)["files"])
+
+        archive = self.root / "with-inputs.tar.gz"
+        info = bundle.build(self.workspace, ["source", inputs], archive)
+        release = bundle.install(archive, self.root / "releases", info["release_id"])
+        workspace = release / "workspace"
+        self.assertEqual(set(bundle.verify(release)["files"]),
+                         {"source/hello.txt", registry, inputs + "/operational.json"})
+        operational = read_json(workspace / inputs / "operational.json")
+        self.assertEqual(read_json(safe_path(workspace, operational["credential"]["registry_file"])),
+                         {"schema_version": 1})
+
     def test_symlink_input_refused(self):
         (self.workspace / "source" / "secret").symlink_to(self.token)
         with self.assertRaises(ValueError):
@@ -403,6 +423,8 @@ class BenchmarkBridgeTests(TemporaryCase):
         baseline_name = "source/agent_formalizer/configs/benchmark_profiles/native_baseline_v1.json"
         baseline = read_json(ROOT / baseline_name)
         private_json(self.workspace / baseline_name, baseline)
+        from remote_execution.benchmark import RUNTIME_LOCK_RELATIVE
+        private_json(self.workspace / RUNTIME_LOCK_RELATIVE, read_json(ROOT / RUNTIME_LOCK_RELATIVE))
         private_json(self.workspace / "profile.json", baseline)
         private_json(self.workspace / "credentials.json", read_json(ROOT / "source/agent_formalizer/configs/credential_profiles.json"))
         op = read_json(ROOT / "source/agent_formalizer/configs/operational_configs/standard.json")
@@ -433,6 +455,9 @@ class BenchmarkBridgeTests(TemporaryCase):
         self.assertEqual(raw["network_resources"], original["network_resources"])
         self.assertEqual(raw["infra_diagnostics"]["storage"]["root"], str(directory / "output/infra-diagnostics"))
         self.assertEqual(read_json(directory / "evidence/configuration-1.json")["profile_differences"], [])
+        validation = read_json(directory / "evidence/configuration-1.json")["runtime_validation"]
+        self.assertEqual(validation["policy"], "remote-text-v1")
+        self.assertEqual(validation["sha256"], file_hash(self.workspace / validation["path"]))
 
     def test_identity_mismatch_before_launch(self):
         spec, directory, _, _ = self.fixture()
@@ -463,6 +488,8 @@ class BenchmarkBridgeTests(TemporaryCase):
         self.assertIsNone(kwargs["solver_backend"])
         self.assertIsNone(kwargs["timeout"])
         self.assertEqual(kwargs["formalizer_workers"], 1)
+        from remote_execution.benchmark import RUNTIME_LOCK_RELATIVE
+        self.assertEqual(kwargs["runtime_lock_path"], str(self.workspace / RUNTIME_LOCK_RELATIVE))
 
     def test_local_solver_cannot_be_silently_skipped(self):
         spec, directory, _, _ = self.fixture()

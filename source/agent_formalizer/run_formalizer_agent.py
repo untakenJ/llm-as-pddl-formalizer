@@ -63,6 +63,8 @@ from agent_formalizer.configuration.credentials import (
     load_credential_registry,
 )
 from agent_formalizer.orchestrator import run_batch
+from agent_formalizer.runtime.runtime_lock import load_runtime_lock
+from agent_formalizer.configuration.benchmark_profile import canonical_sha256
 from agent_formalizer.configuration.operational_config import (
     load_operational_config,
     safe_operational_component,
@@ -94,6 +96,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--benchmark-config", default=None,
                    help="JSON benchmark profile (default: bundled "
                         "configs/benchmark_profiles/native_baseline_v1.json)")
+    p.add_argument("--runtime-lock", default=None,
+                   help="explicit frozen runtime lock; omitted retains byte-strict local validation")
     p.add_argument(
         "--operational-config",
         default=None,
@@ -128,7 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="base output directory; defaults to {ROOT_DIR}/output")
     p.add_argument("--image", default=None,
                    help="Docker base image to run the agent in "
-                        "(must resolve to the image ID in runtime/runtime_lock.json)")
+                        "(must pass the selected runtime lock; local default requires exact image ID)")
     p.add_argument("--timeout", type=int, default=None,
                    help="agent timeout in seconds (default: benchmark profile)")
     p.add_argument("--max-action-steps", type=int, default=None,
@@ -384,6 +388,14 @@ def main() -> None:
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "status": "running",
     }
+    if args.runtime_lock is not None:
+        selected_lock = load_runtime_lock(args.runtime_lock)
+        operational_manifest["runtime_validation"] = {
+            "path": str(Path(args.runtime_lock).resolve()),
+            "lock_id": selected_lock["lock_id"],
+            "policy": selected_lock.get("policy", "byte-strict-v1"),
+            "lock_sha256": canonical_sha256(selected_lock),
+        }
     _atomic_json(manifest_path, operational_manifest)
     try:
         results = run_batch(
@@ -398,6 +410,7 @@ def main() -> None:
             workers=operational.raw["scheduling"]["formalizer_workers"],
             operational_config=operational,
             operational_run_id=operational_run_id,
+            **({"runtime_lock_path": args.runtime_lock} if args.runtime_lock is not None else {}),
         )
     except BaseException as exc:
         operational_manifest.update(

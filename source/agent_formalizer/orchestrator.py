@@ -32,7 +32,9 @@ from agent_formalizer.results.provenance import (
     sha256_text,
 )
 from agent_formalizer.result_types import AgentResult, FormalizerResult
-from agent_formalizer.runtime.runtime_lock import RuntimeLockMismatch, validate_runtime_lock
+from agent_formalizer.runtime.runtime_lock import (
+    RuntimeLockMismatch, execution_runtime_identity, validate_runtime_lock,
+)
 from agent_formalizer.util import Tracer, format_problem_name, now_iso, run_parallel
 from agent_formalizer.workspace import AgentWorkspace
 from agent_formalizer.docker.network_resources import NetworkResources, options_from
@@ -1484,23 +1486,20 @@ def run_one_problem(
     attempt_index: int = 1,
     operational_config=None,
     operational_run_id: str | None = None,
+    runtime_lock_path: Path | str | None = None,
 ) -> FormalizerResult:
     """Run one fixed attempt (compatibility entry point used by tests/tools)."""
     adapter.validate_runtime()
     _, frozen_image = _freeze_execution_reference(adapter, image)
     try:
         runtime_lock = validate_runtime_lock(
-            adapter, container_image_id=frozen_image
+            adapter, container_image_id=frozen_image,
+            **({"lock_path": runtime_lock_path} if runtime_lock_path is not None else {}),
         )
     except RuntimeLockMismatch as exc:
         raise InfraInvalid("runtime_lock_mismatch", str(exc)) from exc
-    runtime_identity = {
-        "runtime_lock": runtime_lock,
-        "container_image_id": frozen_image,
-        "adapter_code_sha256": _adapter_code_sha256(),
-    }
-    if adapter.name == "minimum":
-        runtime_identity["execution_backend"] = "host"
+    runtime_identity = execution_runtime_identity(
+        runtime_lock, frozen_image, _adapter_code_sha256(), host_only=adapter.name == "minimum")
     runtime_identity_sha256 = canonical_sha256(runtime_identity)
     domain_description, problem_description = _read_descriptions(domain, data, problem)
     prompt = _build_canonical_prompt(
@@ -1569,23 +1568,20 @@ def run_batch(
     workers: int = 1,
     operational_config=None,
     operational_run_id: str | None = None,
+    runtime_lock_path: Path | str | None = None,
 ) -> list[FormalizerResult]:
     """Run every fixed case/attempt; outcomes never affect attempt count."""
     adapter.validate_runtime()
     _, frozen_image = _freeze_execution_reference(adapter, image)
     try:
         runtime_lock = validate_runtime_lock(
-            adapter, container_image_id=frozen_image
+            adapter, container_image_id=frozen_image,
+            **({"lock_path": runtime_lock_path} if runtime_lock_path is not None else {}),
         )
     except RuntimeLockMismatch as exc:
         raise InfraInvalid("runtime_lock_mismatch", str(exc)) from exc
-    runtime_identity = {
-        "runtime_lock": runtime_lock,
-        "container_image_id": frozen_image,
-        "adapter_code_sha256": _adapter_code_sha256(),
-    }
-    if adapter.name == "minimum":
-        runtime_identity["execution_backend"] = "host"
+    runtime_identity = execution_runtime_identity(
+        runtime_lock, frozen_image, _adapter_code_sha256(), host_only=adapter.name == "minimum")
     runtime_identity_sha256 = canonical_sha256(runtime_identity)
     root = Path(out_dir_root) if out_dir_root else OUTPUT_DIR
     base_label = _config_qualified_label(adapter, model_label)

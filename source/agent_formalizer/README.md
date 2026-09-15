@@ -152,7 +152,8 @@ of the relevant harness closures:
 - Hermes 0.18.2 and its 60-distribution closure;
 - NanoBot 0.2.2 and its 115-distribution closure;
 - GenericAgent commit `e6bbc916…` and its Python closure;
-- ZeroClaw 0.8.2, commit `42fa1971…`, and `Cargo.lock`;
+- ZeroClaw 0.8.2, pinned unreleased PR #8935 commit `85e0cfaf…`
+  (Gemini thought-signature preservation), and `Cargo.lock`;
 - OpenClaw `2026.6.10 (aa69b12)`, its installed Node distribution manifest,
   runtime payload, and 83 bundled skill assets.
 - Minimum Formalizer Agent's benchmark-owned, standard-library Python host
@@ -166,6 +167,14 @@ OpenClaw remains host-installed at the repository-defined paths, but its
 personal state/config is never used. A mismatch is an infra invalidator, not an
 agent failure. The image ID is resolved once per command so every case in that
 command uses the same image even if a tag later changes.
+
+The preceding byte-strict policy remains the **local default**. New execution-node
+releases explicitly select `runtime/runtime_lock_text_v1.json` for the
+user-approved remote per-problem-container comparability contract: fixed harness
+versions/source, dependencies and runtime text plus container capability checks,
+with machine-specific binary/image hashes retained as audit evidence. See
+[remote text validation](../remote_execution/README.md#remote-agent-runtime-comparability-remote-text-v1).
+This does not change the canonical benchmark profile or migrate any frozen run.
 
 ## Credentials and host environment
 

@@ -17,6 +17,8 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 from remote_execution.protocol import digest, file_hash, private_json, read_json, safe_path, validate_job
 
+RUNTIME_LOCK_RELATIVE = "source/agent_formalizer/runtime/runtime_lock_text_v1.json"
+
 
 def differences(before, after, path=""):
     if isinstance(before, dict) and isinstance(after, dict):
@@ -106,10 +108,16 @@ def prepare(spec, node, workspace: Path, directory: Path, generation: int):
     provenance = {"operational_source_sha256": file_hash(op_path),
                   "operational_materialization": differences(op.raw, raw)}
     if profile is not None:
+        runtime_lock_path = safe_path(workspace, RUNTIME_LOCK_RELATIVE)
+        runtime_lock = read_json(runtime_lock_path)
         provenance.update({"baseline_path": str(baseline.relative_to(workspace)),
                            "baseline_sha256": file_hash(baseline), "profile_sha256": file_hash(profile_path),
                            "resolved_config_sha256": resolved.sha256,
-                           "profile_differences": differences(read_json(baseline), profile.raw)})
+                           "profile_differences": differences(read_json(baseline), profile.raw),
+                           "runtime_validation": {"path": RUNTIME_LOCK_RELATIVE,
+                                                  "sha256": file_hash(runtime_lock_path),
+                                                  "lock_id": runtime_lock["lock_id"],
+                                                  "policy": runtime_lock["policy"]}})
     else:
         provenance.update({"api_condition": "direct-api-no-tools-v1", "request_sha256": digest(spec),
                            "generation_attempts": 1, "hosted_tools": False,
@@ -176,6 +184,7 @@ def run(spec, node, workspace, directory, generation):
         formalizer_workers=scheduling["formalizer_workers"], solver_workers=scheduling["solver_workers"],
         val_workers=scheduling["val_workers"], benchmark_config=str(workspace / p["benchmark_profile"]),
         operational_config=str(materialized), operational_run_id=f"{spec['job_id']}-g{generation}",
+        runtime_lock_path=str(safe_path(workspace, RUNTIME_LOCK_RELATIVE)),
         timeout=None, max_action_steps=None, max_model_calls=None, network_mode=None,
         attempts_per_case=None, max_execution_tries=None, allow_final_message_recovery=None,
         solver_backend=None, solver_base_url=None, solver_container_base_url=None,

@@ -1,0 +1,79 @@
+{
+  "schema_version": 2,
+  "policy": "remote-text-v1",
+  "lock_id": "agent-harness-runtime-2026-09-15-remote-text-v1",
+  "container": {
+    "dockerfile_sha256": "1f598bc5bc9600858368615463a3f02fc5d46ff380cc1acf0b59457ff88e41bc",
+    "runtime_capabilities": {
+      "os": "linux",
+      "python_runtime": "cpython-3.12",
+      "commands": [
+        "awk",
+        "bash",
+        "curl",
+        "find",
+        "git",
+        "grep",
+        "head",
+        "python3",
+        "sed",
+        "sh",
+        "tail",
+        "timeout"
+      ]
+    }
+  },
+  "harnesses": {
+    "hermes": {
+      "distribution": "hermes-agent",
+      "harness_text_manifest_sha256": "e01d99f973fa81833b7f49dbd17a87d069debfa3e66385617267effcb33de647",
+      "native_assets_manifest_sha256": "1ed9d73050095ad7bf26bc6fcebfa06b6cbf3320327166a0e53b0d4841593b0d",
+      "python_distribution_manifest_sha256": "e1111a01def4cb386b45c6065fe3b2ae19083a3e4b911e9b81d63ada0e53edc3",
+      "python_runtime": "cpython-3.12",
+      "version": "0.18.2"
+    },
+    "nanobot": {
+      "distribution": "nanobot-ai",
+      "harness_text_manifest_sha256": "2116cd1514ecbc607e577b59b4eb8e86b67419c009b84a1f9d50cb19a8775ba4",
+      "native_assets_manifest_sha256": "067ef30db4de95948ef8ee16e0b6ebbdb2bcbbd418b600c0c5025064edfa3df4",
+      "python_distribution_manifest_sha256": "4fe2ecabc2d493a7b763f8a7adcc461894668ff862887b8506d50d52e8918530",
+      "python_runtime": "cpython-3.12",
+      "version": "0.2.2"
+    },
+    "generic": {
+      "native_assets_manifest_sha256": "520342ca6bc56d524e2e0fbbd62ac27f68c5b470ad1309bb05b0b79c66972c46",
+      "python_distribution_manifest_sha256": "66d0a32c82063afc09f3c9648a3d0bc5b8c20b19db2d11e27a192fea081425f1",
+      "python_runtime": "cpython-3.12",
+      "source_commit": "e6bbc91631b42026a2bc1e91cb51537d1151aa14",
+      "source_worktree_clean": true
+    },
+    "openclaw": {
+      "native_assets_manifest_sha256": "edb1b8f86e9e4a8c6c9163a8767d085d1e9037fcea02569ed567b0331850204c",
+      "node_distribution_manifest_sha256": "c4724c9d9ea227521df11574d6a23931d982fe827f69edfcda4960381fb0992f",
+      "node_runtime": "node-22",
+      "runtime_text_manifest_sha256": "99fbe0b1f11f2cdb3c16ff68b779af081751373c280c9a2965bf579e33e9684f",
+      "version": "OpenClaw 2026.6.10 (aa69b12)"
+    },
+    "zeroclaw": {
+      "cargo_lock_sha256": "11060e8c445e1ef8f64a37546fd987c34bcc4af06b88cffcba9a9dc591df916a",
+      "native_assets_manifest_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "source_commit": "85e0cfafbe677590e4fe5947f83673bb49ba0fc2",
+      "source_worktree_clean": true,
+      "version": "zeroclaw 0.8.2"
+    },
+    "minimum": {
+      "native_assets_manifest_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "runtime_entrypoint_sha256": "7fa4c49e4b319ef7a17df0ba31eba37cea7eff99dda0ba88ae43ff0df20e297d",
+      "runtime_kind": "benchmark-owned-python-stdlib"
+    }
+  },
+  "provider_transports": {
+    "logits": {
+      "bridge_entrypoint_sha256": "37e6b8348c94a0745f3fb7a1971928af679356dda8fc975daa1c358c77774580",
+      "gateway_entrypoint_sha256": "2ee1cc2665ad848a75a62a941340391922f3e3fe95b8e43dd0a62611bb6518e3",
+      "model_assets_manifest_sha256": "163ee3a6e001a588a9e29aff4fce04d42de20055d5ad6d45038f4cc57a3b16ad",
+      "python_distribution_manifest_sha256": "3d211ded6aa5371f801e25c35aa7b1892aa2bb3da3307b874ad88f9e123ec954",
+      "python_runtime": "cpython-3.12"
+    }
+  }
+}

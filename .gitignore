@@ -4,6 +4,7 @@ output/
 __pycache__/
 *.pyc
 .cache/
+.local/campaign-inputs/
 .vscode/
 .cursor/
 tmp/
