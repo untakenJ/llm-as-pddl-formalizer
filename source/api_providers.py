@@ -823,8 +823,38 @@ def _prompt_from_input_items(input_items: list) -> str:
     return "\n\n".join(parts)
 
 
+def model_capability_route(model):
+    """Canonical registry key without importing remote execution orchestration."""
+    if "/" in model:
+        return model
+    provider = "google-vertex" if is_gemini_model(model) else "deepseek" if is_deepseek_model(model) else "openai"
+    return provider + "/" + model
+
+
+def _apply_output_budget(request, policy, path, *, client=None, tracer=None):
+    if policy is None:
+        return request
+    from agent_formalizer.configuration.model_capabilities import apply_output_policy, vllm_count_tokens, OutputBudgetInputError
+    count = context = None
+    try:
+        if policy["context_handling"] == "vllm_tokenize":
+            count, context = call_with_transient_retry(
+                lambda: vllm_count_tokens(str(client.base_url), request,
+                    headers={"Authorization": f"Bearer {client.api_key}"}),
+                tracer=tracer, provider="self-hosted",
+            )
+        result, audit = apply_output_policy(request, policy, path, input_tokens=count, deployment_context=context)
+    except OutputBudgetInputError as exc:
+        if tracer:
+            tracer.emit("output_budget_input_error", status=exc.status, response=exc.payload)
+        raise
+    if tracer:
+        tracer.emit("output_token_budget", **audit)
+    return result
+
+
 def _respond_openai(client, model, input_items, text_format, tools=None, tool_executors=None,
-                    tool_choice="auto", max_tool_rounds=8, tracer=None) -> str:
+                    tool_choice="auto", max_tool_rounds=8, tracer=None, output_token_policy=None) -> str:
     def _create(input_payload, round_idx, previous_response_id=None):
         kwargs = {
             "model": model,
@@ -838,6 +868,8 @@ def _respond_openai(client, model, input_items, text_format, tools=None, tool_ex
             kwargs["previous_response_id"] = previous_response_id
         if is_reasoning_model(model):
             kwargs["reasoning"] = {"summary": "auto"}
+
+        kwargs = _apply_output_budget(kwargs, output_token_policy, "/v1/responses", client=client, tracer=tracer)
 
         if tracer:
             tracer.emit("request", round=round_idx, provider="openai", kwargs=kwargs)
@@ -983,6 +1015,7 @@ def generate_gemini_json(
     schema: dict,
     *,
     tracer=None,
+    output_token_policy=None,
 ) -> str:
     """Generate JSON matching ``schema`` via Gemini Enterprise."""
     from google.genai import types
@@ -991,6 +1024,10 @@ def generate_gemini_json(
         response_mime_type="application/json",
         response_json_schema=schema,
     )
+    if output_token_policy is not None:
+        bounded = _apply_output_budget({"contents": prompt}, output_token_policy,
+            "/models/selected:generateContent", client=client, tracer=tracer)
+        config.max_output_tokens = bounded["generationConfig"]["maxOutputTokens"]
     request_log = {
         "model": model,
         "provider": GEMINI_PROVIDER,
@@ -1052,10 +1089,10 @@ def generate_gemini_json(
     return text
 
 
-def _respond_gemini(client, model, input_items, text_format, tracer=None) -> str:
+def _respond_gemini(client, model, input_items, text_format, tracer=None, output_token_policy=None) -> str:
     prompt = _prompt_from_input_items(input_items)
     return generate_gemini_json(
-        client, model, prompt, text_format["schema"], tracer=tracer
+        client, model, prompt, text_format["schema"], tracer=tracer, output_token_policy=output_token_policy
     )
 
 
@@ -1067,6 +1104,7 @@ def generate_deepseek_json(
     *,
     tracer=None,
     provider=DEEPSEEK_PROVIDER,
+    output_token_policy=None,
 ) -> str:
     """Generate JSON through DeepSeek or an explicitly selected self-hosted API.
 
@@ -1087,6 +1125,7 @@ def generate_deepseek_json(
         "messages": messages,
         "response_format": {"type": "json_object"},
     }
+    request = _apply_output_budget(request, output_token_policy, "/v1/chat/completions", client=client, tracer=tracer)
     if tracer:
         tracer.emit(
             "request",
@@ -1138,13 +1177,14 @@ def generate_deepseek_json(
     return text
 
 
-def _respond_deepseek(client, model, input_items, text_format, tracer=None) -> str:
+def _respond_deepseek(client, model, input_items, text_format, tracer=None, output_token_policy=None) -> str:
     return generate_deepseek_json(
         client,
         model,
         input_items,
         text_format["schema"],
         tracer=tracer,
+        output_token_policy=output_token_policy,
     )
 
 
@@ -1228,24 +1268,26 @@ def _respond_logits(client, model, input_items, text_format, tracer=None) -> str
 
 def respond_with_tools(provider: str, client, model, input_items, text_format,
                        tools=None, tool_executors=None, tool_choice="auto",
-                       max_tool_rounds=8, tracer=None) -> str:
+                       max_tool_rounds=8, tracer=None, output_token_policy=None) -> str:
     if provider == SELF_HOSTED_PROVIDER:
         if tools:
             raise ValueError("Self-hosted Direct API baseline does not use hosted tools")
         return generate_deepseek_json(client, model, input_items, text_format["schema"],
-                                      tracer=tracer, provider=provider)
+                                      tracer=tracer, provider=provider, output_token_policy=output_token_policy)
     if provider == GEMINI_PROVIDER or provider == "gemini":
         if tools:
             # OpenAI-hosted tools are not available on the Gemini path.
             pass
-        return _respond_gemini(client, model, input_items, text_format, tracer=tracer)
+        return _respond_gemini(client, model, input_items, text_format, tracer=tracer, output_token_policy=output_token_policy)
     if provider == DEEPSEEK_PROVIDER:
         if tools:
             raise ValueError("DeepSeek Direct API baseline does not use hosted tools")
         return _respond_deepseek(
-            client, model, input_items, text_format, tracer=tracer
+            client, model, input_items, text_format, tracer=tracer, output_token_policy=output_token_policy
         )
     if provider == LOGITS_PROVIDER:
+        if output_token_policy is not None:
+            raise ValueError("Logits output-budget translation is not supported; select native explicitly")
         if tools:
             raise ValueError("Logits Direct API baseline does not use hosted tools")
         return _respond_logits(
@@ -1256,4 +1298,5 @@ def respond_with_tools(provider: str, client, model, input_items, text_format,
         tools=tools, tool_executors=tool_executors,
         tool_choice=tool_choice, max_tool_rounds=max_tool_rounds,
         tracer=tracer,
+        output_token_policy=output_token_policy,
     )

@@ -80,6 +80,9 @@ Parser.add_argument("--workers", type=int, default=1,
                     help="parallel worker threads for independent problems (default 1 = sequential)")
 Parser.add_argument("--resume", action="store_true",
                     help="skip a problem when both generated PDDL files already exist")
+Parser.add_argument("--max-output-tokens", default=None,
+                    help="model_max, native, or positive integer; defaults to the canonical benchmark profile")
+Parser.add_argument("--model-capabilities", default=None, help="Optional model-capability registry JSON")
 
 
 PDDL_OUTPUT_SCHEMA = {
@@ -95,7 +98,7 @@ PDDL_OUTPUT_SCHEMA = {
 
 def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=None,
                        tool_executors=None, record_trace=True, out_dir_root=None,
-                       output_directory=None):
+                       output_directory=None, output_token_policy=None):
     domain_description = Path(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_domain.txt').read_text()
     problem_description = Path(f'{ROOT_DIR}/data/textual_{domain}/{data}/{problem}_problem.txt').read_text()
 
@@ -144,6 +147,7 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
                     tools=tools if provider == "openai" else [],
                     tool_executors=list(tool_executors.keys()) if tool_executors else [],
                     transient_error_policy=direct_api_transient_policy(),
+                    output_token_policy=output_token_policy,
                     text_format=text_format,
                     prompt=prompt,
                     domain_description=domain_description,
@@ -158,6 +162,7 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
             tools=tools,
             tool_executors=tool_executors,
             tracer=tracer,
+            output_token_policy=output_token_policy,
         )
 
         tracer.emit("model_output", raw_output_text=return_string)
@@ -187,6 +192,8 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
                       "outputs": {Path(path).name: hashlib.sha256(Path(path).read_bytes()).hexdigest()
                                   for path in (df_path, pf_path)},
                       "trace_sha256": hashlib.sha256(Path(trace_path).read_bytes()).hexdigest() if trace_path else None}
+        if output_token_policy is not None:
+            completion["output_token_policy"] = output_token_policy
         temporary = Path(out_dir) / 'api_completion.json.tmp'
         temporary.write_text(json.dumps(completion, indent=2) + '\n')
         temporary.replace(Path(out_dir) / 'api_completion.json')
@@ -202,9 +209,33 @@ def run_formalizer_gpt(provider, client, domain, data, problem, model, tools=Non
         tracer.close()
 
 
+def _api_cell_path(out_dir_root, domain, data, model):
+    return Path(out_dir_root or f'{ROOT_DIR}/output') / 'llm-as-formalizer-api' / domain / data / sanitize_model_name(model)
+
+
+def _freeze_api_output_policy(cell, policy):
+    """An incomplete API cell must also retain its original output condition."""
+    path = cell / 'api_output_policy.json'
+    if path.exists():
+        if json.loads(path.read_text()) != policy:
+            raise ValueError('API output-token policy changed; use a new output directory')
+        return
+    if policy is None:
+        return  # Legacy callers/outputs remain byte-compatible.
+    from agent_formalizer.configuration.model_capabilities import validate_policy
+    validate_policy(policy)
+    if cell.exists() and any(cell.iterdir()):
+        raise ValueError('Existing API cell has no frozen output policy; use a new output directory')
+    cell.mkdir(parents=True, exist_ok=True)
+    with path.open('x') as stream:
+        json.dump(policy, stream, indent=2, sort_keys=True)
+        stream.write('\n')
+
+
 def run_gpt_batch(provider, client, domain, model, data, problem_numbers, tools=None,
                   tool_executors=None, record_trace=True, out_dir_root=None, workers=1,
-                  resume=False):
+                  resume=False, output_token_policy=None):
+    _freeze_api_output_policy(_api_cell_path(out_dir_root, domain, data, model), output_token_policy)
     def _run_one(problem_number):
         problem_name = format_problem_name(problem_number)
         out_root = out_dir_root or f'{ROOT_DIR}/output'
@@ -216,13 +247,18 @@ def run_gpt_batch(provider, client, domain, model, data, problem_numbers, tools=
         completion_path = Path(problem_dir) / 'api_completion.json'
         if complete and completion_path.exists():
             saved = json.loads(completion_path.read_text())
+            if saved.get("output_token_policy") != output_token_policy:
+                raise ValueError("API output-token policy changed; use a new output directory")
             complete = saved.get('status') == 'ok' and all(
                 hashlib.sha256(Path(path).read_bytes()).hexdigest() == saved.get('outputs', {}).get(Path(path).name)
                 for path in (df_path, pf_path))
             if record_trace:
                 trace = Path(problem_dir) / f'{problem_name}_{model_label}_trace.jsonl'
                 complete = complete and trace.is_file() and hashlib.sha256(trace.read_bytes()).hexdigest() == saved.get('trace_sha256')
-        elif complete and record_trace:
+        elif complete:
+            if output_token_policy is not None:
+                raise ValueError("Legacy API results cannot resume under a new output-token policy")
+        if complete and not completion_path.exists() and record_trace:
             # Legacy complete pairs are reusable only with a finished trace.
             trace = Path(problem_dir) / f'{problem_name}_{model_label}_trace.jsonl'
             try:
@@ -245,6 +281,7 @@ def run_gpt_batch(provider, client, domain, model, data, problem_numbers, tools=
             tool_executors=tool_executors,
             record_trace=record_trace,
             out_dir_root=out_dir_root,
+            output_token_policy=output_token_policy,
         )
 
     run_parallel(problem_numbers, _run_one, workers=workers)
@@ -269,6 +306,25 @@ if __name__ == "__main__":
     WORKERS = args.workers
     RESUME = args.resume
 
+    from agent_formalizer.configuration.benchmark_profile import DEFAULT_BENCHMARK_PROFILE
+    from agent_formalizer.configuration.model_capabilities import load_registry, resolve_output_policy, validate_policy
+    selected_limit = args.max_output_tokens
+    if selected_limit is None:
+        selected_limit = DEFAULT_BENCHMARK_PROFILE.raw["condition_profile"]["overrides"].get("generation", {}).get("max_output_tokens", "native")
+    elif selected_limit.isdigit():
+        selected_limit = int(selected_limit)
+    from api_providers import model_capability_route
+    frozen_policy = _api_cell_path(OUT_DIR_ROOT, DOMAIN, DATA, MODEL) / 'api_output_policy.json'
+    if RESUME and frozen_policy.is_file() and args.model_capabilities is None:
+        output_token_policy = validate_policy(json.loads(frozen_policy.read_text()))
+        if output_token_policy['model'] != model_capability_route(MODEL):
+            raise ValueError('Frozen API policy is for a different model')
+        if args.max_output_tokens is not None and selected_limit != output_token_policy['selection']:
+            raise ValueError('Requested output budget differs from the frozen API policy')
+    else:
+        output_token_policy = resolve_output_policy(model_capability_route(MODEL), selected_limit,
+            load_registry(args.model_capabilities) if args.model_capabilities else None)
+
     provider, client = build_provider_client(MODEL)
     tools, tool_executors = default_tools_for_model(MODEL)
 
@@ -285,4 +341,5 @@ if __name__ == "__main__":
         out_dir_root=OUT_DIR_ROOT,
         workers=WORKERS,
         resume=RESUME,
+        output_token_policy=output_token_policy,
     )

@@ -483,8 +483,8 @@ class OpenClawAdapter(BaseClawAdapter):
                     "name": runtime_model,
                     "reasoning": True,
                     "input": ["text"],
-                    "contextWindow": 1048576,
-                    "maxTokens": 65536,
+                    "contextWindow": (self.output_token_policy()["context_window_tokens"] if self.output_token_policy() else 1048576),
+                    "maxTokens": (self.native_max_output_tokens() if self.output_token_policy() else 65536),
                 }
             ],
         }

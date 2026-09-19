@@ -88,7 +88,8 @@ def run_case(formalizer, provider, client, spec, workspace, output, problem):
               "generation_success": False, "identity": identity, "execution": execution.name}
     try:
         formalizer.run_formalizer_gpt(provider, client, p["domain"], p["dataset"], problem,
-            p["model"], tools=None, tool_executors=None, record_trace=True, output_directory=execution)
+            p["model"], tools=None, tool_executors=None, record_trace=True, output_directory=execution,
+            **({"output_token_policy": p["output_token_policy"]} if "output_token_policy" in p else {}))
         record["generation_success"] = True
         record["reason"] = "generated"
     except Exception as exc:
@@ -113,7 +114,8 @@ def run_case(formalizer, provider, client, spec, workspace, output, problem):
             row.get("finish_reason") in {"STOP", "MAX_TOKENS", "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"}
             or isinstance(row.get("prompt_feedback"), dict) and row["prompt_feedback"].get("block_reason") in {
                 "SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT"}) for row in events)
-        model_failure = (delivered and isinstance(exc, (ValueError, KeyError, TypeError))) or empty or gemini_outcome
+        from agent_formalizer.configuration.model_capabilities import OutputBudgetInputError
+        model_failure = (delivered and isinstance(exc, (ValueError, KeyError, TypeError))) or empty or gemini_outcome or isinstance(exc, OutputBudgetInputError)
         record.update({"attempt_valid": bool(model_failure), "error_type": type(exc).__name__,
                        "error_classification": classify_direct_api_error(exc),
                        "reason": "invalid_model_output" if model_failure else "api_or_runner_infrastructure_error"})
@@ -162,7 +164,8 @@ def run(spec, node, workspace, directory, generation):
 
     p = spec["parameters"]
     _, _, op, _ = prepare(spec, node, workspace, directory, generation)
-    required_service_preflight(p["model"], p["solver_backend"], spec, node, op, directory, generation)
+    required_service_preflight(p["model"], p["solver_backend"], spec, node, op, directory, generation,
+                               output_token_policy=p.get("output_token_policy"))
     registry = load_credential_registry(op["credential"]["registry_file"])
     credential = registry.resolve(model_route(p["model"]), env_file=op["credential"]["secrets_env_file"])
     provider, client = build_provider_client(p["model"], api_key=credential.api_key,

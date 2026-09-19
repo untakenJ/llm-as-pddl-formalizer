@@ -311,6 +311,13 @@ class BaseClawAdapter:
         from agent_formalizer.timing.deadline_integration import validate
         validate(self)
 
+    def output_token_policy(self) -> dict | None:
+        return self.resolved_config.output_token_policy if self.resolved_config else None
+
+    def native_max_output_tokens(self) -> int | None:
+        from agent_formalizer.configuration.model_capabilities import native_output_hint
+        return native_output_hint(self.output_token_policy())
+
     def container_run_args(self, instance_id: str) -> list[str]:
         """Extra arguments for ``docker run`` (bind mounts, env vars)."""
         return []

@@ -130,6 +130,9 @@ def _adapter_code_sha256() -> str:
         # provenance hash.  Adding/rotating a named profile must not alter the
         # experiment/runtime identity used for labels and resume.
         and path.name != "credential_profiles.json"
+        # Selected model semantics are frozen separately; unrelated registry
+        # rows must not invalidate an existing study's implementation identity.
+        and path.relative_to(package).as_posix() != "configs/model_capabilities.json"
         # Experimental skill payloads have selected-content semantic hashes.
         # Unselected library files must not change any run's runtime identity.
         and path.relative_to(package).parts[0] != "skills"
@@ -694,19 +697,26 @@ def _run_execution_try(
             harness_exception = f"{type(exc).__name__}: {exc}"
             agent_result = _agent_error_result(harness_exception, clock_started)
 
+        # The measured envelope ends when the native harness returns. Keep the
+        # gateway monitor alive for operational settlement, but do not let that
+        # bounded collection work consume agent time or trigger the watchdog.
+        watchdog_stop.set()
+        if watchdog_thread is not None:
+            watchdog_thread.join(timeout=10)
+        native_exit_clock_snapshot = attempt_clock.snapshot()
+        native_exit_finalization = (
+            workspace.finalize_model_gateway_after_native_exit()
+        )
         gateway_terminal = workspace.gateway_terminal_infra_error()
         gateway_monitor_error = workspace.gateway_monitor_error()
         action_step_limit_reached = (
             workspace.gateway_action_step_limit_reached()
         )
         workspace.stop_model_gateway_monitor()
-        watchdog_stop.set()
-        if watchdog_thread is not None:
-            watchdog_thread.join(timeout=10)
 
         if gateway_terminal is not None or gateway_monitor_error is not None:
             clock_finished = time.monotonic()
-            clock_snapshot = attempt_clock.snapshot()
+            clock_snapshot = native_exit_clock_snapshot
             adapter.end_attempt_clock()
             gateway_summary = workspace.model_gateway_stats()
             ledger = workspace.model_gateway_ledger()
@@ -749,6 +759,7 @@ def _run_execution_try(
                 "attempt_valid": False,
                 "infra_invalidator": reason,
                 "terminal_infra_error": gateway_terminal,
+                "native_exit_finalization": native_exit_finalization,
                 "execution_timing": clock_snapshot,
                 "model_gateway_summary": gateway_summary,
                 "actions": _action_metrics(gateway_summary, adapter, execution_dir),
@@ -773,7 +784,8 @@ def _run_execution_try(
             )
 
         if (
-            watchdog_fired.is_set() or adapter.deadline_exceeded()
+            watchdog_fired.is_set()
+            or native_exit_clock_snapshot["deadline_exceeded"]
         ) and agent_result and not agent_result.timeout:
             workspace.enforce_agent_deadline()
             agent_result.success = False
@@ -791,7 +803,7 @@ def _run_execution_try(
         # Stop the agent clock at native harness exit. Collection remains
         # operational work and cannot consume or extend the agent budget.
         clock_finished = time.monotonic()
-        clock_snapshot = attempt_clock.snapshot()
+        clock_snapshot = native_exit_clock_snapshot
         adapter.end_attempt_clock()
         harness_duration = clock_snapshot["active_duration_seconds"]
         if agent_result is not None:
@@ -908,6 +920,7 @@ def _run_execution_try(
             },
             "validations": validations,
             "model_gateway_summary": gateway_summary,
+            "native_exit_finalization": native_exit_finalization,
             "actions": actions,
             "frozen_workspace_artifacts": frozen_records,
             "model_call_ledger": {

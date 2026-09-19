@@ -1,5 +1,27 @@
 # Execution nodes (opt-in, protocol v1)
 
+## Model output-limit policy
+
+New profiles default to `generation.max_output_tokens: "model_max"`
+(approved 2026-09-16); see the [shared configuration contract](../agent_formalizer/configs/README.md#model-output-limits).
+Agent/Minimum jobs carry the frozen profile; `api-job` also defaults to the
+baseline policy and embeds the resolved capability in its immutable request.
+Select `--max-output-tokens native` or an explicit integer for a distinct API
+condition. Legacy requests with no policy retain their original behavior.
+
+For a new self-hosted model-max campaign, deploy the updated runner/gateway,
+declare `generation_config: "vllm"` (not `auto`), and provide a compatible
+authenticated vLLM `/tokenize` endpoint. Model service provenance and live
+context are checked against the frozen requirement; a smaller deployment must
+not silently lower the experiment limit. The tokenizer runs on the GPU node;
+no model weights are sent to the controller. Validate custom tool
+parsers/templates for tokenization consistency before launching. A missing or
+incompatible tokenizer is a configuration/infra failure, not an agent answer
+failure. Existing running/frozen jobs are not migrated; updating the controller
+alone does not update the node's deployed release.
+
+## Overview
+
 Run benchmark cells on either this machine or a remote GPU machine, using the
 same `agent_formalizer` runner, adapters, gateways, timers, solver and VAL, or
 the existing standalone API-only formalizer. The
@@ -113,6 +135,14 @@ does not isolate installed runtimes. For the existing frozen campaign:
    harness cache into release workspaces. Local runs and historical frozen
    releases retain their original byte-strict policy. Images are provisioned
    once, not sent per task.
+   A host-side `zeroclaw --version` is insufficient: a host-built Rust binary
+   may require a newer glibc than the Debian task image. Remote text preflight
+   also runs the **selected execution binary** (including the checkpoint overlay)
+   with `--version` inside the frozen task image, without network or inference.
+   On loader failure, provision a same-source/default-feature compatible build
+   and its verified overlay in a new runtime binding; retain the old artifacts.
+   Do not bypass the probe, upgrade the pinned harness, or replace the agent
+   image merely to conceal a build-ABI mismatch.
 4. Build VAL from the official [KCL-Planning/VAL](https://github.com/KCL-Planning/VAL)
    repository, pinning the source revision and recording the executable hash.
    Follow its Linux build instructions (`scripts/linux/build_linux64.sh`) and
@@ -1054,6 +1084,15 @@ and action guards large enough for n+1; excessive n is rejected, never truncated
 Full reasoning, complete replacement PDDL, provider usage and fixed solver
 observations remain in the ordinary minimum transcript/step evidence. Minimum
 cells use the existing agent-cell checkpoint and first-valid recovery path.
+
+Minimum's owned HTTP clients defer to the active execution watchdog rather
+than racing the gateway's retry timer; see the adapter contract linked above.
+This implementation update must travel in a new frozen release, including its
+updated minimum runtime source lock. Do not replace the source under an already
+running or resumable campaign. Ordinary adapter/gateway Python fixes, including
+ZeroClaw's conditional `pddl-solver` command grant, are delivered by uploading
+that release through the control API; a Git pull or worker restart is not needed
+unless the worker service itself or a node-bound runtime dependency changed.
 
 For initial Hyperstack acceptance, test API-only, minimum n=1 and n=10 (with
 and without fixed solver feedback), and each of the five native harnesses on a

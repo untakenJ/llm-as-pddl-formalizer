@@ -41,6 +41,8 @@ def main():
     for name in ("job-id", "release-id", "model", "domain", "dataset", "indices", "operational"):
         api.add_argument("--" + name, required=True)
     api.add_argument("--solver-backend", choices=("local", "public", "public_then_local"), default="local")
+    api.add_argument("--max-output-tokens", default=None, help="model_max, native, or a positive integer; default from canonical baseline")
+    api.add_argument("--model-capabilities", type=Path)
     api.add_argument("--service", action="append", default=[])
     api.add_argument("--destination", type=Path, required=True)
     upload = commands.add_parser("upload")
@@ -84,13 +86,23 @@ def main():
         result = restore(args.archive, read_json(args.config), reason=args.reason,
                          source_node_retired=args.source_node_retired)
     elif args.command == "api-job":
-        from api_providers import validate_api_model
+        from api_providers import validate_api_model, model_capability_route
+        from agent_formalizer.configuration.model_capabilities import load_registry, resolve_output_policy
+        from agent_formalizer.configuration.benchmark_profile import DEFAULT_BENCHMARK_PROFILE
+        selection = args.max_output_tokens
+        if selection is None:
+            selection = DEFAULT_BENCHMARK_PROFILE.raw["condition_profile"]["overrides"].get("generation", {}).get("max_output_tokens", "native")
+        elif selection.isdigit():
+            selection = int(selection)
+        output_policy = resolve_output_policy(model_capability_route(args.model), selection,
+            load_registry(args.model_capabilities) if args.model_capabilities else None)
         safe_path(args.root, args.operational).resolve(strict=True)
         result = validate_job({"schema_version": 1, "job_id": args.job_id, "release_id": args.release_id,
             "kind": "api_cell", "parameters": {"model": validate_api_model(args.model), "domain": args.domain,
                 "dataset": args.dataset, "indices": [int(item) for item in args.indices.split(",")],
                 "operational_config": args.operational, "solver_backend": args.solver_backend,
-                "services": args.service}})
+                "services": args.service,
+                **({"output_token_policy": output_policy} if output_policy else {})}})
         private_json(args.destination, result, replace=False)
     elif args.command == "job":
         from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile

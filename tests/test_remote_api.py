@@ -92,6 +92,15 @@ class ApiTests(TemporaryCase):
         self.assertEqual(self.run_case(self.client(contents=()))[1]["files"], before)
         self.assertEqual(len(self.requests), 2)
 
+    def test_output_budget_input_rejection_is_not_resampled(self):
+        from agent_formalizer.configuration.model_capabilities import OutputBudgetInputError
+        with patch.object(self.formalizer, 'run_formalizer_gpt', side_effect=OutputBudgetInputError(400, {'error': 'context exhausted'})) as generate:
+            execution, record = self.run_case(self.client())
+            self.assertTrue(record['attempt_valid'])
+            self.assertFalse(record['generation_success'])
+            self.assertEqual(self.run_case(self.client())[0], execution)
+            generate.assert_called_once()
+
     def test_valid_bad_and_empty_outputs_are_not_resampled(self):
         for i, content in enumerate(("bad JSON", None), 1):
             with self.subTest(content=content):

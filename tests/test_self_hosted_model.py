@@ -9,7 +9,7 @@ import unittest
 from urllib.request import urlopen
 
 from agent_formalizer.claws import get_adapter
-from agent_formalizer.configuration.benchmark_profile import DEFAULT_BENCHMARK_PROFILE, load_benchmark_profile
+from agent_formalizer.configuration.benchmark_profile import BenchmarkProfile, DEFAULT_BENCHMARK_PROFILE, load_benchmark_profile
 from agent_formalizer.configuration.credentials import load_credential_registry
 from agent_formalizer.compute_platforms.self_hosted import api_base
 from agent_formalizer.results.provider_reasoning import extract_reasoning_fragments, token_accounting
@@ -17,6 +17,13 @@ from test_streaming_model_gateway import running_gateway, _request, _ledger
 
 
 class SelfHostedTests(unittest.TestCase):
+    def native_output_profile(self):
+        # These provider-wiring tests use synthetic/unknown model IDs, not a
+        # claim about their real capabilities. Test the explicit native path.
+        raw = deepcopy(DEFAULT_BENCHMARK_PROFILE.raw)
+        raw['condition_profile']['overrides']['generation']['max_output_tokens'] = 'native'
+        return BenchmarkProfile(DEFAULT_BENCHMARK_PROFILE.path, raw)
+
     def test_native_and_minimum_adapters_keep_external_provider_routes(self):
         from profile_fixtures import HISTORICAL_PROFILES_DIR
         from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
@@ -25,7 +32,7 @@ class SelfHostedTests(unittest.TestCase):
             for model in ("deepseek/deepseek-v4-flash", "google-vertex/gemini-3.1-flash-lite", "openai/gpt-4o-mini"):
                 with self.subTest(harness=harness, model=model):
                     adapter = get_adapter(harness, model=model, api_key="test-external-key",
-                        benchmark_profile=minimum if harness == "minimum" else DEFAULT_BENCHMARK_PROFILE,
+                        benchmark_profile=minimum if harness == "minimum" else self.native_output_profile(),
                         credential_provider_options={"google_vertex": {"project": "test-project"}}
                         if model.startswith("google-vertex/") else None)
                     self.assertEqual(adapter.resolved_config.model, model)
@@ -39,12 +46,13 @@ class SelfHostedTests(unittest.TestCase):
             with self.subTest(harness=harness):
                 model = "self-hosted/example/model-revision"
                 adapter = get_adapter(harness, model=model, api_key="node-private-model-key",
+                    benchmark_profile=self.native_output_profile(),
                     credential_provider_options={"self_hosted": {"base_url": "http://host.docker.internal:8000/v1"}})
                 self.assertEqual(adapter.upstream_api_base(), "http://host.docker.internal:8000/v1")
                 gateway = adapter.model_gateway()
                 self.assertEqual(gateway["auth_mode"], "bearer")
                 self.assertIn("example/model-revision", gateway["allowed_models"])
-                self.assertEqual(adapter.resolved_config.sha256, DEFAULT_BENCHMARK_PROFILE.resolve(harness, model=model).sha256)
+                self.assertEqual(adapter.resolved_config.sha256, self.native_output_profile().resolve(harness, model=model).sha256)
                 self.assertNotIn("node-private-model-key", json.dumps(adapter.model_auth()))
                 if harness != "openclaw":
                     self.assertNotIn("host.docker.internal", adapter.api_base)

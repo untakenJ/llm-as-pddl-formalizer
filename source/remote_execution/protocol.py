@@ -143,11 +143,17 @@ def validate_job(raw):
             relative(p["benchmark_profile"])
             sha256(p["resolved_config_sha256"])
         else:
-            exact(p, common | {"model", "solver_backend"})
+            exact(p, common | {"model", "solver_backend"}, {"output_token_policy"})
             if (not isinstance(p["model"], str) or len(p["model"]) > 256
                     or not all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]*", part)
                                for part in p["model"].split("/"))):
                 raise ValueError("Invalid API model route")
+            if "output_token_policy" in p:
+                from agent_formalizer.configuration.model_capabilities import validate_policy
+                from api_providers import model_capability_route
+                validate_policy(p["output_token_policy"])
+                if p["output_token_policy"]["model"] != model_capability_route(p["model"]):
+                    raise ValueError("Frozen output policy is for a different model")
             if p["solver_backend"] not in {"local", "public", "public_then_local"}:
                 raise ValueError("Unknown solver backend")
         identifier(p["domain"])

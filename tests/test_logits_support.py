@@ -248,12 +248,18 @@ class LogitsTranslationTests(unittest.TestCase):
 
 class LogitsHarnessRoutingTests(unittest.TestCase):
     def test_all_harnesses_route_explicit_logits_model_through_fixed_gateway(self):
+        from agent_formalizer.configuration.benchmark_profile import load_benchmark_profile
+        from profile_fixtures import HISTORICAL_PROFILES_DIR
+        # This route test deliberately retains native output semantics; the
+        # synthetic sampler is not a verified model-max capability deployment.
+        profile = load_benchmark_profile(HISTORICAL_PROFILES_DIR / 'native_safety_streaming_native_clean.json')
         for name in ("openclaw", "hermes", "nanobot", "zeroclaw", "generic"):
             with self.subTest(name=name):
                 adapter = get_adapter(
                     name,
                     model="logits/Qwen/Qwen3.5-4B",
                     api_key="gateway-only-secret",
+                    benchmark_profile=profile,
                 )
                 try:
                     gateway = adapter.model_gateway()

@@ -130,7 +130,7 @@ class MinimumProfileTests(unittest.TestCase):
     def test_native_adapter_still_uses_unchanged_docker_freeze_path(self):
         adapter = get_adapter(
             "hermes",
-            model="openai/test-model",
+            model="deepseek/deepseek-v4-flash",
             api_key="secret",
             benchmark_profile=DEFAULT_BENCHMARK_PROFILE,
         )
@@ -362,9 +362,20 @@ class _FakeCompletionHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length", "0") or 0)
         payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        self.server.requests.append(payload)
+        if getattr(self.server, "stall", False):
+            self.server.release_stall.wait(10)
+            return
+        if getattr(self.server, "failures_remaining", 0):
+            self.server.failures_remaining -= 1
+            body = b'{"error":{"type":"rate_limit_error"}}'
+            self.send_response(429)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         type(self).calls += 1
         version = type(self).calls
-        self.server.requests.append(payload)
         body = json.dumps(
             {
                 "id": f"fake-{version}",
@@ -404,7 +415,13 @@ class MinimumHostWorkspaceTests(unittest.TestCase):
     def test_self_hosted_runtime_through_real_loopback_gateway(self):
         self._assert_host_runtime("self-hosted/test-model")
 
-    def _assert_host_runtime(self, model):
+    def test_owned_loopback_client_survives_gateway_transparent_retry(self):
+        self._assert_host_runtime("self-hosted/test-model", retry=True)
+
+    def test_blocked_owned_request_is_still_bounded_by_active_watchdog(self):
+        self._assert_host_runtime("self-hosted/test-model", stall=True)
+
+    def _assert_host_runtime(self, model, retry=False, stall=False):
         _FakeCompletionHandler.calls = 0
         try:
             upstream = ThreadingHTTPServer(
@@ -413,6 +430,9 @@ class MinimumHostWorkspaceTests(unittest.TestCase):
         except PermissionError:
             self.skipTest("sandbox does not allow loopback sockets")
         upstream.requests = []
+        upstream.failures_remaining = int(retry)
+        upstream.stall = stall
+        upstream.release_stall = threading.Event()
         upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
         upstream_thread.start()
         profile = load_benchmark_profile(MINIMUM_PROFILE_PATH)
@@ -421,6 +441,7 @@ class MinimumHostWorkspaceTests(unittest.TestCase):
             model=model,
             api_key="secret",
             benchmark_profile=profile,
+            **({"timeout": 2} if stall else {}),
             credential_provider_options={"self_hosted": {"base_url": f"http://127.0.0.1:{upstream.server_port}/v1"}}
             if model.startswith("self-hosted/") else None,
         )
@@ -459,7 +480,17 @@ class MinimumHostWorkspaceTests(unittest.TestCase):
                     )
                     workspace.stop_model_gateway_monitor()
                     adapter.end_attempt_clock()
+                    if stall:
+                        self.assertFalse(result.success)
+                        self.assertTrue(result.timeout)
+                        self.assertEqual(result.finish_reason, "timeout")
+                        self.assertEqual(len(upstream.requests), 1)
+                        self.assertLess(result.duration_seconds, 8)
+                        return
                     self.assertTrue(result.success)
+                    runtime_config = json.loads((artifact_dir / "minimum_agent_runtime_config.json").read_text())
+                    self.assertIsNone(runtime_config["request_timeout_seconds"])
+                    self.assertIsNone(runtime_config["solver_timeout_seconds"])
                     outputs = workspace.freeze_pddl_outputs()
                     self.assertTrue(outputs["domain"].endswith(b"version 2"))
                     self.assertTrue(outputs["problem"].endswith(b"version 2"))
@@ -486,11 +517,15 @@ class MinimumHostWorkspaceTests(unittest.TestCase):
                     )
                     self.assertEqual(workspace.model_gateway_stats()["model_calls"], 2)
                     self.assertEqual(len(workspace.model_gateway_ledger()), 2)
-                    self.assertEqual(len(upstream.requests), 2)
+                    self.assertEqual(len(upstream.requests), 3 if retry else 2)
+                    if retry:
+                        self.assertEqual(upstream.requests[0], upstream.requests[1])
+                        self.assertEqual(workspace.model_gateway_ledger()[0]["transient_retry_count"], 1)
                     self.assertNotIn("tools", upstream.requests[0])
                 finally:
                     workspace.cleanup()
         finally:
+            upstream.release_stall.set()
             upstream.shutdown()
             upstream.server_close()
             upstream_thread.join(timeout=5)

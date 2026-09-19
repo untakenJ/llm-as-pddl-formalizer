@@ -153,11 +153,11 @@ class TextPolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(r.RuntimeLockMismatch, "frozen container"):
                 r.validate_runtime_lock(self.adapter, lock_path=r.TEXT_LOCK_PATH)
 
-    def test_local_default_lock_and_byte_identity_remain_unchanged(self):
+    def test_local_default_lock_retains_strict_byte_identity(self):
         legacy = r.load_runtime_lock()
         self.assertEqual(legacy["schema_version"], 1)
         self.assertEqual(r._file_sha256(r.LOCK_PATH),
-                         "208dbca4efb889fef10b29764420fba82c449b208047a57f96b547b01eb9ea08")
+                         "aa904a544d676af6e27e2c774e1539d8bc799e204a932b111e048cb262f1b539")
         observed = dict(legacy["harnesses"]["hermes"])
         with patch.object(r, "observe_runtime", return_value=observed):
             evidence = r.validate_runtime_lock(self.adapter, container_image_id=legacy["container"]["image_id"])
@@ -186,7 +186,44 @@ class TextPolicyTests(unittest.TestCase):
         self.assertFalse(result["container"]["required"])
 
 
+    def test_zeroclaw_actual_container_binary_must_start(self):
+        self.adapter.name = "zeroclaw"
+        observed = self.lock["harnesses"]["zeroclaw"]
+        with patch.object(r, "observe_zeroclaw_container_runtime",
+                          side_effect=r.RuntimeLockMismatch("GLIBC_2.39 not found")), \
+                self.assertRaisesRegex(r.RuntimeLockMismatch, "GLIBC_2.39"):
+            self.check(observed=observed)
+        with patch.object(r, "observe_zeroclaw_container_runtime", return_value={
+                "version": observed["version"], "binary_sha256": "different-compatible-build"}) as probe:
+            result = self.check(observed=observed)
+        probe.assert_called_once_with(self.adapter, self.image)
+        self.assertEqual(result["container"]["observed"]["harness_startup"]["binary_sha256"],
+                         "different-compatible-build")
+        self.assertNotIn("harness_startup", result["comparison_identity"]["container"])
+        with patch.object(r, "observe_zeroclaw_container_runtime", return_value={"version": "wrong"}), \
+                self.assertRaisesRegex(r.RuntimeLockMismatch, "task-container version"):
+            self.check(observed=observed)
+
+
 class CapabilityProbeTests(unittest.TestCase):
+    def test_zeroclaw_probe_uses_selected_binary_and_cleans_loader_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "selected-overlay"
+            binary.write_bytes(b"binary fixture")
+            adapter = SimpleNamespace(execution_binary=lambda: binary)
+            for result in (subprocess.CompletedProcess([], 1, "", "GLIBC_2.39 not found"),
+                           subprocess.TimeoutExpired("docker", 30)):
+                with self.subTest(result=result), patch.object(r.subprocess, "run", side_effect=[
+                        result, subprocess.CompletedProcess([], 0, "", "")]) as run, \
+                        self.assertRaises(r.RuntimeLockMismatch):
+                    r.observe_zeroclaw_container_runtime(adapter, "sha256:" + "a" * 64)
+                cmd = run.call_args_list[0].args[0]
+                self.assertIn(f"type=bind,source={binary},target=/usr/local/bin/zeroclaw,readonly", cmd)
+                self.assertEqual(cmd[-1], "--version")
+                self.assertIn("none", cmd)
+                self.assertEqual(run.call_args_list[0].kwargs["timeout"], 30)
+                self.assertEqual(run.call_args_list[1].args[0][-1], cmd[cmd.index("--name") + 1])
+
     def test_probe_is_bounded_isolated_and_always_cleaned(self):
         expected = r.load_runtime_lock(r.TEXT_LOCK_PATH)["container"]["runtime_capabilities"]
         with patch.object(r.subprocess, "run", side_effect=[

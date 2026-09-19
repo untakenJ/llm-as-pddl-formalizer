@@ -209,7 +209,8 @@ class GenericAgentAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             f"    'apikey': {api_key_expr},\n"
             f"    'apibase': {self.api_base!r},\n"
             f"    'model': {self.openai_compatible_model!r},\n"
-            "    'api_mode': 'chat_completions',\n"
+            + (f"    'max_tokens': {self.native_max_output_tokens()},\n" if self.output_token_policy() else "")
+            + "    'api_mode': 'chat_completions',\n"
             f"    'read_timeout': {max(120, int(self.timeout))},\n"
             "}\n"
         )

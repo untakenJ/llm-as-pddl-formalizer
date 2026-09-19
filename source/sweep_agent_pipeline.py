@@ -741,7 +741,7 @@ def _freeze_study_profile(profile, out_dir: Path):
     from copy import deepcopy
     from agent_formalizer.configuration.skill_library import bundle_for_profile
 
-    raw = deepcopy(profile.raw)
+    raw = profile.frozen_raw()
     bundle = bundle_for_profile(raw, profile.path)
     if bundle.skills:
         relative = Path("study_skills") / bundle.sha256

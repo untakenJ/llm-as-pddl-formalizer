@@ -147,8 +147,14 @@ class MinimumAgentAdapter(EnvConfiguredAdapter):
             "reflection_prompt": self.minimum_config["prompt_template"]["reflection"],
             "solver_feedback": deepcopy(self.minimum_config["solver_feedback"]),
             "solver_gateway": host["solver_gateway"],
-            "request_timeout_seconds": 600,
-            "solver_timeout_seconds": 600,
+            # These requests only reach our owned loopback gateways. A second
+            # physical socket deadline races the gateway's transparent retry
+            # and cannot be paused by AttemptClock. The supervised subprocess
+            # is instead bounded by the existing active attempt deadline;
+            # gateways retain their own finite upstream recovery policies.
+            "request_timeout_seconds": None,
+            "solver_timeout_seconds": None,
+            "request_deadline_owner": "benchmark-active-clock-and-gateway",
             "output_root": str(workspace_dir),
             "domain_output_path": str(
                 workspace_dir / contract["workspace_domain_file"]

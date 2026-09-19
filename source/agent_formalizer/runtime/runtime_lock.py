@@ -453,6 +453,41 @@ def observe_container_capabilities(image_id: str) -> dict[str, Any]:
             raise RuntimeLockMismatch("container capability probe cleanup failed: " + name) from exc
 
 
+def observe_zeroclaw_container_runtime(adapter, image_id: str) -> dict[str, str]:
+    """Test the selected binary's ABI, not merely the host installation.
+
+    A source-identical Rust build can need a newer glibc than the task image.
+    This zero-model probe also covers the derived checkpoint overlay. It does
+    not change the image, executable, profile, or byte-strict local policy.
+    """
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise RuntimeLockMismatch("ZeroClaw startup probe requires a frozen image ID")
+    binary = Path(adapter.execution_binary()).resolve(strict=True)
+    if not binary.is_file() or "," in str(binary):
+        raise RuntimeLockMismatch("invalid ZeroClaw startup probe executable")
+    name = "pddl-runtime-preflight-" + uuid.uuid4().hex
+    try:
+        result = subprocess.run([
+            "docker", "run", "--rm", "--pull", "never", "--name", name,
+            "--network", "none", "--read-only", "--pids-limit", "64", "--memory", "128m",
+            "--cpus", "1", "--mount", f"type=bind,source={binary},target=/usr/local/bin/zeroclaw,readonly",
+            "--entrypoint", "/usr/local/bin/zeroclaw", image_id, "--version",
+        ], capture_output=True, text=True, timeout=30)
+        if result.returncode:
+            raise RuntimeLockMismatch("ZeroClaw cannot start in the task image: " + result.stderr[:500])
+        return {"version": result.stdout.strip(), "binary_sha256": _file_sha256(binary)}
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeLockMismatch(f"ZeroClaw container startup probe failed: {type(exc).__name__}") from exc
+    finally:
+        try:
+            cleanup = subprocess.run(["docker", "rm", "--force", name],
+                                     capture_output=True, text=True, timeout=15)
+            if cleanup.returncode and "No such container" not in cleanup.stderr:
+                raise RuntimeLockMismatch("ZeroClaw startup probe cleanup failed: " + name)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeLockMismatch("ZeroClaw startup probe cleanup failed: " + name) from exc
+
+
 def _validate_text_lock_schema(lock: dict) -> None:
     if (set(lock) != {"schema_version", "policy", "lock_id", "container", "harnesses", "provider_transports"}
             or type(lock["schema_version"]) is not int or lock["schema_version"] != 2
@@ -514,6 +549,11 @@ def _validate_text_runtime_lock(adapter, lock: dict, image_id: str | None) -> di
     failures = sorted([*mismatches, *container["mismatches"], *(provider or {}).get("mismatches", {})])
     if failures:
         raise RuntimeLockMismatch(f"{adapter.name} does not match {lock['lock_id']}: " + ", ".join(failures))
+    if adapter.name == "zeroclaw":
+        startup = observe_zeroclaw_container_runtime(adapter, image_id)
+        if startup["version"] != expected["version"]:
+            raise RuntimeLockMismatch("ZeroClaw task-container version does not match the pinned runtime")
+        container["observed"]["harness_startup"] = startup
     # Only the selected checks enter comparability/resume identity. The full
     # observed binary/image hashes remain in evidence, never in this projection.
     comparison = {"policy": TEXT_POLICY, "lock_id": lock["lock_id"],

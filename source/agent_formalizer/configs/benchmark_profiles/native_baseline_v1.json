@@ -134,6 +134,9 @@
       "solver_backend": "local",
       "solver_error_routing": "solver-transient-v1",
       "agent_tools": [],
+      "generation": {
+        "max_output_tokens": "model_max"
+      },
       "external_call_timing": "call-checkpoint-v1"
     }
   },

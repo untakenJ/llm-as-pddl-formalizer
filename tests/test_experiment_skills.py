@@ -199,7 +199,7 @@ class ExperimentSkillsTests(unittest.TestCase):
     def test_no_artifact_directory_fails_before_resources_start(self):
         adapter = get_adapter(
             "hermes", benchmark_profile=self.profile(["skill-a"]),
-            model="openai/test-model", api_key="not-real",
+            model="deepseek/deepseek-v4-flash", api_key="not-real",
         )
         workspace = AgentWorkspace("x", "y", adapter)
         with patch.object(workspace, "_create_network") as create, self.assertRaisesRegex(ValueError, "artifact"):

@@ -56,10 +56,28 @@ def token_accounting(payload: Any, model: str = "") -> dict[str, Any] | None:
         cached = count("cachedContentTokenCount", "cached_content_token_count", default=0)
         thinking = count("thoughtsTokenCount", "thoughts_token_count", default=0)
         visible = count("candidatesTokenCount", "candidates_token_count")
+        total = count("totalTokenCount", "total_token_count")
+        zero_output_derived = (
+            visible is None
+            and input_tokens is not None
+            and total == input_tokens
+            and thinking == 0
+            and count("toolUsePromptTokenCount", "tool_use_prompt_token_count", default=0) == 0
+        )
+        if zero_output_derived:
+            visible = 0
         output = None if visible is None else visible + thinking
     else:
         input_tokens = count("prompt_tokens", "input_tokens")
         output = count("completion_tokens", "output_tokens")
+        total = count("total_tokens")
+        zero_output_derived = (
+            output is None
+            and input_tokens is not None
+            and total == input_tokens
+        )
+        if zero_output_derived:
+            output = 0
         input_details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
         output_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
         cached = input_details.get("cached_tokens", 0)
@@ -69,6 +87,7 @@ def token_accounting(payload: Any, model: str = "") -> dict[str, Any] | None:
         "output_tokens_including_thinking": output, "thinking_tokens": thinking,
         "provider_usage": usage, "estimated_cost_usd": None,
         "cost_status": "usage_incomplete_or_model_unpriced",
+        "zero_output_derived_from_complete_totals": zero_output_derived,
     }
     resolved_model = model or str(payload.get("modelVersion") or payload.get("model_version") or payload.get("model") or "")
     if ("gemini-3.1-flash-lite" in resolved_model and input_tokens is not None

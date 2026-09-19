@@ -124,11 +124,13 @@ def prepare(spec, node, workspace: Path, directory: Path, generation: int):
                            "entrypoint": "source/llm-as-formalizer-api.py",
                            "entrypoint_sha256": file_hash(workspace / "source/llm-as-formalizer-api.py"),
                            "note": "Standalone API prompt/retries; agent profile budgets do not apply"})
+        if "output_token_policy" in p:
+            provenance["output_token_policy"] = p["output_token_policy"]
     private_json(directory / "evidence" / f"configuration-{generation}.json", provenance, replace=False)
     return profile, resolved, raw, materialized
 
 
-def required_service_preflight(model, solver_backend, spec, node, op, directory, generation):
+def required_service_preflight(model, solver_backend, spec, node, op, directory, generation, output_token_policy=None):
     p = spec["parameters"]
     names = p["services"]
     services = node.get("services", {})
@@ -162,6 +164,16 @@ def required_service_preflight(model, solver_backend, spec, node, op, directory,
                     "max_model_len", "tool_call_parser", "reasoning_parser"}
         if not required <= services["model"].get("provenance", {}).keys():
             raise ValueError("Self-hosted model deployment provenance is incomplete")
+        if output_token_policy is not None:
+            deployment = services["model"]["provenance"]
+            if deployment["max_model_len"] < output_token_policy["context_window_tokens"]:
+                raise ValueError("Deployed context is smaller than the frozen output policy requires")
+            if deployment["generation_config"] != "vllm":
+                raise ValueError("model output policy requires generation_config=vllm to exclude hidden generation-config ceilings")
+            # Cross-check the advertised live context when provided by vLLM.
+            live = next(item for item in models if isinstance(item, dict) and item.get("id") == served)
+            if live.get("max_model_len", deployment["max_model_len"]) < output_token_policy["context_window_tokens"]:
+                raise ValueError("Live model context is smaller than the frozen output policy requires")
     return health
 
 
@@ -174,7 +186,8 @@ def run(spec, node, workspace, directory, generation):
 
     profile, resolved, op, materialized = prepare(spec, node, workspace, directory, generation)
     p = spec["parameters"]
-    required_service_preflight(resolved.model, resolved.solver_backend, spec, node, op, directory, generation)
+    required_service_preflight(resolved.model, resolved.solver_backend, spec, node, op, directory, generation,
+                               output_token_policy=resolved.output_token_policy)
     scheduling = op["scheduling"]
     result = run_agent_pipeline(
         claw=p["harness"], model=resolved.model, model_label=agent_model_label(p["harness"], resolved.model),

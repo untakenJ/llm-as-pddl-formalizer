@@ -174,6 +174,11 @@ class MinimumHostWorkspace:
         env = {
             **self._fixed_environment(),
             "PDDL_GATEWAY_UPSTREAM_ORIGIN": gateway["upstream_origin"],
+            # Minimum intentionally requests a complete, non-streamed answer.
+            # A healthy reasoning response may take more than 600s. Do not
+            # impose a shorter hidden generation limit than the active clock;
+            # allow the parent watchdog to own that boundary (small grace).
+            "PDDL_GATEWAY_UPSTREAM_TIMEOUT_SECONDS": str(max(600, self.adapter.timeout + 5)),
             "PDDL_GATEWAY_MAX_MODEL_CALLS": str(gateway["max_model_calls"]),
             "PDDL_GATEWAY_MAX_ACTION_STEPS": str(gateway["max_action_steps"]),
             "PDDL_GATEWAY_AUTH_MODE": gateway["auth_mode"],
