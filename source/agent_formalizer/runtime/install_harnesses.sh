@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Install pinned harness runtimes into the repository's ignored .cache tree.
+# Install pinned harness runtimes into the local ignored cache by default, or
+# an explicit remote-execution managed root.
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-RUNTIME_ROOT="${ROOT_DIR}/.cache/harness-runtimes"
+# The unset default preserves ordinary local installation. Remote nodes can
+# keep generated runtimes inside their separately owned managed-root tree.
+RUNTIME_ROOT="${FORMALIZER_HARNESS_RUNTIME_ROOT:-${ROOT_DIR}/.cache/harness-runtimes}"
 LOCK_ROOT="${ROOT_DIR}/source/agent_formalizer/runtime/requirements"
 
 HERMES_VERSION="0.18.2"

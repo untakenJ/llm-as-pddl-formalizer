@@ -169,7 +169,7 @@ def create_same(path, value):
         private_json(path, value, replace=False)
 
 
-def unit_text(workspace, python, config_path):
+def unit_text(workspace, python, config_path, *, port=8876):
     # WorkingDirectory is a path directive, NOT a systemd command-line word.
     # Its quotes would be literal. ExecStart/Environment do use word quoting.
     for path in (workspace, python, config_path):
@@ -179,12 +179,15 @@ def unit_text(workspace, python, config_path):
             raise ValueError("Unit paths must be absolute, without control characters, quotes, backslashes or edge whitespace")
     def quote(value):
         return '"' + str(value).replace("%", "%%") + '"'
+    port = int(port)
+    if not 1 <= port <= 65535:
+        raise ValueError("Worker control port must be in 1..65535")
     user = pwd.getpwuid(os.getuid()).pw_name
     return ("[Unit]\nDescription=Benchmark execution-node control service\nAfter=network-online.target docker.service\n\n"
             "[Service]\nType=simple\nUser=" + user + "\nWorkingDirectory=" + str(workspace).replace("%", "%%") + "\n"
             "Environment=" + quote("PYTHONPATH=" + str(workspace / "source")) + "\n"
             "Environment=PYTHONDONTWRITEBYTECODE=1\n"
-            "ExecStart=:" + quote(python) + " -B -m remote_execution.worker --config " + quote(config_path) + " --port 8876\n"
+            "ExecStart=:" + quote(python) + " -B -m remote_execution.worker --config " + quote(config_path) + " --port " + str(port) + "\n"
             "Restart=on-failure\nRestartSec=3\nUMask=0077\nKillMode=process\n\n[Install]\nWantedBy=multi-user.target\n")
 
 
@@ -221,10 +224,11 @@ def probe_adapter(name, root):
     adapter = None
     try:
         openclaw.OPENCLAW_BENCHMARK_STATE_DIR = root / "openclaw-state"
-        # Preparation tests native code, not credentials/provider routing. The
-        # baseline's Vertex route otherwise needs a real project even without
-        # sending a request. This stub is never an experimental profile.
-        adapter = get_adapter(name, model="openai/gpt-4o-mini", api_key="deployment-probe-not-real")
+        # Preparation tests native code, not credentials/provider routing. Use
+        # a capability-registered non-Vertex route so construction needs no
+        # project and model_max policy remains resolvable. No request is sent;
+        # this stub is never an experimental profile.
+        adapter = get_adapter(name, model="deepseek/deepseek-v4-flash", api_key="deployment-probe-not-real")
         yield adapter
     finally:
         openclaw.OPENCLAW_BENCHMARK_STATE_DIR = original
@@ -316,7 +320,7 @@ def apply(preview, expected):
             create_same(prepared / "request.json", request)
             create_same(prepared / "original-node.json", config)
             create_same(prepared / "node.json", candidate)
-            text = unit_text(workspace, python, prepared / "node.json")
+            text = unit_text(workspace, python, prepared / "node.json", port=candidate.get("control_port", 8876))
             service = safe_path(prepared, "worker.service")
             if service.exists():
                 if service.read_text() != text:
@@ -340,6 +344,8 @@ def probe(config, harnesses, services):
     from agent_formalizer.timing.zeroclaw_deadlines import prepared as zeroclaw_prepared
     import tempfile
 
+    from .benchmark import apply_node_runtime_bindings
+    apply_node_runtime_bindings(config)
     rows = {}
     for name in harnesses:
         if name in NATIVE:
@@ -428,7 +434,8 @@ def check(prepared):
         if not environment_matches(workspace, config["python"]):
             raise ValueError("Prepared environment no longer matches uv.lock")
         service = safe_path(prepared, "worker.service")
-        if service.read_text() != unit_text(workspace, config["python"], prepared / "node.json"):
+        if service.read_text() != unit_text(workspace, config["python"], prepared / "node.json",
+                                            port=config.get("control_port", 8876)):
             raise ValueError("Prepared service unit changed; preserve site drop-ins separately")
         unit = verify_unit(service)
         result = run_probe([config["python"], "-B", "-m", "remote_execution.deploy", "_probe",

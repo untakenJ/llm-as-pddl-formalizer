@@ -405,7 +405,7 @@ def make_server(node, port=0):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--port", type=int, default=8876)
+    parser.add_argument("--port", type=int, help="Default: validated node control_port, otherwise 8876")
     parser.add_argument("--execute", help=argparse.SUPPRESS)
     args = parser.parse_args()
     config = validate_node(read_json(args.config))
@@ -415,7 +415,7 @@ def main():
     os.umask(0o077)
     node = Node(config)
     with lock(node.store.root / "worker.lock"):
-        server = make_server(node, args.port)
+        server = make_server(node, args.port if args.port is not None else config.get("control_port", 8876))
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         print(json.dumps({"node_id": config["node_id"], "port": server.server_port}), flush=True)
         try:

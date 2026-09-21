@@ -7,7 +7,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import PropertyMock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 from profile_fixtures import HISTORICAL_PROFILES_DIR
 
@@ -409,6 +409,44 @@ class _FakeCompletionHandler(BaseHTTPRequestHandler):
 
 
 class MinimumHostWorkspaceTests(unittest.TestCase):
+    def test_host_workspace_finalizes_gateway_after_runtime_exit(self):
+        process = Mock()
+        process.poll.return_value = None
+        workspace = MinimumHostWorkspace.__new__(MinimumHostWorkspace)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace._gateway_process = process
+            workspace._gateway_native_exit_path = root / "control/native-harness-exited"
+            workspace._gateway_native_exit_path.parent.mkdir()
+            workspace.model_gateway_origin = "http://127.0.0.1:12345"
+            workspace.artifact_dir = root / "execution"
+            acknowledgement = {
+                "status": "native_harness_exited",
+                "active_requests": 1,
+            }
+            with patch(
+                "agent_formalizer.claws.minimum.workspace._post_empty_json",
+                return_value=acknowledgement,
+            ), patch.object(
+                workspace,
+                "_read_control",
+                side_effect=[
+                    {"in_flight_requests": 1},
+                    {"in_flight_requests": 0},
+                ],
+            ), patch("agent_formalizer.claws.minimum.workspace.time.sleep"):
+                report = workspace.finalize_model_gateway_after_native_exit(
+                    wait_seconds=0.1
+                )
+
+            self.assertEqual(report["status"], "settled")
+            self.assertTrue(workspace._gateway_native_exit_path.is_file())
+            saved = json.loads(
+                (workspace.artifact_dir / "gateway/native_exit_finalization.json")
+                .read_text()
+            )
+            self.assertEqual(saved["final_control"]["in_flight_requests"], 0)
+
     def test_host_runtime_preserves_usage_transcript_and_reasoning_trace(self):
         self._assert_host_runtime("openai/test-model")
 

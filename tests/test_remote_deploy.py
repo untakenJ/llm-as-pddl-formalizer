@@ -5,11 +5,12 @@ import shlex
 import shutil
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from remote_execution import bundle, deploy
+from remote_execution import bundle, deploy, node
 from remote_execution.protocol import digest, file_hash, private_json, read_json
 from remote_execution.store import Store, lock
 
@@ -419,6 +420,141 @@ class SystemdUnitTests(unittest.TestCase):
                 result = deploy.verify_unit(path)
                 self.assertEqual(result["status"], "fail", result)
                 self.assertIn("not absolute", result["diagnostic"])
+
+
+class NodeInstallerTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="remote-node-test-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "checkout"
+        self.root.mkdir()
+        self.config = json.loads(node.EXAMPLE.read_text())
+        self.config["node_id"] = "fixture-node"
+        self.config["install"]["val_revision"] = "1" * 40
+        self.path = self.root / "source/remote_execution/node.local.json"
+        self.path.parent.mkdir(parents=True)
+        private_json(self.path, self.config)
+
+    def test_init_only_creates_git_ignored_input_not_runtime_tree(self):
+        target = self.root / "source/remote_execution/another.local.json"
+        result = node.init_config(target)
+        self.assertEqual(result["status"], "created")
+        self.assertEqual(read_json(target)["managed_root"], ".local/remote-node")
+        self.assertFalse((self.root / ".local/remote-node").exists())
+        with self.assertRaisesRegex(ValueError, "overwrite"):
+            node.init_config(target)
+
+    def test_plan_is_read_only_and_root_can_be_inside_checkout_or_external(self):
+        with patch.object(node, "_source_identity", return_value="a" * 64):
+            preview = node.plan(self.path, repository=self.root)
+        self.assertEqual(preview["request"]["source_release_id"], "a" * 64)
+        self.assertEqual(preview["generated_root"], str(self.root / ".local/remote-node"))
+        self.assertFalse((self.root / ".local/remote-node").exists())
+        self.config["managed_root"] = str(Path(self.tmp.name) / "volume/node")
+        private_json(self.path, self.config)
+        self.assertEqual(node.paths(node.validate(self.config, repository=self.root), repository=self.root)["root"],
+                         Path(self.tmp.name) / "volume/node")
+
+    def test_strict_local_config_rejects_unpinned_or_secret_fields(self):
+        bad = json.loads(json.dumps(self.config)); bad["install"]["val_revision"] = "main"
+        with self.assertRaisesRegex(ValueError, "Pin VAL"):
+            node.validate(bad, repository=self.root)
+        bad = json.loads(json.dumps(self.config)); bad["api_key"] = "secret"
+        with self.assertRaises(ValueError):
+            node.validate(bad, repository=self.root)
+
+    def test_node_local_input_is_never_packaged(self):
+        (self.root / "source/remote_execution/code.py").write_text("# code\n")
+        (self.root / "source/remote_execution/vllm.local.json").write_text("{}\n")
+        inventory = bundle.inventory(self.root, ["source"])
+        self.assertIn("source/remote_execution/code.py", inventory["files"])
+        self.assertNotIn("source/remote_execution/node.local.json", inventory["files"])
+        self.assertNotIn("source/remote_execution/vllm.local.json", inventory["files"])
+
+    def test_custom_worker_port_is_opt_in_and_legacy_default_is_unchanged(self):
+        ordinary = deploy.unit_text(Path("/tmp/work"), "/usr/bin/true", Path("/tmp/node.json"))
+        custom = deploy.unit_text(Path("/tmp/work"), "/usr/bin/true", Path("/tmp/node.json"), port=18876)
+        self.assertIn("--port 8876", ordinary)
+        self.assertIn("--port 18876", custom)
+
+    @unittest.skipUnless(shutil.which("systemd-analyze"), "requires real systemd parser")
+    def test_generated_solver_unit_is_accepted_by_host_parser(self):
+        path = Path(self.tmp.name) / "formalizer-remote-solver.service"
+        path.write_text(node._solver_unit(Path("/tmp/frozen workspace"), "/usr/bin/python3", self.config))
+        self.assertEqual(deploy.verify_unit(path)["status"], "pass")
+
+    @unittest.skipUnless(shutil.which("systemd-analyze"), "requires real systemd parser")
+    def test_generated_model_unit_is_accepted_by_host_parser(self):
+        path = Path(self.tmp.name) / "benchmark-vllm.service"
+        path.write_text(node._model_unit(Path("/tmp/frozen workspace"), "/usr/bin/python3",
+            Path("/tmp/vllm config.json"), Path("/tmp/evidence path"), {"container_name": "benchmark-vllm"}))
+        self.assertEqual(deploy.verify_unit(path)["status"], "pass")
+
+    def test_remote_openclaw_bindings_do_not_create_release_links(self):
+        release = Path(self.tmp.name) / "release"; release.mkdir()
+        node_bin = Path(self.tmp.name) / "node"; node_bin.write_text("binary")
+        module = Path(self.tmp.name) / "openclaw"; module.mkdir()
+        bundle.bind_runtime(release, {"openclaw_node_bin": str(node_bin),
+                                      "openclaw_module_dir": str(module)})
+        self.assertEqual(list(release.iterdir()), [])
+
+    def test_openclaw_override_is_remote_process_scoped_not_local_configuration(self):
+        from agent_formalizer.configuration import config as local
+        from remote_execution.benchmark import apply_node_runtime_bindings
+        original = (local.OPENCLAW_NODE_BIN, local.OPENCLAW_MODULE_DIR)
+        imported = {name: (getattr(module, "OPENCLAW_NODE_BIN", None),
+                           getattr(module, "OPENCLAW_MODULE_DIR", None))
+                    for name in ("agent_formalizer.claws.openclaw", "agent_formalizer.runtime.runtime_lock")
+                    if (module := sys.modules.get(name)) is not None}
+        node_bin = Path(self.tmp.name) / "node"; node_bin.write_text("binary")
+        module = Path(self.tmp.name) / "openclaw"; module.mkdir()
+        try:
+            apply_node_runtime_bindings({"bindings": {"openclaw_node_bin": str(node_bin),
+                                                        "openclaw_module_dir": str(module)}})
+            self.assertEqual(local.OPENCLAW_NODE_BIN, str(node_bin))
+            self.assertEqual(local.OPENCLAW_MODULE_DIR, str(module))
+        finally:
+            local.OPENCLAW_NODE_BIN, local.OPENCLAW_MODULE_DIR = original
+            for name, values in imported.items():
+                module = sys.modules[name]
+                module.OPENCLAW_NODE_BIN, module.OPENCLAW_MODULE_DIR = values
+        fresh = subprocess.run([sys.executable, "-c",
+            "from agent_formalizer.configuration.config import OPENCLAW_NODE_BIN,OPENCLAW_MODULE_DIR;"
+            "print(OPENCLAW_NODE_BIN);print(OPENCLAW_MODULE_DIR)"],
+            env=deploy.environment(Path(__file__).resolve().parents[1]), capture_output=True, text=True, check=True)
+        self.assertEqual(fresh.stdout.splitlines(), ["/usr/bin/node", "/usr/lib/node_modules/openclaw"])
+
+    def test_apply_expands_versioned_runtime_tree_without_touching_source(self):
+        self.config["solver"]["enabled"] = False
+        self.config["solver"]["build_image"] = False
+        secrets = self.root / "_private/.env"; secrets.parent.mkdir(); secrets.write_text("DUMMY=value\n"); secrets.chmod(0o600)
+        private_json(self.path, self.config)
+        prepared = Path(self.tmp.name) / "prepared"; prepared.mkdir()
+        (prepared / "worker.service").write_text("[Service]\nExecStart=/bin/true\n")
+        (prepared / "node.json").write_text("{}\n")
+        workspace = Path(self.tmp.name) / "workspace"; workspace.mkdir()
+        captured = {}
+
+        def install(_config, resolved):
+            captured.update(resolved)
+            for key in ("runtimes", "openclaw", "zeroclaw_deadlines", "val"):
+                resolved[key].mkdir(parents=True, exist_ok=True)
+
+        inactive = subprocess.CompletedProcess([], 3, "inactive\n", "")
+        with patch.object(node, "_source_identity", return_value="a" * 64), \
+                patch.object(node, "_install_components", side_effect=install), \
+                patch.object(node, "_prepare_model", return_value=None), \
+                patch.object(node.subprocess, "run", return_value=inactive), \
+                patch.object(deploy, "plan", return_value={"plan_sha256": "b" * 64}), \
+                patch.object(deploy, "apply", return_value={"prepared": str(prepared),
+                    "workspace": str(workspace), "python": "/usr/bin/python3"}):
+            preview = node.plan(self.path, repository=self.root)
+            result = node.apply(self.path, expected=preview["plan_sha256"], repository=self.root)
+        self.assertEqual(result["status"], "prepared_not_activated")
+        self.assertIn(preview["plan_sha256"], str(captured["components"]))
+        generated = read_json(Path(result["record"]).parent / "node.json")
+        self.assertIn(preview["plan_sha256"], generated["bindings"]["harness_runtimes"])
+        self.assertFalse((self.root / ".cache/harness-runtimes").exists())
 
 
 if __name__ == "__main__":

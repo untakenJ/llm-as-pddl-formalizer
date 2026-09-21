@@ -33,6 +33,132 @@ the project's existing **uv** environment. No new dependencies or default
 benchmark/operational profile changes are required. The original local CLI path
 does not import this component and remains available.
 
+## Repository-first node installation
+
+Controller and execution node use the same repository and revision. The
+controller is already a complete local benchmark machine: **do not** initialize
+it as an execution node merely to run local sweeps. On a remote execution node,
+clone the repository as the outer directory, add the node-only secrets file,
+then use the opt-in installer:
+
+```bash
+cd /home/ubuntu/agentic-formlizer
+PYTHONPATH=source python3.12 -B -m remote_execution.node init
+$EDITOR source/remote_execution/node.local.json
+chmod 600 source/remote_execution/node.local.json _private/.env
+
+PYTHONPATH=source python3.12 -B -m remote_execution.node doctor
+PYTHONPATH=source python3.12 -B -m remote_execution.node plan
+```
+
+`init` creates only the Git-ignored local input
+`source/remote_execution/node.local.json`, copied from
+[`deploy/node.local.example.json`](deploy/node.local.example.json). Fill these
+node facts only:
+
+- a stable node ID and managed-root location;
+- loopback control port and node concurrency ceilings;
+- the owner-only runner secret-file path;
+- an exact reviewed VAL commit and pinned OpenClaw npm version;
+- local solver resource limits;
+- either `model.mode: "external"`, or a completed pinned vLLM deployment config
+  plus explicit image/weight preparation choices.
+
+For vLLM, copy `deploy/vllm.example.json` to the also-Git-ignored
+`source/remote_execution/vllm.local.json`, fill every pin/hardware/path field,
+set `model.mode` to `"vllm"`, and set `model.vllm_config` to that relative path.
+The installer hashes and freezes the completed vLLM config into its activation
+generation; neither local input file is included in controller release bundles.
+
+Do not put credentials in this JSON. Experiment profiles, datasets, prompts,
+model routes, per-cell worker counts within the declared ceiling, and case
+matrices are controller-owned frozen release/job inputs. The controller sends
+them through the authenticated protocol. Model weights are downloaded directly
+by the node and are never transferred from the controller.
+
+The default `managed_root` is `.local/remote-node` under the repository. It may
+instead be an absolute path on a persistent volume. The installer creates this
+layout itself:
+
+```text
+managed_root/
+  components/HASH/  plan-versioned harness runtimes, OpenClaw, VAL
+  deployments/      immutable worker source and uv environments
+  generated/        plan-addressed node configs and activation records
+  private/           generated control token only
+  state/             durable queue, releases, jobs, checkpoints and results
+  model-launches/    vLLM launch evidence when selected
+```
+
+The checkout remains source/configuration while mutable execution state is
+separately owned. The installer refuses to adopt an unmarked directory and
+never stores runner/model secrets in the generated tree. `.local/remote-node`
+is covered by the repository's `.local/` ignore policy; the editable node config
+is ignored explicitly.
+
+After reviewing the JSON emitted by `plan`, prepare exactly that source/config
+identity (replace `HASH` with `plan_sha256`):
+
+```bash
+PYTHONPATH=source python3.12 -B -m remote_execution.node \
+  apply --expect-plan HASH
+```
+
+`apply` installs the five pinned harness runtimes into the managed root, installs
+the pinned OpenClaw package there, builds the agent and selected solver images,
+checks out/builds pinned VAL, optionally prepares an explicitly pinned vLLM
+image/model, initializes the durable queue, and stages an immutable worker plus
+candidate service units. It requires the worker to be stopped and prior job
+owners to be settled. It does **not** install or start services.
+
+Review the returned activation record and candidate units. Then, during a node
+maintenance window:
+
+```bash
+PYTHONPATH=source python3.12 -B -m remote_execution.node \
+  activate --record /absolute/path/to/generated/HASH/apply.json --sudo
+PYTHONPATH=source python3.12 -B -m remote_execution.node status
+```
+
+`activate` uses privilege only to install/control the reviewed systemd units.
+It starts solver/model first, waits for health, runs the existing staged
+runtime/service/timing checks, and starts admission last. It refuses to replace
+a running worker. `stop` stops admission only; `stop --all` also stops the
+model/solver, but neither deletes queues or evidence. `doctor` is read-only and
+reports missing host prerequisites plus active unattended-upgrade services; it
+never disables OS updates. GPU drivers, NVIDIA Container Toolkit, Docker,
+systemd, Git, GCC, Node/npm, uv and base OS packages remain machine-image
+prerequisites because silently upgrading them can reboot or mutate a benchmark
+host.
+
+The controller then opens the documented SSH tunnel and uses the ordinary
+`python -m remote_execution` bundle/job/upload/submit/sync commands. It does not
+copy model weights, Docker state, node secrets or the queue. Every accepted
+execution is checkpointed and synchronized independently, so a spot-node loss
+does not require waiting for a whole batch.
+
+The one node-generated secret the controller needs is the control token. Copy
+that single owner-only file through SSH once (do not print it or commit it), and
+keep the tunnel listener loopback-only:
+
+```bash
+# On the controller; substitute the node's configured managed_root and host.
+install -d -m 700 .local/remote-controls/hyperstack-01
+scp ubuntu@gpu-host:/home/ubuntu/agentic-formlizer/.local/remote-node/private/control-token \
+  .local/remote-controls/hyperstack-01/control-token
+chmod 600 .local/remote-controls/hyperstack-01/control-token
+
+ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+  -L 127.0.0.1:18876:127.0.0.1:8876 ubuntu@gpu-host
+PYTHONPATH=source uv run --no-sync --offline python -B -m remote_execution \
+  --endpoint http://127.0.0.1:18876 \
+  --token-file .local/remote-controls/hyperstack-01/control-token health
+```
+
+The node's `_private/.env` is not this control token and is never copied back.
+If the configured node control port is not 8876, change the tunnel's remote port
+accordingly. Firewall rules need admit SSH only; the worker remains unexposed.
+
 ## Boundaries and guarantees
 
 - **One job owns one fixed comparison cell**: one harness (including `minimum`),
@@ -86,6 +212,7 @@ does not import this component and remains available.
 | `client.py`, `__main__.py` | Controller API/CLI, resumable transfer, verified read-only mirrors |
 | `checkpoints.py` | Per-terminal-execution sealing, durable receipts, explicit node-loss recovery |
 | `deploy.py` | Read-only update plans, isolated code/uv preparation and explicit deployment checks; no automatic service activation |
+| `node.py`, `deploy/node.local.example.json` | First-install/update closure, managed-root layout, service lifecycle and node-local input contract |
 | `vllm.py`, `deploy/` | GPU-agnostic BF16/FP8 model-service recipe and supervision templates |
 
 The node does not independently maintain experiment logic. Deploy a pinned
@@ -130,8 +257,10 @@ does not isolate installed runtimes. For the existing frozen campaign:
    agent container** image. New execution-node releases explicitly select
    `source/agent_formalizer/runtime/runtime_lock_text_v1.json`; see the contract
    below. Solver/model service checks are separate and are not relaxed.
-   Provision OpenClaw and Node at the paths required by the current runtime
-   lock (`/usr/lib/node_modules/openclaw`, `/usr/bin/node`). Bind the node-local
+   The node installer keeps OpenClaw under the managed root and passes its
+   schema-validated host paths only to isolated remote benchmark children;
+   ordinary local runs retain `/usr/lib/node_modules/openclaw` and `/usr/bin/node`.
+   Bind the node-local
    harness cache into release workspaces. Local runs and historical frozen
    releases retain their original byte-strict policy. Images are provisioned
    once, not sent per task.
@@ -309,13 +438,13 @@ only API/minimum leaves native timing `not_verified` without making their host
 import preflight fail. A compile error is `fail` with local build diagnostics.
 Neither imports nor timing preparation imply that a full native agent ran.
 
-If a harness/image/overlay fails, use the existing pinned installer/builders in
-an explicitly provisioned **new** runtime location, then create a new candidate
-node config/plan pointing to it; do not overwrite a runtime still needed by an
-old study. For ZeroClaw see the overlay instructions in
-[the formalizer README](../agent_formalizer/README.md). This first version
-automates worker code and Python environment preparation, **not** full machine
-provisioning, automatic harness installation, image rebuilding, or GPU setup.
+If a harness/image/overlay fails, use `remote_execution.node` to prepare a new,
+reviewed managed deployment while the worker is stopped; do not overwrite a
+runtime still needed by an active study. For ZeroClaw see the overlay
+instructions in [the formalizer README](../agent_formalizer/README.md). The node
+installer automates repository-owned runtimes, images, VAL and service
+candidates, but intentionally does not mutate base OS packages, GPU drivers or
+the NVIDIA container runtime.
 Service checks do not independently attest model weights or VAL semantics.
 After deployment checks pass, run an explicit, separately authorized small
 real-model/solver/VAL canary with fresh job IDs before a formal sweep.

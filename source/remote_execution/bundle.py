@@ -14,11 +14,14 @@ from pathlib import Path
 from .protocol import canonical, digest, exact, file_hash, private_json, read_json, relative, safe_path, sha256
 
 EXCLUDED = {".git", ".venv", "_private", "output", ".cache", "__pycache__", "node_modules"}
+LOCAL_ONLY = {"source/remote_execution/node.local.json", "source/remote_execution/vllm.local.json"}
 
 
 def allowed(name):
     parts = Path(relative(name)).parts
-    return not any(part in EXCLUDED or part.startswith(".env") for part in parts) and not name.endswith((".pyc", ".safetensors", ".gguf"))
+    return (name not in LOCAL_ONLY and
+            not any(part in EXCLUDED or part.startswith(".env") for part in parts) and
+            not name.endswith((".pyc", ".safetensors", ".gguf")))
 
 
 def inventory(root: Path, includes: list[str]):
@@ -152,6 +155,10 @@ def bind_runtime(release: Path, bindings: dict):
                "val": "VAL", "secrets_env_file": "workspace/_private/.env"}
     for key, value in bindings.items():
         source = Path(value).resolve(strict=True)
+        # These host binaries are passed through the validated execution-node
+        # environment and bind-mounted by the existing OpenClaw adapter.
+        if key in {"openclaw_node_bin", "openclaw_module_dir"}:
+            continue
         link = release / targets[key]
         if link.is_symlink():
             if link.resolve(strict=True) != source:

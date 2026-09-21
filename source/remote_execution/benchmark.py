@@ -11,6 +11,7 @@ from copy import deepcopy
 from dataclasses import asdict
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 from urllib.request import ProxyHandler, Request, build_opener
@@ -18,6 +19,30 @@ from urllib.request import ProxyHandler, Request, build_opener
 from remote_execution.protocol import digest, file_hash, private_json, read_json, safe_path, validate_job
 
 RUNTIME_LOCK_RELATIVE = "source/agent_formalizer/runtime/runtime_lock_text_v1.json"
+
+
+def apply_node_runtime_bindings(node):
+    """Apply remote-only host runtime paths before importing any adapter.
+
+    Ordinary local CLIs never call this function and retain repository-owned
+    defaults. The node schema has already restricted bindings to absolute paths.
+    """
+    bindings = node.get("bindings", {})
+    if not ({"openclaw_node_bin", "openclaw_module_dir"} & bindings.keys()):
+        return
+    from agent_formalizer.configuration import config
+    if "openclaw_node_bin" in bindings:
+        config.OPENCLAW_NODE_BIN = str(Path(bindings["openclaw_node_bin"]).resolve(strict=True))
+    if "openclaw_module_dir" in bindings:
+        config.OPENCLAW_MODULE_DIR = str(Path(bindings["openclaw_module_dir"]).resolve(strict=True))
+    # Re-entrant unit probes may have imported these modules already. Production
+    # benchmark/probe entrypoints are fresh processes, but keeping an existing
+    # import coherent avoids a partial binding in tests and diagnostics.
+    for name in ("agent_formalizer.claws.openclaw", "agent_formalizer.runtime.runtime_lock"):
+        module = sys.modules.get(name)
+        if module is not None:
+            module.OPENCLAW_NODE_BIN = config.OPENCLAW_NODE_BIN
+            module.OPENCLAW_MODULE_DIR = config.OPENCLAW_MODULE_DIR
 
 
 def differences(before, after, path=""):
@@ -178,6 +203,7 @@ def required_service_preflight(model, solver_backend, spec, node, op, directory,
 
 
 def run(spec, node, workspace, directory, generation):
+    apply_node_runtime_bindings(node)
     if spec["kind"] == "api_cell":
         from remote_execution.api import run as run_api
         return run_api(spec, node, workspace, directory, generation)
