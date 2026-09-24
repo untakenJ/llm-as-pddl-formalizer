@@ -42,6 +42,7 @@ class ProviderSpec:
 
 
 _PROVIDER_ALIASES = {
+    "alibaba": "dashscope",
     "qwen": "dashscope",
     "google": "gemini",
     "self-hosted": "openai",

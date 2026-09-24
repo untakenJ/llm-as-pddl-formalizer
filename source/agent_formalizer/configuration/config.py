@@ -195,6 +195,7 @@ PROVIDER_API_KEY_ENV: dict[str, str] = {
     "gemini": "GEMINI_API_KEY",
     "google-vertex": "GOOGLE_CLOUD_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
+    "alibaba": "ALIBABA_API_KEY",
     "logits": "LOGITS_API_KEY",
     "self-hosted": "SELF_HOSTED_API_KEY",
     "dashscope": "DASHSCOPE_API_KEY",
@@ -210,6 +211,9 @@ PROVIDER_API_BASE: dict[str, str] = {
     # The project/location-qualified route is constructed from resolved config.
     "google-vertex": "https://aiplatform.googleapis.com",
     "deepseek": "https://api.deepseek.com/v1",
+    # Alibaba Model Studio API keys are region-bound.  The repository's
+    # ``alibaba`` route is intentionally the user-selected Singapore service.
+    "alibaba": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     # Logits' public service speaks its native sampling REST protocol.  The
     # per-attempt gateway translates the OpenAI Chat Completions wire format;
     # this origin is still the auditable external route.

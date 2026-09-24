@@ -4,11 +4,14 @@ Supports:
 - **OpenAI** Responses API with structured JSON and optional hosted tools.
 - **Gemini** via Google GenAI SDK on **Gemini Enterprise Agent Platform / Vertex**
   using ``GOOGLE_CLOUD_API_KEY``.
+- **Alibaba Model Studio** via its Singapore OpenAI-compatible endpoint using
+  the explicit ``alibaba/qwen3.8-27b`` model route.
 
 Credentials in ``_private/.env`` (python-dotenv) or shell env:
 - OpenAI: ``_private/key.txt``
 - Gemini Vertex: ``GOOGLE_CLOUD_API_KEY``, ``GOOGLE_CLOUD_PROJECT``,
   ``GOOGLE_CLOUD_LOCATION``. This path does not use browser/ADC auth.
+- Alibaba Model Studio: ``ALIBABA_API_KEY`` (Singapore-region key).
 
 Example:
     python3 source/llm-as-planner-api.py \\
@@ -52,6 +55,8 @@ Parser.add_argument("--indices", default=None,
                     help="comma-separated problem numbers (e.g. '1,5,17'); overrides --index_start/--index_end when provided")
 Parser.add_argument("--out_dir", default=None,
                     help="base output directory; defaults to {ROOT_DIR}/output")
+Parser.add_argument("--stream", action=argparse.BooleanOptionalAction, default=True,
+                    help="Stream model responses (default on; --no-stream buffers at the provider)")
 Parser.add_argument("--trace", action=argparse.BooleanOptionalAction, default=True,
                     help="Record per-problem JSONL trace next to the plan files (default on; pass --no-trace to disable)")
 Parser.add_argument("--workers", type=int, default=1,
@@ -135,7 +140,7 @@ DOMAIN_ACTION_SPECS = {
 
 
 def run_planner_gpt(provider, client, domain, data, problem, model, tools=None,
-                    tool_executors=None, record_trace=True, out_dir_root=None):
+                    tool_executors=None, record_trace=True, out_dir_root=None, stream=True):
     spec = DOMAIN_ACTION_SPECS[domain]
     available_actions = spec["available_actions"]
     example_answer = spec["example_answer"]
@@ -190,7 +195,7 @@ def run_planner_gpt(provider, client, domain, data, problem, model, tools=None,
             text_format=text_format,
             tools=tools,
             tool_executors=tool_executors,
-            tracer=tracer,
+            tracer=tracer, stream=stream,
         )
 
         return_dict = json.loads(return_string)
@@ -218,7 +223,7 @@ def run_planner_gpt(provider, client, domain, data, problem, model, tools=None,
 
 
 def run_gpt_batch(provider, client, domain, model, data, problem_numbers, tools=None,
-                  tool_executors=None, record_trace=True, out_dir_root=None, workers=1):
+                  tool_executors=None, record_trace=True, out_dir_root=None, workers=1, stream=True):
     def _run_one(problem_number):
         problem_name = format_problem_name(problem_number)
         print(f"Running {problem_name}", flush=True)
@@ -231,7 +236,7 @@ def run_gpt_batch(provider, client, domain, model, data, problem_numbers, tools=
             model=model,
             tools=tools,
             tool_executors=tool_executors,
-            record_trace=record_trace,
+            record_trace=record_trace, stream=stream,
             out_dir_root=out_dir_root,
         )
 
@@ -268,7 +273,7 @@ if __name__ == "__main__":
         problem_numbers=PROBLEM_NUMBERS,
         tools=tools,
         tool_executors=tool_executors,
-        record_trace=RECORD_TRACE,
+        record_trace=RECORD_TRACE, stream=args.stream,
         out_dir_root=OUT_DIR_ROOT,
         workers=WORKERS,
     )

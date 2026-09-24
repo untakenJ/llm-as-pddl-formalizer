@@ -171,6 +171,10 @@ class FullTraceTests(unittest.TestCase):
                 module.run_gpt_batch(**args)
                 module.run_gpt_batch(**args)
                 self.assertEqual(call.call_count,1)
+                self.assertTrue(call.call_args.kwargs['stream'])
+                with self.assertRaisesRegex(ValueError, 'transport differs'):
+                    module.run_gpt_batch(**args, stream=False)
+                self.assertEqual(call.call_count, 1)
                 trace = next((root/'output').rglob('*_trace.jsonl'))
                 old_trace = trace.read_bytes()
                 trace.write_text('interrupted trace\n')

@@ -59,9 +59,38 @@ from sweep_agent_pipeline import (
 )
 
 NATIVE_HARNESSES = {"openclaw", "hermes", "nanobot", "zeroclaw", "generic"}
+ALIBABA_MODEL = "alibaba/qwen3.8-27b"
 
 
 class AdapterRegistryTests(unittest.TestCase):
+    def test_alibaba_model_studio_route_is_available_to_every_harness(self):
+        for name in NATIVE_HARNESSES:
+            with self.subTest(name=name):
+                adapter = get_adapter(name, model=ALIBABA_MODEL, api_key="secret")
+                try:
+                    self.assertEqual(
+                        adapter.upstream_api_base(),
+                        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                    )
+                    self.assertEqual(adapter.model_gateway()["provider"], "alibaba")
+                    self.assertIn("qwen3.8-27b", adapter.model_gateway()["allowed_models"])
+                    self.assertEqual(adapter.model_gateway_secret(), "secret")
+                    self.assertNotIn("secret", json.dumps(adapter.model_auth()))
+                    if isinstance(adapter, HermesAdapter):
+                        self.assertEqual(adapter.hermes_provider, "alibaba")
+                    elif isinstance(adapter, NanoBotAdapter):
+                        self.assertEqual(adapter.nanobot_provider, "dashscope")
+                    elif isinstance(adapter, ZeroClawAdapter):
+                        self.assertEqual(adapter.zeroclaw_provider, "qwen")
+                    elif isinstance(adapter, OpenClawAdapter):
+                        self.assertEqual(
+                            adapter._gateway_provider_config()["api"],
+                            "openai-completions",
+                        )
+                finally:
+                    if isinstance(adapter, OpenClawAdapter):
+                        adapter._cleanup_run_state()
+
     def test_all_requested_harnesses_are_registered(self):
         self.assertEqual(
             set(CLAWS),

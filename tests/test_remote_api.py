@@ -55,7 +55,14 @@ class ApiTests(TemporaryCase):
             status = next(errors, 200)
             if status != 200:
                 return httpx.Response(status, json={"error": {"message": "test failure", "type": "rate_limit"}})
-            return httpx.Response(200, json=response(next(bodies)))
+            payload = response(next(bodies, None))
+            if self.requests[-1].get("stream"):
+                payload["object"] = "chat.completion.chunk"
+                for choice in payload.get("choices", []):
+                    choice["delta"] = choice.pop("message")
+                return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                    text="data: " + json.dumps(payload) + "\n\ndata: [DONE]\n\n")
+            return httpx.Response(200, json=payload)
         client = OpenAI(api_key="test-private-key", base_url="http://test.invalid/v1", max_retries=0,
                         http_client=httpx.Client(transport=httpx.MockTransport(handler)))
         self.addCleanup(client.close)
@@ -63,6 +70,79 @@ class ApiTests(TemporaryCase):
 
     def run_case(self, client, problem="p01"):
         return api.run_case(self.formalizer, "self-hosted", client, self.spec, self.workspace, self.output, problem)
+
+    def test_standalone_batch_keeps_bad_output_terminal_and_continues_parallel_peers(self):
+        def respond(**kwargs):
+            prompt = kwargs["input_items"][0]["content"]
+            return "[]" if "p01domain" in prompt else GOOD
+        args = dict(provider="self-hosted", client=None, domain="barman", model=MODEL,
+                    data="Heavily_Templated_Barman-100", problem_numbers=[1, 2],
+                    out_dir_root=str(self.output), workers=2, resume=True)
+        with patch.object(self.formalizer, "respond_with_tools", side_effect=respond) as generate:
+            self.formalizer.run_gpt_batch(**args)
+            self.formalizer.run_gpt_batch(**args)
+        self.assertEqual(generate.call_count, 2)
+        bad = api.case_directory(self.output, self.spec["parameters"], "p01")
+        good = api.case_directory(self.output, self.spec["parameters"], "p02")
+        record = read_json(bad / "api_completion.json")
+        self.assertTrue(record["attempt_valid"])
+        self.assertFalse(record["generation_success"])
+        self.assertEqual(record["outputs"], {})
+        self.assertEqual(len(list(bad.glob("*.pddl"))), 0)
+        self.assertEqual(read_json(good / "api_completion.json")["status"], "ok")
+
+    def test_standalone_all_json_contract_failures_are_not_resampled(self):
+        for i, output in enumerate(("not JSON", "[]", "null", '{"domain file":"x"}',
+                                   '{"domain file":[],"problem file":"x"}')):
+            with self.subTest(output=output):
+                args = dict(provider="self-hosted", client=None, domain="barman", model=MODEL,
+                            data="Heavily_Templated_Barman-100", problem_numbers=[1],
+                            out_dir_root=str(self.output / str(i)), resume=True)
+                with patch.object(self.formalizer, "respond_with_tools", return_value=output) as generate:
+                    self.formalizer.run_gpt_batch(**args)
+                    self.formalizer.run_gpt_batch(**args)
+                    generate.assert_called_once()
+
+    def test_standalone_corrupt_terminal_evidence_refuses_resampling(self):
+        args = dict(provider="self-hosted", client=None, domain="barman", model=MODEL,
+                    data="Heavily_Templated_Barman-100", problem_numbers=[1],
+                    out_dir_root=str(self.output), resume=True)
+        with patch.object(self.formalizer, "respond_with_tools", return_value="[]") as generate:
+            self.formalizer.run_gpt_batch(**args)
+            case = api.case_directory(self.output, self.spec["parameters"], "p01")
+            next(case.glob("*trace.jsonl")).write_text("corrupted")
+            with self.assertRaisesRegex(ValueError, "trace changed"):
+                self.formalizer.run_gpt_batch(**args)
+            generate.assert_called_once()
+
+    def test_standalone_transport_failure_remains_incomplete(self):
+        args = dict(provider="self-hosted", client=None, domain="barman", model=MODEL,
+                    data="Heavily_Templated_Barman-100", problem_numbers=[1],
+                    out_dir_root=str(self.output), resume=True)
+        with patch.object(self.formalizer, "respond_with_tools", side_effect=TimeoutError("transport")):
+            with self.assertRaises(TimeoutError):
+                self.formalizer.run_gpt_batch(**args)
+        case = api.case_directory(self.output, self.spec["parameters"], "p01")
+        self.assertFalse((case / "api_completion.json").exists())
+
+    def test_standalone_thinking_condition_is_frozen_even_after_interruption(self):
+        args = dict(provider='alibaba', client=None, domain='barman', model='alibaba/qwen3.8-27b',
+                    data='Heavily_Templated_Barman-100', problem_numbers=[1],
+                    out_dir_root=str(self.output), resume=True, enable_thinking=False)
+        with patch.object(self.formalizer, 'respond_with_tools', side_effect=TimeoutError('interrupted')):
+            with self.assertRaises(TimeoutError):
+                self.formalizer.run_gpt_batch(**args)
+        with patch.object(self.formalizer, 'respond_with_tools', return_value=GOOD) as generate:
+            for requested in (None, True):
+                with self.assertRaisesRegex(ValueError, 'thinking mode changed'):
+                    self.formalizer.run_gpt_batch(**dict(args, enable_thinking=requested))
+            generate.assert_not_called()
+            self.formalizer.run_gpt_batch(**args)
+            self.formalizer.run_gpt_batch(**args)
+            generate.assert_called_once()
+            self.assertIs(generate.call_args.kwargs['enable_thinking'], False)
+        completion = next(self.output.rglob('api_completion.json'))
+        self.assertIs(read_json(completion)['enable_thinking'], False)
 
     def test_self_hosted_build_is_explicit_no_openai_fallback(self):
         self.assertEqual(validate_api_model(MODEL), MODEL)
@@ -121,13 +201,13 @@ class ApiTests(TemporaryCase):
         self.assertEqual(execution.name, "execution-000003")
 
     def test_missing_message_is_invalid_but_explicit_vertex_refusal_is_valid(self):
-        with patch("test_remote_api.response", return_value={"id": "test", "choices": []}):
+        with patch("test_remote_api.response", return_value={"id": "test", "choices": []}), patch("api_providers.time.sleep"):
             self.assertIsNone(self.run_case(self.client()))
         spec = deepcopy(self.spec); spec["parameters"].update(model="gemini-3.1-flash-lite", services=["solver"])
         result = SimpleNamespace(text=None, prompt_feedback=None,
             candidates=[SimpleNamespace(finish_reason="SAFETY", safety_ratings=[], citation_metadata=None, content=None)],
             model_dump=lambda **_: {"candidates": [{"finish_reason": "SAFETY"}]})
-        client = SimpleNamespace(models=SimpleNamespace(generate_content=lambda **_: result))
+        client = SimpleNamespace(models=SimpleNamespace(generate_content_stream=lambda **_: iter([result])))
         execution, record = api.run_case(self.formalizer, "google-vertex", client, spec, self.workspace, self.output, "p01")
         self.assertTrue(record["attempt_valid"])
         self.assertFalse(record["generation_success"])
@@ -175,11 +255,20 @@ class ApiTests(TemporaryCase):
                     client = self.client()
                 else:
                     raw = {"text": GOOD, "usage": {"input_tokens": 17, "output_tokens": 9}}
-                    result = SimpleNamespace(output_text=GOOD, output=[], text=GOOD,
+                    result = SimpleNamespace(output_text=GOOD, output=[], text=GOOD, status="completed",
                                              model_dump=lambda **_: raw)
+                    class Events:
+                        def __enter__(self): return self
+                        def __exit__(self, *args): pass
+                        def __iter__(self): return iter([SimpleNamespace(type="response.completed")])
+                        def close(self): pass
+                        def get_final_response(self): return result
+                    from google.genai import types
+                    gemini = types.GenerateContentResponse(candidates=[types.Candidate(
+                        content=types.Content(parts=[types.Part(text=GOOD)]), finish_reason="STOP")])
                     client = SimpleNamespace(
-                        responses=SimpleNamespace(create=lambda **_: result),
-                        models=SimpleNamespace(generate_content=lambda **_: result))
+                        responses=SimpleNamespace(stream=lambda **_: Events()),
+                        models=SimpleNamespace(generate_content_stream=lambda **_: iter([gemini])))
                 execution, record = api.run_case(self.formalizer, provider, client, spec,
                                                  self.workspace, self.output, "p01")
                 self.assertTrue(record["generation_success"])

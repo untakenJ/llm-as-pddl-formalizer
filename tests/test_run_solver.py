@@ -12,10 +12,40 @@ if str(SOURCE_DIR) not in sys.path:
     sys.path.insert(0, str(SOURCE_DIR))
 
 import run_solver as solver_module
+from api_providers import sanitize_model_name
 from agent_formalizer.results.execution_validity import append_manual_event
 
 
 class RunSolverModelLabelTests(unittest.TestCase):
+    def test_api_batch_reads_generated_files_and_writes_outcome_for_each_provider(self):
+        models = [
+            "gemini-3.1-flash-lite",
+            "deepseek-chat",
+            "alibaba/qwen3.8-27b",
+            "google-vertex/gemini-3.1-flash-lite",
+        ]
+        for model in models:
+            with self.subTest(model=model), tempfile.TemporaryDirectory() as root:
+                label = sanitize_model_name(model)
+                directory = (Path(root) / "llm-as-formalizer-api" / "barman"
+                             / "Heavily_Templated_Barman-100" / label / "p01")
+                directory.mkdir(parents=True)
+                domain = "(define (domain fixture))"
+                problem = "(define (problem fixture) (:domain fixture))"
+                (directory / f"p01_{label}_df.pddl").write_text(domain)
+                (directory / f"p01_{label}_pf.pddl").write_text(problem)
+                with patch.object(solver_module, "solve_pddl", return_value=(False, "fixture input error")) as solve:
+                    solver_module.run_solver_batch(
+                        "barman", model, "Heavily_Templated_Barman-100", [1],
+                        "dual-bfws-ffparser", "llm-as-formalizer-api",
+                        out_dir_root=root, solver_backend="public",
+                    )
+                self.assertEqual(solve.call_args.args, (domain, problem))
+                self.assertIn("fixture input error", (directory / f"p01_{label}_error.txt").read_text())
+
+    def test_non_api_legacy_model_label_is_preserved(self):
+        self.assertEqual(solver_module._model_output_name("google/legacy-model", "llm-as-formalizer"), "legacy-model")
+
     def test_logits_model_id_uses_direct_api_filesystem_label(self):
         self.assertEqual(
             solver_module._model_output_name("logits/Qwen/Qwen3.5-4B"),

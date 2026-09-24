@@ -8,7 +8,7 @@ import time
 import traceback
 from pathlib import Path
 
-from batch_utils import format_problem_name, run_parallel
+from batch_utils import format_problem_name, run_parallel, sanitize_model_name
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -63,7 +63,9 @@ Parser.add_argument(
 )
 
 
-def _model_output_name(model):
+def _model_output_name(model, prediction_type=None):
+    if prediction_type in ("llm-as-formalizer-api", "llm-as-planner-api"):
+        return sanitize_model_name(model)
     if model.startswith("self-hosted/"):
         return model.replace("/", "__").replace(":", "_").replace(" ", "_")
     if model.startswith("logits/"):
@@ -89,7 +91,7 @@ def run_solver(
     """Load generated PDDL files and solve them on the selected backend."""
     if solver_base_url is None:
         solver_base_url = base_urls_for_backend(solver_backend or DEFAULT_SOLVER_BACKEND)[0]
-    model_name = _model_output_name(model)
+    model_name = _model_output_name(model, prediction_type)
 
     out_root = out_dir_root or f'{ROOT_DIR}/output'
     model_dir = Path(out_root) / prediction_type / domain / data / model_name
@@ -254,7 +256,7 @@ def _run_solver_one(
 def run_solver_batch(domain, model, data, problem_numbers, solver, prediction_type="llm-as-formalizer",
                      out_dir_root=None, workers=1, solver_base_url=None,
                      solver_backend=None):
-    model_name = _model_output_name(model)
+    model_name = _model_output_name(model, prediction_type)
     out_root = out_dir_root or f'{ROOT_DIR}/output'
 
     def _worker(problem_number):

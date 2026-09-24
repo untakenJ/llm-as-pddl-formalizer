@@ -43,6 +43,21 @@ def structured_response(version: int) -> str:
 
 
 class MinimumProfileTests(unittest.TestCase):
+    def test_alibaba_model_studio_uses_openai_compatible_minimum_transport(self):
+        profile = load_benchmark_profile(MINIMUM_PROFILE_PATH)
+        adapter = get_adapter(
+            "minimum",
+            model="alibaba/qwen3.8-27b",
+            api_key="secret",
+            benchmark_profile=profile,
+        )
+        self.assertEqual(adapter.openai_compatible_model, "qwen3.8-27b")
+        self.assertEqual(
+            adapter.upstream_api_base(),
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        )
+        self.assertEqual(adapter.model_gateway()["provider"], "alibaba")
+
     def test_profile_resolves_only_for_minimum_adapter(self):
         profile = load_benchmark_profile(MINIMUM_PROFILE_PATH)
         resolved = profile.resolve("minimum")

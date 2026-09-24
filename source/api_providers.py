@@ -17,6 +17,9 @@ OpenAI: ``_private/key.txt``
 
 DeepSeek: ``DEEPSEEK_API_KEY`` from ``_private/.env`` or the shell.
 
+Alibaba Model Studio (Singapore): ``ALIBABA_API_KEY`` from ``_private/.env``
+or the shell. Models use the explicit ``alibaba/<model-id>`` route.
+
 The Gemini formalizer/planner API path uses **Gemini Enterprise / Vertex via
 ``GOOGLE_CLOUD_API_KEY``** -- no Developer API key (``key_gemini.txt`` /
 ``GEMINI_API_KEY``). The Antigravity Interactions API is project-scoped and
@@ -35,6 +38,7 @@ import re
 import socket
 import ssl
 import time
+import uuid
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
@@ -42,6 +46,7 @@ from openai import OpenAI
 import requests
 
 from env_loader import load_project_dotenv
+from batch_utils import sanitize_model_name
 
 load_project_dotenv()
 
@@ -56,6 +61,11 @@ DEEPSEEK_PROVIDER = "deepseek"
 DEEPSEEK_BACKEND = "deepseek-chat-completions"
 DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+
+ALIBABA_PROVIDER = "alibaba"
+ALIBABA_BACKEND = "alibaba-model-studio-openai-chat-completions"
+ALIBABA_API_KEY_ENV = "ALIBABA_API_KEY"
+ALIBABA_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 LOGITS_PROVIDER = "logits"
 LOGITS_BACKEND = "logits-public-rest-openai-adapter"
@@ -171,12 +181,19 @@ def is_self_hosted_model(model: str) -> bool:
     return model.startswith("self-hosted/") and bool(model.split("/", 1)[1].strip())
 
 
+def is_alibaba_model(model: str) -> bool:
+    """Alibaba models require an explicit provider prefix to avoid ambiguity."""
+    return model.startswith("alibaba/") and bool(model.split("/", 1)[1].strip())
+
+
 def validate_api_model(model: str) -> str:
-    if model in API_MODELS or is_logits_model(model) or is_self_hosted_model(model):
+    if (model in API_MODELS or is_logits_model(model) or is_self_hosted_model(model)
+            or is_alibaba_model(model)):
         return model
     raise ValueError(
         f"Unsupported API model {model!r}. Use a known model name or an explicit "
-        "dynamic route such as logits/Qwen/Qwen3.5-4B or self-hosted/SERVED_MODEL_ID."
+        "dynamic route such as alibaba/qwen3.8-27b, logits/Qwen/Qwen3.5-4B, "
+        "or self-hosted/SERVED_MODEL_ID."
     )
 
 
@@ -186,7 +203,8 @@ def is_reasoning_model(model: str) -> bool:
 
 def default_tools_for_model(model: str) -> tuple[list | None, dict | None]:
     """Return hosted tools only for models served by OpenAI Responses."""
-    if is_gemini_model(model) or is_deepseek_model(model) or is_logits_model(model) or is_self_hosted_model(model):
+    if (is_gemini_model(model) or is_deepseek_model(model) or is_logits_model(model)
+            or is_self_hosted_model(model) or is_alibaba_model(model)):
         return None, None
     executors = OPENAI_TOOL_EXECUTORS or None
     return OPENAI_TOOLS, executors
@@ -239,6 +257,17 @@ def require_deepseek_api_key_config() -> dict[str, str]:
     return {"api_key": api_key}
 
 
+def require_alibaba_api_key_config() -> dict[str, str]:
+    """Return the explicitly named Alibaba Model Studio credential."""
+    api_key = os.environ.get(ALIBABA_API_KEY_ENV, "").strip()
+    if not api_key:
+        raise SystemExit(
+            f"Alibaba Model Studio API key not found. Set {ALIBABA_API_KEY_ENV} "
+            "in _private/.env or the shell."
+        )
+    return {"api_key": api_key}
+
+
 def require_logits_api_key_config() -> dict[str, str]:
     """Return the explicitly named Logits credential without logging it."""
     api_key = os.environ.get(LOGITS_API_KEY_ENV, "").strip()
@@ -276,11 +305,6 @@ def require_gemini_vertex_project_config() -> dict[str, str]:
     return {"project": project, "location": location}
 
 
-def sanitize_model_name(model: str) -> str:
-    """Filesystem-safe model label (for output paths and run_solver/run_val)."""
-    return model.replace("/", "__").replace(":", "_").replace(" ", "_")
-
-
 def build_gemini_client(*, api_key=None):
     """Construct a Vertex ``google.genai.Client`` using ``GOOGLE_CLOUD_API_KEY``.
 
@@ -309,6 +333,16 @@ def build_deepseek_client(*, api_key=None):
     return OpenAI(
         api_key=cfg["api_key"],
         base_url=DEEPSEEK_BASE_URL,
+        max_retries=0,
+    )
+
+
+def build_alibaba_client(*, api_key=None):
+    """Construct the Singapore Model Studio OpenAI-compatible client."""
+    cfg = {"api_key": api_key} if api_key is not None else require_alibaba_api_key_config()
+    return OpenAI(
+        api_key=cfg["api_key"],
+        base_url=ALIBABA_BASE_URL,
         max_retries=0,
     )
 
@@ -396,6 +430,8 @@ def build_provider_client(model: str, *, api_key=None, provider_options=None) ->
         return GEMINI_PROVIDER, build_gemini_client(**kwargs)
     if is_deepseek_model(model):
         return DEEPSEEK_PROVIDER, build_deepseek_client(**kwargs)
+    if is_alibaba_model(model):
+        return ALIBABA_PROVIDER, build_alibaba_client(**kwargs)
     if is_logits_model(model):
         return LOGITS_PROVIDER, build_logits_client(model, **kwargs)
     return "openai", OpenAI(api_key=api_key if api_key is not None else _read_key_file("key.txt"), max_retries=0)
@@ -781,11 +817,132 @@ def call_with_rate_limit_retry(
 
 
 def _serialize_response(resp) -> dict:
+    if isinstance(resp, dict):
+        return resp
     if hasattr(resp, "model_dump"):
         return resp.model_dump(mode="json", exclude_none=True)
     if hasattr(resp, "to_dict"):
         return resp.to_dict()
     return {"_repr": repr(resp)}
+
+
+def _stream_events(events, *, tracer, provider, model):
+    """Persist physical-attempt fragments, including interrupted reasoning/usage.
+
+    Consumers assemble a response privately; no partial text is delivered to
+    the formalizer. The enclosing retry owns both opening and consuming the
+    stream. These fragment records are evidence, not additional model calls.
+    """
+    stream_id = uuid.uuid4().hex
+    count = 0
+    complete = False
+    usage_snapshot = {}
+    started = time.monotonic()
+    if tracer:
+        tracer.emit("stream_start", provider=provider, stream_id=stream_id)
+    try:
+        for item in events:
+            count += 1
+            data = _serialize_response(item)
+            # Usage is cumulative, not a per-chunk increment. Keep the last
+            # authoritative snapshot, including on interrupted attempts.
+            payload = data.get("response", data)
+            for key in ("usage", "usage_metadata"):
+                if isinstance(payload.get(key), dict):
+                    usage_snapshot[key] = payload[key]
+            if tracer:
+                tracer.emit("stream_chunk", provider=provider, stream_id=stream_id,
+                            sequence=count, elapsed_ms=(time.monotonic() - started) * 1000,
+                            chunk=data)
+            yield item
+        complete = True
+    finally:
+        close = getattr(events, "close", None)
+        try:
+            if callable(close):
+                close()
+        finally:
+            if tracer:
+                from agent_formalizer.results.provider_reasoning import token_accounting
+                tracer.emit("stream_end", provider=provider, stream_id=stream_id,
+                            chunks=count, transport_complete=complete,
+                            accounting=token_accounting(usage_snapshot, model, provider),
+                            elapsed_ms=(time.monotonic() - started) * 1000)
+
+
+def _chat_completion(client, request, *, tracer, provider):
+    if not request.get("stream"):
+        return client.chat.completions.create(**request)
+    from openai.types.chat import ChatCompletion
+
+    response = {}
+    text, reasoning, refusal = [], [], []
+    finish_reason = None
+    for chunk in _stream_events(client.chat.completions.create(**request),
+                                tracer=tracer, provider=provider, model=request["model"]):
+        data = _serialize_response(chunk)
+        response.update({k: v for k, v in data.items() if k != "choices"})
+        for choice in data.get("choices", []):
+            if choice.get("index", 0) != 0:
+                raise ValueError("Direct API expects one completion candidate")
+            delta = choice.get("delta", {})
+            if delta.get("tool_calls") or delta.get("function_call"):
+                raise ValueError("Direct JSON completion returned unrequested tool calls")
+            for key, fragments in (("content", text), ("reasoning_content", reasoning), ("refusal", refusal)):
+                if delta.get(key):
+                    fragments.append(delta[key])
+            finish_reason = choice.get("finish_reason") or finish_reason
+    if finish_reason is None:
+        # A plausible JSON prefix is not a completed model response. Since no
+        # output has been delivered, the existing transport retry may replay.
+        raise http.client.IncompleteRead(b"", None)
+    message = {"role": "assistant", "content": "".join(text)}
+    if reasoning:
+        message["reasoning_content"] = "".join(reasoning)
+    if refusal:
+        message["refusal"] = "".join(refusal)
+    response.update(object="chat.completion", choices=[{
+        "index": 0, "message": message, "finish_reason": finish_reason}])
+    return ChatCompletion.model_validate(response)
+
+
+def _gemini_completion(client, request, *, stream, tracer):
+    if not stream:
+        return client.models.generate_content(**request)
+    from google.genai import types
+
+    response, candidate, parts = {}, {}, []
+    for chunk in _stream_events(client.models.generate_content_stream(**request),
+                                tracer=tracer, provider=GEMINI_PROVIDER, model=request["model"]):
+        data = _serialize_response(chunk)
+        response.update({k: v for k, v in data.items() if k != "candidates"})
+        for item in data.get("candidates", []):
+            if item.get("index", 0) != 0:
+                raise ValueError("Direct API expects one completion candidate")
+            candidate.update({k: v for k, v in item.items() if k != "content"})
+            parts.extend(item.get("content", {}).get("parts", []))
+    if candidate.get("finish_reason"):
+        candidate["content"] = {"role": "model", "parts": parts}
+        response["candidates"] = [candidate]
+    elif not response.get("prompt_feedback", {}).get("block_reason"):
+        raise http.client.IncompleteRead(b"", None)
+    return types.GenerateContentResponse.model_validate(response)
+
+
+def _openai_completion(client, request, *, stream, tracer):
+    if not stream:
+        return client.responses.create(**request)
+    with client.responses.stream(**request) as events:
+        terminal = False
+        for event in _stream_events(events, tracer=tracer, provider="openai", model=request["model"]):
+            if event.type in {"response.completed", "response.incomplete", "response.failed"}:
+                terminal = True
+        if not terminal:
+            raise http.client.IncompleteRead(b"", None)
+        response = events.get_final_response()
+        if response.status == "failed":
+            raise RuntimeError(f"OpenAI response failed: {response.error}")
+        return response
 
 
 class Tracer:
@@ -854,7 +1011,7 @@ def _apply_output_budget(request, policy, path, *, client=None, tracer=None):
 
 
 def _respond_openai(client, model, input_items, text_format, tools=None, tool_executors=None,
-                    tool_choice="auto", max_tool_rounds=8, tracer=None, output_token_policy=None) -> str:
+                    tool_choice="auto", max_tool_rounds=8, tracer=None, output_token_policy=None, stream=True) -> str:
     def _create(input_payload, round_idx, previous_response_id=None):
         kwargs = {
             "model": model,
@@ -872,11 +1029,11 @@ def _respond_openai(client, model, input_items, text_format, tools=None, tool_ex
         kwargs = _apply_output_budget(kwargs, output_token_policy, "/v1/responses", client=client, tracer=tracer)
 
         if tracer:
-            tracer.emit("request", round=round_idx, provider="openai", kwargs=kwargs)
+            tracer.emit("request", round=round_idx, provider="openai", kwargs={**kwargs, "stream": stream})
         t0 = time.monotonic()
         try:
             resp = call_with_transient_retry(
-                lambda: client.responses.create(**kwargs),
+                lambda: _openai_completion(client, kwargs, stream=stream, tracer=tracer),
                 tracer=tracer,
                 provider="openai",
             )
@@ -1016,6 +1173,7 @@ def generate_gemini_json(
     *,
     tracer=None,
     output_token_policy=None,
+    stream=True,
 ) -> str:
     """Generate JSON matching ``schema`` via Gemini Enterprise."""
     from google.genai import types
@@ -1036,6 +1194,7 @@ def generate_gemini_json(
         "response_mime_type": "application/json",
         "response_json_schema": schema,
         "prompt_chars": len(prompt),
+        "stream": stream,
         "project": os.environ.get("GOOGLE_CLOUD_PROJECT"),
         "location": os.environ.get("GOOGLE_CLOUD_LOCATION"),
     }
@@ -1045,11 +1204,8 @@ def generate_gemini_json(
     t0 = time.monotonic()
     try:
         resp = call_with_transient_retry(
-            lambda: client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=config,
-            ),
+            lambda: _gemini_completion(client, {"model": model, "contents": prompt, "config": config},
+                                       stream=stream, tracer=tracer),
             tracer=tracer,
             provider=GEMINI_PROVIDER,
         )
@@ -1089,10 +1245,10 @@ def generate_gemini_json(
     return text
 
 
-def _respond_gemini(client, model, input_items, text_format, tracer=None, output_token_policy=None) -> str:
+def _respond_gemini(client, model, input_items, text_format, tracer=None, output_token_policy=None, stream=True) -> str:
     prompt = _prompt_from_input_items(input_items)
     return generate_gemini_json(
-        client, model, prompt, text_format["schema"], tracer=tracer, output_token_policy=output_token_policy
+        client, model, prompt, text_format["schema"], tracer=tracer, output_token_policy=output_token_policy, stream=stream
     )
 
 
@@ -1105,13 +1261,14 @@ def generate_deepseek_json(
     tracer=None,
     provider=DEEPSEEK_PROVIDER,
     output_token_policy=None,
+    stream=True,
+    enable_thinking=None,
 ) -> str:
-    """Generate JSON through DeepSeek or an explicitly selected self-hosted API.
+    """Generate JSON through a supported OpenAI-compatible chat endpoint.
 
-    DeepSeek's JSON mode requires the prompt to explicitly request JSON. It
-    does not currently enforce arbitrary JSON Schema server-side, so the
-    schema is included verbatim in the system instruction and the caller
-    performs the existing parse/key checks.
+    These providers accept JSON mode but do not enforce arbitrary JSON Schema
+    server-side. The schema is included verbatim in the system instruction and
+    the caller performs the existing parse/key checks.
     """
     json_instruction = (
         "Return exactly one valid JSON object and no other text. Do not use "
@@ -1119,27 +1276,42 @@ def generate_deepseek_json(
         + json.dumps(schema, ensure_ascii=False, sort_keys=True)
     )
     messages = [{"role": "system", "content": json_instruction}, *input_items]
-    self_hosted = provider == SELF_HOSTED_PROVIDER
+    prefixed_provider = provider in {SELF_HOSTED_PROVIDER, ALIBABA_PROVIDER}
     request = {
-        "model": model.split("/", 1)[1] if self_hosted else model,
+        "model": model.split("/", 1)[1] if prefixed_provider else model,
         "messages": messages,
         "response_format": {"type": "json_object"},
     }
+    if enable_thinking is not None:
+        if provider != ALIBABA_PROVIDER or not isinstance(enable_thinking, bool):
+            raise ValueError("Explicit thinking mode is supported only as an Alibaba boolean")
+        request["extra_body"] = {"enable_thinking": enable_thinking}
     request = _apply_output_budget(request, output_token_policy, "/v1/chat/completions", client=client, tracer=tracer)
+    request["stream"] = stream
+    if stream:
+        request["stream_options"] = {"include_usage": True}
     if tracer:
         tracer.emit(
             "request",
             round=0,
             provider=provider,
-            backend="openai-compatible-chat-completions" if self_hosted else DEEPSEEK_BACKEND,
-            api_key_env="SELF_HOSTED_API_KEY" if self_hosted else DEEPSEEK_API_KEY_ENV,
+            backend=(
+                "openai-compatible-chat-completions"
+                if provider == SELF_HOSTED_PROVIDER
+                else ALIBABA_BACKEND if provider == ALIBABA_PROVIDER else DEEPSEEK_BACKEND
+            ),
+            api_key_env=(
+                "SELF_HOSTED_API_KEY"
+                if provider == SELF_HOSTED_PROVIDER
+                else ALIBABA_API_KEY_ENV if provider == ALIBABA_PROVIDER else DEEPSEEK_API_KEY_ENV
+            ),
             kwargs=request,
         )
 
     t0 = time.monotonic()
     try:
         resp = call_with_transient_retry(
-            lambda: client.chat.completions.create(**request),
+            lambda: _chat_completion(client, request, tracer=tracer, provider=provider),
             tracer=tracer,
             provider=provider,
         )
@@ -1157,13 +1329,22 @@ def generate_deepseek_json(
 
     elapsed_ms = (time.monotonic() - t0) * 1000.0
     if tracer:
+        serialized = _serialize_response(resp)
         tracer.emit(
             "response",
             round=0,
             provider=provider,
             elapsed_ms=elapsed_ms,
-            response=_serialize_response(resp),
+            response=serialized,
         )
+        if provider == ALIBABA_PROVIDER:
+            from agent_formalizer.results.provider_reasoning import token_accounting
+            tracer.emit(
+                "token_accounting",
+                provider=provider,
+                model=model,
+                accounting=token_accounting(serialized, model, provider),
+            )
 
     choices = getattr(resp, "choices", None) or []
     message = getattr(choices[0], "message", None) if choices else None
@@ -1177,14 +1358,28 @@ def generate_deepseek_json(
     return text
 
 
-def _respond_deepseek(client, model, input_items, text_format, tracer=None, output_token_policy=None) -> str:
+def _respond_deepseek(client, model, input_items, text_format, tracer=None, output_token_policy=None, stream=True) -> str:
     return generate_deepseek_json(
         client,
         model,
         input_items,
         text_format["schema"],
         tracer=tracer,
-        output_token_policy=output_token_policy,
+        output_token_policy=output_token_policy, stream=stream,
+    )
+
+
+def _respond_alibaba(client, model, input_items, text_format, tracer=None, output_token_policy=None, stream=True,
+                     enable_thinking=None) -> str:
+    return generate_deepseek_json(
+        client,
+        model,
+        input_items,
+        text_format["schema"],
+        tracer=tracer,
+        provider=ALIBABA_PROVIDER,
+        output_token_policy=output_token_policy, stream=stream,
+        enable_thinking=enable_thinking,
     )
 
 
@@ -1268,24 +1463,38 @@ def _respond_logits(client, model, input_items, text_format, tracer=None) -> str
 
 def respond_with_tools(provider: str, client, model, input_items, text_format,
                        tools=None, tool_executors=None, tool_choice="auto",
-                       max_tool_rounds=8, tracer=None, output_token_policy=None) -> str:
+                       max_tool_rounds=8, tracer=None, output_token_policy=None, stream=True,
+                       enable_thinking=None) -> str:
+    if enable_thinking is not None and (provider != ALIBABA_PROVIDER or not isinstance(enable_thinking, bool)):
+        raise ValueError("Explicit thinking mode is supported only as an Alibaba boolean")
     if provider == SELF_HOSTED_PROVIDER:
         if tools:
             raise ValueError("Self-hosted Direct API baseline does not use hosted tools")
         return generate_deepseek_json(client, model, input_items, text_format["schema"],
-                                      tracer=tracer, provider=provider, output_token_policy=output_token_policy)
+                                      tracer=tracer, provider=provider, output_token_policy=output_token_policy, stream=stream)
     if provider == GEMINI_PROVIDER or provider == "gemini":
         if tools:
             # OpenAI-hosted tools are not available on the Gemini path.
             pass
-        return _respond_gemini(client, model, input_items, text_format, tracer=tracer, output_token_policy=output_token_policy)
+        return _respond_gemini(client, model, input_items, text_format, tracer=tracer, output_token_policy=output_token_policy, stream=stream)
     if provider == DEEPSEEK_PROVIDER:
         if tools:
             raise ValueError("DeepSeek Direct API baseline does not use hosted tools")
         return _respond_deepseek(
-            client, model, input_items, text_format, tracer=tracer, output_token_policy=output_token_policy
+            client, model, input_items, text_format, tracer=tracer, output_token_policy=output_token_policy, stream=stream
+        )
+    if provider == ALIBABA_PROVIDER:
+        if tools:
+            raise ValueError("Alibaba Direct API baseline does not use hosted tools")
+        return _respond_alibaba(
+            client, model, input_items, text_format, tracer=tracer,
+            output_token_policy=output_token_policy, stream=stream,
+            enable_thinking=enable_thinking,
         )
     if provider == LOGITS_PROVIDER:
+        if tracer:
+            tracer.emit("transport", provider=provider, requested_stream=stream,
+                        effective_transport="native-async-rest-polling")
         if output_token_policy is not None:
             raise ValueError("Logits output-budget translation is not supported; select native explicitly")
         if tools:
@@ -1298,5 +1507,5 @@ def respond_with_tools(provider: str, client, model, input_items, text_format,
         tools=tools, tool_executors=tool_executors,
         tool_choice=tool_choice, max_tool_rounds=max_tool_rounds,
         tracer=tracer,
-        output_token_policy=output_token_policy,
+        output_token_policy=output_token_policy, stream=stream,
     )

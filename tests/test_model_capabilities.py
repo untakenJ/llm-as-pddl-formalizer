@@ -22,6 +22,7 @@ from sweep_agent_pipeline import _freeze_study_profile
 ROOT = Path(__file__).resolve().parents[1]
 GEMINI = "google-vertex/gemini-3.1-flash-lite"
 QWEN = "self-hosted/Qwen/Qwen3.8-27B"
+ALIBABA_QWEN = "alibaba/qwen3.8-27b"
 
 
 class ModelCapabilitiesTests(unittest.TestCase):
@@ -63,6 +64,20 @@ class ModelCapabilitiesTests(unittest.TestCase):
         numeric['max_output_tokens'] = 2048
         with self.assertRaises(ValueError):
             validate_policy(numeric)
+
+    def test_alibaba_qwen_uses_verified_model_studio_limits(self):
+        policy = resolve_output_policy(ALIBABA_QWEN, 'model_max')
+        self.assertEqual(policy['context_window_tokens'], 1_000_000)
+        self.assertEqual(policy['max_output_tokens'], 131_072)
+        request, audit = apply_output_policy(
+            {'model': 'qwen3.8-27b', 'messages': [], 'max_tokens': 8192, 'max_output_tokens': 1024},
+            policy,
+            '/compatible-mode/v1/chat/completions',
+        )
+        self.assertEqual(request['max_completion_tokens'], 131_072)
+        self.assertNotIn('max_tokens', request)
+        self.assertNotIn('max_output_tokens', request)
+        self.assertEqual(audit['parameter'], 'max_completion_tokens')
 
     def test_alias_and_qwen_context_are_not_fixed_output_262144(self):
         self.assertEqual(resolve_output_policy('gemini/gemini-3.1-flash-lite', 'model_max')['max_output_tokens'], 65536)
@@ -152,15 +167,15 @@ class ModelCapabilitiesTests(unittest.TestCase):
         tracer = Mock()
         client = Mock()
         client.models.generate_content.return_value = SimpleNamespace(text='{}', candidates=[])
-        generate_gemini_json(client, 'gemini-3.1-flash-lite', 'prompt', {'type': 'object'}, tracer=tracer, output_token_policy=policy)
+        generate_gemini_json(client, 'gemini-3.1-flash-lite', 'prompt', {'type': 'object'}, tracer=tracer, output_token_policy=policy, stream=False)
         self.assertEqual(client.models.generate_content.call_args.kwargs['config'].max_output_tokens, 65536)
         client.chat.completions.create.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{}'))])
         deepseek = resolve_output_policy('deepseek/deepseek-v4-flash', 'model_max')
-        generate_deepseek_json(client, 'deepseek-v4-flash', [], {}, output_token_policy=deepseek)
+        generate_deepseek_json(client, 'deepseek-v4-flash', [], {}, output_token_policy=deepseek, stream=False)
         self.assertEqual(client.chat.completions.create.call_args.kwargs['max_tokens'], 393216)
         qwen = resolve_output_policy(QWEN, 'model_max')
         with patch('agent_formalizer.configuration.model_capabilities.vllm_count_tokens', return_value=(500, 262144)) as count:
-            generate_deepseek_json(client, QWEN, [], {}, provider='self-hosted', output_token_policy=qwen)
+            generate_deepseek_json(client, QWEN, [], {}, provider='self-hosted', output_token_policy=qwen, stream=False)
         self.assertEqual(client.chat.completions.create.call_args.kwargs['max_tokens'], 261644)
         self.assertIn('Return exactly one valid JSON', count.call_args.args[1]['messages'][0]['content'])
 

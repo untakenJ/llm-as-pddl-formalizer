@@ -56,6 +56,19 @@ scripts load credentials from `_private/.env`; see their module documentation
 for the required variables. Logits uses `LOGITS_API_KEY` and explicit dynamic
 model ids such as `logits/Qwen/Qwen3.5-4B`; see the
 [Logits adapter documentation](source/agent_formalizer/compute_platforms/logits/README.md).
+Alibaba Model Studio uses `ALIBABA_API_KEY` and the explicit
+`alibaba/qwen3.8-27b` route. Its provider-specific default is the Singapore
+OpenAI-compatible endpoint; other providers retain their own routes.
+Direct formalizer/planner API calls stream by default; `--no-stream` selects
+buffered responses. Chat Completions, OpenAI Responses and Gemini use their
+native streaming APIs; Logits retains its native asynchronous REST polling.
+Partial streams are traced but never delivered as completed JSON; transport
+retries cover the entire stream and retain each attempt's usage when available.
+`stream_end.accounting` records physical stream usage (unknown stays unknown);
+the final `response`/`token_accounting` is a compatibility summary of the same
+successful attempt, not an additional charge. For Alibaba Qwen, output policies
+that include reasoning use `max_completion_tokens`, since `max_tokens` limits
+only the answer. Historical frozen campaigns keep their original implementation.
 
 The formalizer/planner `*-api.py` entrypoints also accept
 `--model self-hosted/SERVED_MODEL_ID` for a locally deployed OpenAI-compatible

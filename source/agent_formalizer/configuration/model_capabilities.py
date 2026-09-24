@@ -161,7 +161,9 @@ def apply_output_policy(payload, policy, api_path, *, input_tokens=None, deploym
         else:
             name = str(result.get("model", "")).split("/")[-1]
             provider = policy["model"].split("/", 1)[0]
-            completion_field = (provider not in {"google-vertex", "google", "gemini", "deepseek"}
+            # Model Studio's max_tokens excludes thinking. Our Qwen policy
+            # budgets reasoning + final output, so use its total-token field.
+            completion_field = (provider == "alibaba" and policy.get("output_accounting") == "includes_reasoning") or (provider not in {"google-vertex", "google", "gemini", "deepseek"}
                                 and ("max_completion_tokens" in result or name.startswith(("gpt-5", "o1", "o3", "o4"))))
             field = "max_completion_tokens" if completion_field else "max_tokens"
         for key in ("max_tokens", "max_completion_tokens", "max_output_tokens"):

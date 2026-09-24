@@ -459,6 +459,7 @@ class OpenClawAdapter(BaseClawAdapter):
             "anthropic": "anthropic-messages",
             "openrouter": "openai-completions",
             "deepseek": "openai-completions",
+            "alibaba": "openai-completions",
             "logits": "openai-completions",
             "dashscope": "openai-completions",
             "qwen": "openai-completions",
