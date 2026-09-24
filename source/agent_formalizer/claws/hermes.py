@@ -90,6 +90,8 @@ class HermesAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             "provider": self.hermes_provider,
             "base_url": self.api_base,
         }
+        if self.output_token_policy():
+            model_config["max_tokens"] = self.native_max_output_tokens()
         if self.is_google_vertex:
             # Hermes expands ${...} at config-load time. Empty Authorization
             # overrides the OpenAI SDK's Bearer header so Vertex authenticates

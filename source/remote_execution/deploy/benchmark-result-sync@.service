@@ -1,0 +1,19 @@
+[Unit]
+Description=Durable per-execution result collection for remote job %i
+After=network-online.target
+
+[Service]
+Type=simple
+# Install on Contabo, not the GPU node. Substitute the actual control checkout,
+# existing uv environment, owner and tunnel endpoint before enabling.
+User=lingzezhang
+WorkingDirectory=/opt/formalizer-controller
+Environment=PYTHONPATH=/opt/formalizer-controller/source
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/formalizer-controller/.venv/bin/python -B -m remote_execution --endpoint http://127.0.0.1:18876 --token-file /srv/formalizer-controller/private/control-token sync %i --destination /srv/formalizer-controller/results --follow --interval 5
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

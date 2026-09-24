@@ -38,7 +38,7 @@ class LoopBackend(BaseHTTPRequestHandler):
         message = {'role': 'assistant', 'content': 'Done.'}
         if number == 2:
             name = {'generic': 'code_run', 'hermes': 'terminal',
-                    'nanobot': 'exec', 'zeroclaw': 'shell'}[self.server.harness]
+                    'nanobot': 'exec', 'zeroclaw': 'shell', 'openclaw': 'exec'}[self.server.harness]
             available = [t['function']['name'] for t in request.get('tools', [])]
             if name not in available:
                 self.server.error = f'{name} missing from {available}'
@@ -46,9 +46,10 @@ class LoopBackend(BaseHTTPRequestHandler):
                 name = 'nonexistent-audit-fixture-tool'
             command = 'cd /workspace && pddl-solver'
             if self.server.harness == 'zeroclaw':
-                # Its native command policy permits Python, not arbitrary
-                # CLI names. Do not relax that policy just for this adapter.
-                command = 'python3 solver_fixture.py'
+                # Exercise the advertised CLI through the REAL command gate.
+                # A Python subprocess fixture used to mask the missing grant.
+                command = 'pddl-solver'
+            command = getattr(self.server, 'shell_command', None) or command
             args = {'code': "import subprocess; print(subprocess.run(['pddl-solver'], cwd='/workspace', capture_output=True, text=True).stdout)"} if name == 'code_run' else {'command': command}
             if self.server.background:
                 args.update({'background': True} if self.server.harness == 'hermes' else {'yield_time_ms': 1})
@@ -102,13 +103,16 @@ class LoopBackend(BaseHTTPRequestHandler):
 
 @unittest.skipUnless(os.environ.get('RUN_EXTERNAL_CALLS_DOCKER_TESTS') == '1', 'opt-in native Docker test')
 class MultiHarnessLoopTests(unittest.TestCase):
-    def run_loop(self, harness, *, short_shell=False, slow_solver=False, background=False, short_model=False, unknown_tool=False):
+    def run_loop(self, harness, *, short_shell=False, slow_solver=False, background=False,
+                 short_model=False, unknown_tool=False, shell_command=None,
+                 expected_denial=None, legacy_command_policy=False):
         bridge = json.loads(subprocess.check_output(['docker', 'network', 'inspect', 'bridge'], text=True))[0]['IPAM']['Config'][0]['Gateway']
         model = ThreadingHTTPServer((bridge, 0), LoopBackend)
         solver = ThreadingHTTPServer((bridge, 0), DelayedBackend)
         model.requests, model.harness, model.error = [], harness, None
         model.background = background
         model.unknown_tool = unknown_tool
+        model.shell_command = shell_command
         model.failure_delay = 3 if short_model else 0.3
         solver.requests, solver.responses = [], ([SUBMIT, PLAN] if slow_solver or background else [SUBMIT, TIMEOUT, SUBMIT, PLAN])
         solver.final_delay = 8 if background else 5 if slow_solver else 0
@@ -127,6 +131,18 @@ class MultiHarnessLoopTests(unittest.TestCase):
                          patch.object(adapter, 'solver_upstream_base', return_value=f'http://{bridge}:{solver.server_port}'), \
                          patch.object(adapter, 'solver_backend', return_value='public'):
                         workspace.start()
+                    if harness == 'openclaw':
+                        adapter.create_agent(identity, instance_id=identity)
+                    if legacy_command_policy:
+                        # Reproduce the historical omission without bypassing
+                        # the real native security gate or changing the CLI.
+                        self.assertEqual(harness, 'zeroclaw')
+                        config = adapter._benchmark_config_toml()
+                        self.assertIn('allowed_commands = ', config)
+                        config = ''.join(line for line in config.splitlines(keepends=True)
+                                         if not line.startswith('allowed_commands = '))
+                        self.assertTrue(workspace.write_text_file(
+                            '/tmp/zeroclaw-pddl-benchmark/config.toml', config))
                     if short_shell:
                         # Test-only shortened native value; campaign TOML is
                         # unchanged. This isolates the Rust shell timer itself.
@@ -137,9 +153,6 @@ class MultiHarnessLoopTests(unittest.TestCase):
                             adapter._benchmark_config_toml().replace('timeout_secs = 1800', 'timeout_secs = 2'))
                     workspace.write_text_file('/workspace/domain.pddl', '(domain bytes)')
                     workspace.write_text_file('/workspace/problem.pddl', '(problem bytes)')
-                    if harness == 'zeroclaw':
-                        workspace.write_text_file('/workspace/solver_fixture.py',
-                            "import subprocess\nprint(subprocess.run(['pddl-solver'], cwd='/workspace', capture_output=True, text=True).stdout)\n")
                     clock = AttemptClock(90)
                     adapter._attempt_clock.clock = clock  # fixture watchdog only
                     workspace.start_model_gateway_monitor(clock)
@@ -164,6 +177,9 @@ class MultiHarnessLoopTests(unittest.TestCase):
                         # EOF is a native denial; do not auto-approve unknown
                         # tools merely to make the audit fixture pass.
                         self.assertIn('Denied by user.', json.dumps(final_context), output)
+                    elif expected_denial:
+                        self.assertIn(expected_denial, json.dumps(final_context), output)
+                        self.assertNotIn('(move a b)', json.dumps(final_context), output)
                     elif slow_solver:
                         self.assertIn('Command timed out after 3s and was killed', json.dumps(final_context), output)
                         self.assertNotIn('(move a b)', json.dumps(final_context), output)
@@ -177,13 +193,13 @@ class MultiHarnessLoopTests(unittest.TestCase):
                     if background:
                         self.assertTrue(any(row.get('external_call_timing_mode') == 'running_wall' for row in ledger), ledger)
                     calls = list((Path(directory) / 'gateway/solver_calls').glob('call-*/outcome.json'))
-                    self.assertEqual(len(calls), 0 if unknown_tool else 1, output)
+                    self.assertEqual(len(calls), 0 if unknown_tool or expected_denial else 1, output)
                     if calls:
                         self.assertEqual(json.loads(calls[0].read_text())['action'], 'native_deadline' if slow_solver else 'return',
                         {'output': output, 'solver_outcome': json.loads(calls[0].read_text()),
                          'settlements': (Path(directory) / 'gateway/call_checkpoints.jsonl').read_text(),
                          'clock': clock.snapshot()})
-                    self.assertEqual(len(solver.requests), 0 if unknown_tool else 2 if slow_solver or background else 4, output)
+                    self.assertEqual(len(solver.requests), 0 if unknown_tool or expected_denial else 2 if slow_solver or background else 4, output)
                     self.assertEqual(workspace.validate_state_isolation()['status'], 'pass')
                     from agent_formalizer.results.optional_evidence import collect_full_trace_evidence
                     audit = collect_full_trace_evidence(Path(directory), harness, workspace.container_name)
@@ -199,14 +215,18 @@ class MultiHarnessLoopTests(unittest.TestCase):
                         native_logs='\n'.join(p.read_text() for p in (Path(directory)/'sessions').glob('*.jsonl'))
                         self.assertIn('Denied by user.',native_logs)
                     else:
-                        self.assertIn('(move a b)' if not slow_solver else 'timed out', native_text)
+                        self.assertIn(expected_denial or ('(move a b)' if not slow_solver else 'timed out'), native_text)
                     self.assertTrue((Path(directory) / 'gateway/provider_full_trace.jsonl').is_file())
                     print(harness, 'native model→tool→model:', clock.snapshot(),
                           'streaming:', [json.loads(raw).get('stream') for raw in model.requests],
                           'other native calls:', [{k: row.get(k) for k in ('routing_reason', 'routing_class', 'status_code')}
                                                    for row in ledger if not row.get('downstream_committed')], flush=True)
                 finally:
+                    adapter.prepare_agent_cleanup(identity, instance_id=identity,
+                                                  container_name=workspace.container_name)
                     workspace.cleanup()
+                    if harness == 'openclaw':
+                        adapter.delete_agent(identity, instance_id=identity)
         finally:
             for server in (model, solver):
                 server.shutdown()
@@ -214,6 +234,9 @@ class MultiHarnessLoopTests(unittest.TestCase):
 
     def test_generic_native_loop(self):
         self.run_loop('generic')
+
+    def test_openclaw_native_loop(self):
+        self.run_loop('openclaw')
 
     def test_hermes_native_loop(self):
         self.run_loop('hermes')
@@ -223,6 +246,27 @@ class MultiHarnessLoopTests(unittest.TestCase):
 
     def test_zeroclaw_native_loop(self):
         self.run_loop('zeroclaw')
+
+    def test_zeroclaw_solver_documented_argument_forms(self):
+        for command in (
+            'pddl-solver --domain /workspace/domain.pddl --problem /workspace/problem.pddl',
+            '/usr/local/bin/pddl-solver --domain domain.pddl --problem problem.pddl',
+        ):
+            with self.subTest(command=command):
+                self.run_loop('zeroclaw', shell_command=command)
+
+    def test_zeroclaw_solver_missing_grant_reproduces_historical_denial(self):
+        self.run_loop('zeroclaw', legacy_command_policy=True,
+                      expected_denial='Command not allowed by security policy')
+
+    def test_zeroclaw_solver_grant_preserves_native_shell_restrictions(self):
+        for command in (
+            'pddl-solver > solver-result.txt',
+            'pddl-solver && benchmark-unapproved-command',
+        ):
+            with self.subTest(command=command):
+                self.run_loop('zeroclaw', shell_command=command,
+                              expected_denial='Command not allowed by security policy')
 
     def test_zeroclaw_unknown_tool_early_return_is_audited(self):
         self.run_loop('zeroclaw', unknown_tool=True)

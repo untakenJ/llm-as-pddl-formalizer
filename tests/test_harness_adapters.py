@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -58,9 +59,38 @@ from sweep_agent_pipeline import (
 )
 
 NATIVE_HARNESSES = {"openclaw", "hermes", "nanobot", "zeroclaw", "generic"}
+ALIBABA_MODEL = "alibaba/qwen3.8-27b"
 
 
 class AdapterRegistryTests(unittest.TestCase):
+    def test_alibaba_model_studio_route_is_available_to_every_harness(self):
+        for name in NATIVE_HARNESSES:
+            with self.subTest(name=name):
+                adapter = get_adapter(name, model=ALIBABA_MODEL, api_key="secret")
+                try:
+                    self.assertEqual(
+                        adapter.upstream_api_base(),
+                        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                    )
+                    self.assertEqual(adapter.model_gateway()["provider"], "alibaba")
+                    self.assertIn("qwen3.8-27b", adapter.model_gateway()["allowed_models"])
+                    self.assertEqual(adapter.model_gateway_secret(), "secret")
+                    self.assertNotIn("secret", json.dumps(adapter.model_auth()))
+                    if isinstance(adapter, HermesAdapter):
+                        self.assertEqual(adapter.hermes_provider, "alibaba")
+                    elif isinstance(adapter, NanoBotAdapter):
+                        self.assertEqual(adapter.nanobot_provider, "dashscope")
+                    elif isinstance(adapter, ZeroClawAdapter):
+                        self.assertEqual(adapter.zeroclaw_provider, "qwen")
+                    elif isinstance(adapter, OpenClawAdapter):
+                        self.assertEqual(
+                            adapter._gateway_provider_config()["api"],
+                            "openai-completions",
+                        )
+                finally:
+                    if isinstance(adapter, OpenClawAdapter):
+                        adapter._cleanup_run_state()
+
     def test_all_requested_harnesses_are_registered(self):
         self.assertEqual(
             set(CLAWS),
@@ -303,7 +333,7 @@ class ProviderTests(unittest.TestCase):
             with self.subTest(name=name):
                 adapter = get_adapter(
                     name,
-                    model="openai/test-model",
+                    model="deepseek/deepseek-v4-flash",
                     api_key=secret,
                     api_key_name="BENCHMARK_KEY",
                 )
@@ -348,7 +378,7 @@ class ProviderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             frozen = _freeze_study_profile(DEFAULT_BENCHMARK_PROFILE, root)
-            self.assertEqual(frozen.raw, DEFAULT_BENCHMARK_PROFILE.raw)
+            self.assertEqual(frozen.raw, DEFAULT_BENCHMARK_PROFILE.frozen_raw())
             changed = deepcopy(DEFAULT_BENCHMARK_PROFILE.raw)
             changed["condition_profile"]["id"] = "changed"
             profile_path = root / "changed.json"
@@ -711,6 +741,34 @@ class GeneratedConfigTests(unittest.TestCase):
         self.assertIn("[providers.models.custom.benchmark]", config)
         self.assertIn("native_tools = true", config)
         self.assertIn('wire_api = "chat_completions"', config)
+
+    def test_zeroclaw_solver_grants_only_selected_cli_preserving_native_policy(self):
+        from agent_formalizer.claws.zeroclaw import ZEROCLAW_NATIVE_ALLOWED_COMMANDS
+        raw = deepcopy(DEFAULT_BENCHMARK_PROFILE.raw)
+        clean = get_adapter("zeroclaw", model="deepseek/deepseek-v4-flash")
+        with tempfile.TemporaryDirectory() as tmp:
+            raw["condition_profile"]["overrides"]["agent_tools"] = ["pddl_solver"]
+            raw["infra_retry"]["invalidators"].append("solver_gateway_start_failed")
+            path = Path(tmp) / "solver.json"
+            path.write_text(json.dumps(raw))
+            enabled = get_adapter("zeroclaw", model="deepseek/deepseek-v4-flash", benchmark_profile=load_benchmark_profile(path))
+        baseline = tomllib.loads(clean._benchmark_config_toml())
+        configured = tomllib.loads(enabled._benchmark_config_toml())
+        risk = configured["risk_profiles"]["benchmark"]
+        self.assertEqual(risk.pop("allowed_commands"), [*ZEROCLAW_NATIVE_ALLOWED_COMMANDS, "pddl-solver"])
+        self.assertEqual(configured, baseline)
+        self.assertEqual(clean.tool_policy()["benchmark_command_grants"], [])
+        self.assertEqual(enabled.tool_policy()["benchmark_command_grants"], ["pddl-solver"])
+
+    def test_zeroclaw_command_defaults_match_installed_pinned_source(self):
+        import re
+        from agent_formalizer.claws.zeroclaw import ZEROCLAW_NATIVE_ALLOWED_COMMANDS
+        from agent_formalizer.configuration.config import ZEROCLAW_SOURCE_PATH
+        path = ZEROCLAW_SOURCE_PATH / "crates/zeroclaw-config/src/policy.rs"
+        if not path.is_file():
+            self.skipTest("pinned native source is not installed")
+        unix = path.read_text().split("pub(crate) fn default_allowed_commands()", 1)[1].split("/// Default allowed commands for Windows", 1)[0]
+        self.assertEqual(re.findall(r'"([a-z0-9]+)"\.into\(\)', unix), list(ZEROCLAW_NATIVE_ALLOWED_COMMANDS))
 
     def test_generic_mykey_reads_secret_from_environment(self):
         adapter = GenericAgentAdapter("openai/gpt-5.4-mini", 120)

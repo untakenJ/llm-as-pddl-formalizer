@@ -39,6 +39,7 @@ class NativeBaselineTests(unittest.TestCase):
         expected["profile_id"] = "pddl-native-baseline-v1"
         expected["condition_profile"]["id"] = "native-clean--call-checkpoint-v1"
         expected["condition_profile"]["overrides"]["agent_tools"] = []
+        expected["condition_profile"]["overrides"]["generation"] = {"max_output_tokens": "model_max"}
         expected["infra_retry"]["invalidators"].remove("solver_gateway_start_failed")
         self.assertEqual(load_benchmark_profile().raw, expected)
 
@@ -61,7 +62,8 @@ class NativeBaselineTests(unittest.TestCase):
                 self.assertFalse(adapter.pddl_solver_tool_enabled())
                 self.assertEqual(adapter.skills_mode, "official")
                 self.assertNotIn("experiment_skills", resolved.raw["resolved"])
-                self.assertEqual(resolved.generation_overrides, {})
+                self.assertEqual(resolved.generation_overrides, {"output_token_policy": resolved.output_token_policy})
+                self.assertEqual(resolved.output_token_policy["max_output_tokens"], 65536)
                 prompt = adapter.build_task_prompt("DOMAIN", "PROBLEM")
                 self.assertNotIn("pddl-solver", prompt)
                 self.assertNotIn(".benchmark-skills", prompt)
@@ -82,7 +84,7 @@ class NativeBaselineTests(unittest.TestCase):
             path.write_text(json.dumps(raw))
             derived = load_benchmark_profile(path)
             frozen = _freeze_study_profile(derived, root)
-            self.assertEqual(frozen.raw, derived.raw)
+            self.assertEqual(frozen.raw, derived.frozen_raw())
             self.assertEqual(derived.raw["benchmark_envelope"], baseline.raw["benchmark_envelope"])
             for harness in HARNESSES:
                 adapter = get_adapter(harness, benchmark_profile=frozen)

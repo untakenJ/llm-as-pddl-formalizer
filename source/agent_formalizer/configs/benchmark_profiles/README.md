@@ -28,8 +28,11 @@ It retains:
 
 `agent_tools: []` means no **benchmark-added** solver tool, solver prompt or
 agent solver sidecar. It does not disable the harness's ordinary native tools.
-Evaluation still uses solver/VAL. Generation settings such as temperature remain
-native defaults unless explicitly selected as an experimental difference.
+Evaluation still uses solver/VAL. Temperature and thinking mode remain native.
+The user-approved default output-limit condition is now
+`generation.max_output_tokens: "model_max"`; this deliberately overrides native
+output ceilings, not native loops or tools. See the
+[output-limit contract](../README.md#model-output-limits).
 
 The five native harnesses use their locked checkpoint adaptations. In
 particular, ZeroClaw needs its content-addressed timing overlay when missing:
@@ -57,14 +60,29 @@ passed solver/VAL. The implementation checks, not answer correctness, justify
 adoption. Exact source hashes and verification references are retained in that
 revision's `baseline_adoption.json` and frozen manifests.
 
-This adopts implementation code, not a new semantic profile. The baseline JSON
-is byte-for-byte unchanged (SHA-256
+That 2026-09-10 adoption changed implementation code, not the semantic profile.
+At that adoption the baseline JSON was unchanged (historical SHA-256
 `2062f7f5ce36be7782b7e88af9bde27f79301ac116fec8e4b76bd860e422dcc7`):
 Gemini 3.1 Flash Lite, local evaluation solver and no benchmark-added agent solver
 tool remain the defaults. Models, backends and solver-as-tool remain selectable
 through derived profiles. New campaigns still record/freeze their actual runtime
 and adapter hashes; existing frozen campaigns are not hot-updated by this
 designation.
+
+## Approved output-limit default (2026-09-16)
+
+The user explicitly approved implementing model-dependent output limits and
+changing the experiment default to `"model_max"`. The canonical JSON therefore
+now sets `condition_profile.overrides.generation.max_output_tokens` accordingly.
+The earlier baseline hash above is historical, not the current file hash.
+Gemini 3.1 Flash Lite, local evaluation solver, no benchmark-added agent tools,
+and the approved timing implementation remain unchanged. This is a new semantic
+condition for new studies; never hot-apply it to existing frozen campaigns.
+
+The capability registry is `configs/model_capabilities.json`. Freeze its evidence
+with the campaign profile; per-model resolved limits and context handling enter
+the resolved experiment identity. Registry/alias changes require review and a
+new frozen condition when they change a selected model's semantics.
 
 ## Derive an experiment, do not mutate the baseline
 

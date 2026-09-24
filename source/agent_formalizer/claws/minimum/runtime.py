@@ -124,7 +124,7 @@ def _post_json(
     url: str,
     payload: dict[str, Any],
     *,
-    timeout_seconds: float,
+    timeout_seconds: float | None,
 ) -> tuple[int, dict[str, Any]]:
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
     request = urllib.request.Request(
@@ -169,7 +169,8 @@ def _chat_completion(
             "messages": messages,
             "stream": False,
         },
-        timeout_seconds=float(config.get("request_timeout_seconds", 600)),
+        timeout_seconds=(float(config.get("request_timeout_seconds", 600))
+                         if config.get("request_timeout_seconds", 600) is not None else None),
     )
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -199,7 +200,8 @@ def _solver_feedback(
         status, response = _post_json(
             url,
             payload,
-            timeout_seconds=float(config.get("solver_timeout_seconds", 600)),
+            timeout_seconds=(float(config.get("solver_timeout_seconds", 600))
+                             if config.get("solver_timeout_seconds", 600) is not None else None),
         )
         record = {
             "event": "fixed_solver_call",

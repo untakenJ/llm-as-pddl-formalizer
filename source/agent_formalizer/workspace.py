@@ -122,6 +122,7 @@ class AgentWorkspace:
         self._gateway_control_dir: Path | None = None
         self._gateway_control_path: Path | None = None
         self._gateway_cancel_path: Path | None = None
+        self._gateway_native_exit_path: Path | None = None
         self._gateway_monitor_stop: threading.Event | None = None
         self._gateway_monitor_thread: threading.Thread | None = None
         self._gateway_terminal_error: dict | None = None
@@ -337,6 +338,7 @@ class AgentWorkspace:
         self._gateway_control_dir = directory
         self._gateway_control_path = directory / "state.json"
         self._gateway_cancel_path = directory / "benchmark-cancelled"
+        self._gateway_native_exit_path = directory / "native-harness-exited"
         return self._gateway_control_path
 
     def _cleanup_gateway_control(self) -> None:
@@ -345,6 +347,7 @@ class AgentWorkspace:
         self._gateway_control_dir = None
         self._gateway_control_path = None
         self._gateway_cancel_path = None
+        self._gateway_native_exit_path = None
 
     def _read_gateway_control(self) -> dict | None:
         path = self._gateway_control_path
@@ -574,6 +577,9 @@ class AgentWorkspace:
         container_control_dir = "/run/benchmark-control"
         container_control_path = f"{container_control_dir}/state.json"
         container_cancel_path = f"{container_control_dir}/benchmark-cancelled"
+        container_native_exit_path = (
+            f"{container_control_dir}/native-harness-exited"
+        )
         evidence_dir = (
             self.artifact_dir / "gateway"
             if self.artifact_dir is not None
@@ -745,6 +751,7 @@ class AgentWorkspace:
             ),
             "-e", f"PDDL_GATEWAY_CONTROL_FILE={container_control_path}",
             "-e", f"PDDL_GATEWAY_BENCHMARK_CANCEL_FILE={container_cancel_path}",
+            "-e", f"PDDL_GATEWAY_NATIVE_EXIT_FILE={container_native_exit_path}",
             "-e", (
                 "PDDL_GATEWAY_RESPONSE_DELIVERY="
                 + gateway.get("response_delivery", "buffered_atomic")
@@ -771,6 +778,7 @@ class AgentWorkspace:
                 f"target={container_evidence_dir}"
             ),
             "-v", f"{entrypoint_host}:{entrypoint_container}:ro",
+            "-v", f"{MODEL_GATEWAY_SCRIPT.parent.parent / 'configuration/model_capabilities.py'}:/opt/pddl-benchmark/model_capabilities.py:ro",
             "-v", f"{EXTERNAL_CALLS_PACKAGE}:{EXTERNAL_CALLS_CONTAINER_PATH}:ro",
             "-v",
             (
@@ -1010,6 +1018,81 @@ class AgentWorkspace:
             return json.loads(result.stdout)
         except json.JSONDecodeError:
             return {"error": "gateway returned invalid status"}
+
+    def finalize_model_gateway_after_native_exit(
+        self, *, wait_seconds: float = 2.0
+    ) -> dict:
+        """Settle post-exit requests and retain a bounded lifecycle record."""
+        report = {
+            "schema_version": 1,
+            "requested_at": datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat().replace("+00:00", "Z"),
+            "status": "not_started",
+            "wait_seconds": wait_seconds,
+        }
+        if not self._gateway_started:
+            return report
+        if self._gateway_native_exit_path is not None:
+            try:
+                self._gateway_native_exit_path.write_text("native_harness_exit\n")
+            except OSError as exc:
+                report["marker_error"] = type(exc).__name__
+        code = (
+            "import urllib.request; "
+            "r=urllib.request.Request("
+            f"'http://127.0.0.1:{MODEL_GATEWAY_PORT}/__benchmark__/native-exit',"
+            "data=b'',method='POST'); "
+            "print(urllib.request.urlopen(r,timeout=5).read().decode())"
+        )
+        try:
+            result = subprocess.run(
+                ["docker", "exec", self.gateway_name, "python3", "-c", code],
+                capture_output=True,
+                text=True,
+                timeout=max(1.0, min(5.0, wait_seconds + 1.0)),
+            )
+            if result.returncode == 0:
+                report["gateway_acknowledgement"] = json.loads(result.stdout)
+            else:
+                report["gateway_error"] = (
+                    result.stderr.strip() or "native-exit endpoint unavailable"
+                )
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+            report["gateway_error"] = type(exc).__name__
+
+        deadline = time.monotonic() + max(0.0, wait_seconds)
+        control = self._read_gateway_control()
+        while (
+            control is not None
+            and control.get("in_flight_requests", 0)
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.02)
+            control = self._read_gateway_control()
+        report["final_control"] = control
+        if control is None:
+            report["status"] = "status_collection_failed"
+        elif control.get("in_flight_requests", 0) == 0:
+            report["status"] = "settled"
+        else:
+            report["status"] = "active_requests_retained_in_ledger"
+        report["completed_at"] = datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat().replace("+00:00", "Z")
+        if self._gateway_evidence_dir is not None:
+            try:
+                evidence_path = (
+                    self._gateway_evidence_dir / "native_exit_finalization.json"
+                )
+                temporary = evidence_path.with_name(f".{evidence_path.name}.tmp")
+                temporary.write_text(
+                    json.dumps(report, indent=2, sort_keys=True) + "\n"
+                )
+                os.replace(temporary, evidence_path)
+            except OSError:
+                logger.exception("Could not persist gateway native-exit evidence")
+        return report
 
     def model_gateway_ledger(self) -> list[dict]:
         """Return the secret-free per-request ledger from inside the sidecar."""

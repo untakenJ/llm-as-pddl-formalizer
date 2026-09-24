@@ -93,6 +93,26 @@ class FullTraceTests(unittest.TestCase):
         self.assertIsNone(token_accounting({"usage": {"prompt_tokens": 1}}, "gemini-3.1-flash-lite")["estimated_cost_usd"])
         self.assertIsNone(token_accounting({"usage": {"prompt_tokens": 1, "completion_tokens": 1}}, "unpriced")["estimated_cost_usd"])
 
+    def test_omitted_zero_output_is_derived_only_from_complete_totals(self):
+        gemini = token_accounting(
+            {"usageMetadata": {"promptTokenCount": 12, "totalTokenCount": 12}},
+            "gemini-3.1-flash-lite",
+        )
+        openai = token_accounting(
+            {"usage": {"prompt_tokens": 7, "total_tokens": 7}},
+            "gemini-3.1-flash-lite",
+        )
+        incomplete = token_accounting(
+            {"usageMetadata": {"promptTokenCount": 12}},
+            "gemini-3.1-flash-lite",
+        )
+        self.assertEqual(gemini["output_tokens_including_thinking"], 0)
+        self.assertEqual(openai["output_tokens_including_thinking"], 0)
+        self.assertTrue(gemini["zero_output_derived_from_complete_totals"])
+        self.assertTrue(openai["zero_output_derived_from_complete_totals"])
+        self.assertIsNone(incomplete["output_tokens_including_thinking"])
+        self.assertFalse(incomplete["zero_output_derived_from_complete_totals"])
+
     def test_openclaw_thinking_not_truncated(self):
         value = "reason " * 2000
         self.assertEqual(_sanitize_content_block({"thinking": value})["thinking"], value)
@@ -151,6 +171,10 @@ class FullTraceTests(unittest.TestCase):
                 module.run_gpt_batch(**args)
                 module.run_gpt_batch(**args)
                 self.assertEqual(call.call_count,1)
+                self.assertTrue(call.call_args.kwargs['stream'])
+                with self.assertRaisesRegex(ValueError, 'transport differs'):
+                    module.run_gpt_batch(**args, stream=False)
+                self.assertEqual(call.call_count, 1)
                 trace = next((root/'output').rglob('*_trace.jsonl'))
                 old_trace = trace.read_bytes()
                 trace.write_text('interrupted trace\n')

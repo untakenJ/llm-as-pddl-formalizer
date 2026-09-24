@@ -251,6 +251,12 @@ class NanoBotAdapter(PythonRuntimeMixin, EnvConfiguredAdapter):
             },
             "channels": {},
         }
+        if self.output_token_policy():
+            defaults = config["agents"]["defaults"]
+            defaults["maxTokens"] = self.native_max_output_tokens()
+            # The true model context, not output+old context fabricated to
+            # compensate for a large completion reservation.
+            defaults["contextWindowTokens"] = self.output_token_policy()["context_window_tokens"]
         if logical_deadlines_selected(self):
             # Native allowlist surface: propagate only the non-secret timing
             # runtime, never the model credential or host environment.

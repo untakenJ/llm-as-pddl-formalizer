@@ -25,7 +25,7 @@ from agent_formalizer.results.execution_validity import (
 def adapter(max_tries: int = 3):
     resolved = DEFAULT_BENCHMARK_PROFILE.resolve(
         "hermes",
-        model="openai/test-model",
+        model="deepseek/deepseek-v4-flash",
         max_execution_tries=max_tries,
     )
     return SimpleNamespace(resolved_config=resolved)

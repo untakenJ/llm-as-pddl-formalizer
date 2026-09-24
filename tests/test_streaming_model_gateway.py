@@ -79,7 +79,10 @@ class RetryUpstream(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        event = b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+        event = (
+            b'data: {"choices":[{"delta":{"content":"ok"},'
+            b'"finish_reason":"stop"}]}\n\n'
+        )
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Content-Length", str(len(event)))
@@ -101,7 +104,10 @@ class PreHeaderDisconnectUpstream(BaseHTTPRequestHandler):
             self.connection.shutdown(socket.SHUT_RDWR)
             self.connection.close()
             return
-        event = b'data: {"choices":[{"delta":{"content":"recovered"}}]}\n\n'
+        event = (
+            b'data: {"choices":[{"delta":{"content":"recovered"},'
+            b'"finish_reason":"stop"}]}\n\n'
+        )
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Content-Length", str(len(event)))
@@ -128,7 +134,8 @@ class ConcurrentUpstream(BaseHTTPRequestHandler):
         event = (
             b"data: "
             + json.dumps(
-                {"choices": [{"index": 0, "delta": {"tool_calls": calls}}]}
+                {"choices": [{"index": 0, "delta": {"tool_calls": calls},
+                              "finish_reason": "tool_calls"}]}
             ).encode()
             + b"\n\n"
         )
@@ -159,7 +166,10 @@ class PeriodicUpstream(BaseHTTPRequestHandler):
             event = (
                 b"data: "
                 + json.dumps(
-                    {"choices": [{"delta": {"content": str(index)}}]}
+                    {"choices": [{"delta": {"content": str(index)},
+                                  "finish_reason": (
+                                      "stop" if index == count - 1 else None
+                                  )}]}
                 ).encode()
                 + b"\n\n"
             )
@@ -302,11 +312,39 @@ class StreamObserverTests(unittest.TestCase):
         wire = b"".join(
             b"data: " + json.dumps(payload).encode() + b"\n\n"
             for payload in payloads
-        )
+        ) + b"data: [DONE]\n\n"
         for byte in wire:
             observer.feed(bytes([byte]))
         observer.finish()
         self.assertEqual(observer.provisional_tool_calls, 4)
+
+    def test_clean_sse_eof_without_provider_terminal_is_incomplete(self):
+        from agent_formalizer.gateways.model_gateway import StreamObservationError
+
+        observer = StreamToolObserver("text/event-stream")
+        observer.feed(b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n')
+        with self.assertRaisesRegex(StreamObservationError, "provider terminal"):
+            observer.finish()
+        self.assertFalse(observer.provider_terminal_observed)
+
+    def test_malformed_sse_data_is_not_a_completion_marker(self):
+        from agent_formalizer.gateways.model_gateway import StreamObservationError
+
+        observer = StreamToolObserver("text/event-stream")
+        observer.feed(b"data: {not-json}\n\n")
+        observer.feed(b"data: [DONE]\n\n")
+        with self.assertRaisesRegex(StreamObservationError, "malformed"):
+            observer.finish()
+
+    def test_openai_usage_only_final_event_is_a_provider_terminal(self):
+        observer = StreamToolObserver("text/event-stream")
+        observer.feed(
+            b'data: {"choices":[],"usage":{"prompt_tokens":3,'
+            b'"completion_tokens":0,"total_tokens":3}}\n\n'
+        )
+        observer.finish()
+        self.assertTrue(observer.provider_terminal_observed)
+        self.assertEqual(observer.provider_terminal_type, "usage_final")
 
     def test_sse_observer_buffer_is_bounded(self):
         observer = StreamToolObserver("text/event-stream")
@@ -409,7 +447,10 @@ class StreamingGatewayTests(unittest.TestCase):
 
     def test_first_event_arrives_before_provider_finishes_and_bytes_match(self):
         first = b'data: {"choices":[{"delta":{"content":"a"}}]}\n\n'
-        second = b'data: {"choices":[{"delta":{"content":"b"}}]}\n\n'
+        second = (
+            b'data: {"choices":[{"delta":{"content":"b"},'
+            b'"finish_reason":"stop"}]}\n\n'
+        )
         StreamingUpstream.scripts = [[(first, 0), (second, 0.35)]]
         with running_gateway(StreamingUpstream) as (base, *_):
             started = time.monotonic()
@@ -428,6 +469,9 @@ class StreamingGatewayTests(unittest.TestCase):
         self.assertTrue(row["downstream_committed"])
         self.assertEqual(row["upstream_bytes"], len(body))
         self.assertEqual(row["downstream_bytes"], len(body))
+        self.assertTrue(row["transport_stream_completed"])
+        self.assertTrue(row["provider_terminal_observed"])
+        self.assertEqual(row["provider_terminal_type"], "choices.finish_reason")
 
     def test_v4_buffered_mode_remains_atomic_and_byte_preserving(self):
         first = b'data: {"choices":[{"delta":{"content":"a"}}]}\n\n'
@@ -458,7 +502,8 @@ class StreamingGatewayTests(unittest.TestCase):
         event = (
             b"data: "
             + json.dumps(
-                {"choices": [{"index": 0, "delta": {"tool_calls": calls}}]}
+                {"choices": [{"index": 0, "delta": {"tool_calls": calls},
+                              "finish_reason": "tool_calls"}]}
             ).encode()
             + b"\n\n"
         )
@@ -477,6 +522,69 @@ class StreamingGatewayTests(unittest.TestCase):
         self.assertEqual(status["action_step_overshoot"], 2)
         self.assertEqual(status["overshoot_causing_logical_call"], 1)
         self.assertEqual(status["max_tool_batch_size"], 3)
+
+    def test_clean_http_eof_without_provider_terminal_invalidates_stream(self):
+        event = b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+        StreamingUpstream.content_length = len(event)
+        StreamingUpstream.scripts = [[(event, 0)]]
+        with running_gateway(StreamingUpstream) as (base, *_):
+            self.assertEqual(urllib.request.urlopen(_request(base)).read(), event)
+            for _ in range(100):
+                status = _ledger(base)
+                if (
+                    status["ledger"]
+                    and status["ledger"][0].get("lifecycle_status") == "terminal"
+                ):
+                    break
+                time.sleep(0.01)
+
+        row = status["ledger"][0]
+        self.assertTrue(row["transport_stream_completed"])
+        self.assertFalse(row["provider_terminal_observed"])
+        self.assertFalse(row["stream_completed"])
+        self.assertEqual(
+            status["terminal_infra_error"]["reason"],
+            "post_commit_stream_failure",
+        )
+
+    def test_native_exit_keeps_active_request_in_collection_ledger(self):
+        first = b'data: {"choices":[{"delta":{"content":"tail"}}]}\n\n'
+        later = b"data: [DONE]\n\n"
+        StreamingUpstream.scripts = [[(first, 0), (later, 0.5)]]
+        with running_gateway(StreamingUpstream) as (base, *_):
+            parsed = urllib.parse.urlsplit(base)
+            sock = socket.create_connection((parsed.hostname, parsed.port), timeout=5)
+            request_body = json.dumps(
+                {"model": "gpt-test", "stream": True}
+            ).encode()
+            sock.sendall(
+                b"POST /v1/chat/completions HTTP/1.1\r\n"
+                + f"Host: {parsed.hostname}\r\n".encode()
+                + b"Content-Type: application/json\r\n"
+                + f"Content-Length: {len(request_body)}\r\n\r\n".encode()
+                + request_body
+            )
+            received = b""
+            while first not in received:
+                received += sock.recv(4096)
+            request = urllib.request.Request(
+                base + "/__benchmark__/native-exit",
+                data=b"",
+                method="POST",
+            )
+            acknowledgement = json.loads(
+                urllib.request.urlopen(request, timeout=5).read()
+            )
+            status = _ledger(base)
+            sock.close()
+
+        self.assertEqual(acknowledgement["active_requests"], 1)
+        self.assertTrue(status["native_harness_exited"])
+        self.assertEqual(status["in_flight_requests"], 1)
+        self.assertEqual(
+            status["ledger"][0]["lifecycle_status"],
+            "in_flight_at_collection",
+        )
 
     def test_precommit_retry_keeps_one_logical_call(self):
         RetryUpstream.calls = 0
@@ -555,7 +663,10 @@ class StreamingGatewayTests(unittest.TestCase):
             self.assertLess(len(delivered), len(first) + len(error))
             for _ in range(100):
                 status = _ledger(base)
-                if status["ledger"]:
+                if (
+                    status["ledger"]
+                    and status["ledger"][0].get("lifecycle_status") == "terminal"
+                ):
                     break
                 time.sleep(0.01)
 
@@ -587,7 +698,10 @@ class StreamingGatewayTests(unittest.TestCase):
             sock.close()
             for _ in range(100):
                 status = _ledger(base)
-                if status["ledger"]:
+                if (
+                    status["ledger"]
+                    and status["ledger"][0].get("lifecycle_status") == "terminal"
+                ):
                     break
                 time.sleep(0.01)
 
@@ -606,7 +720,10 @@ class StreamingGatewayTests(unittest.TestCase):
             self.assertEqual(response.read(), event)
             for _ in range(100):
                 status = _ledger(base)
-                if status["ledger"]:
+                if (
+                    status["ledger"]
+                    and status["ledger"][0].get("lifecycle_status") == "terminal"
+                ):
                     break
                 time.sleep(0.01)
 
@@ -636,7 +753,10 @@ class StreamingGatewayTests(unittest.TestCase):
             sock.close()
             for _ in range(100):
                 status = _ledger(base)
-                if status["ledger"]:
+                if (
+                    status["ledger"]
+                    and status["ledger"][0].get("lifecycle_status") == "terminal"
+                ):
                     break
                 time.sleep(0.01)
 
@@ -732,7 +852,10 @@ class StreamingGatewayTests(unittest.TestCase):
             sock.close()
             for _ in range(300):
                 status = _ledger(base)
-                if status["ledger"]:
+                if (
+                    status["ledger"]
+                    and status["ledger"][0].get("lifecycle_status") == "terminal"
+                ):
                     break
                 time.sleep(0.01)
 

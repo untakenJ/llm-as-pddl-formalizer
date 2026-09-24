@@ -7,8 +7,36 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 import run_val
+from api_providers import sanitize_model_name
+
+
+class RunValApiModelLabelTests(unittest.TestCase):
+    def test_api_formalizer_and_planner_plans_share_generation_label(self):
+        for model in ("gemini-3.1-flash-lite", "deepseek-chat", "alibaba/qwen3.8-27b",
+                      "google-vertex/gemini-3.1-flash-lite"):
+            for prediction in ("llm-as-formalizer-api", "llm-as-planner-api"):
+                with self.subTest(model=model, prediction=prediction), tempfile.TemporaryDirectory() as tmp:
+                    label = sanitize_model_name(model)
+                    directory = Path(tmp) / prediction / "logistics" / "Natural_Logistics-100" / label
+                    plan_dir = directory / "p01" if prediction == "llm-as-formalizer-api" else directory
+                    plan_dir.mkdir(parents=True)
+                    plan = "(load-truck package1 truck1 location1)\n"
+                    (plan_dir / f"p01_{label}_plan.txt").write_text(plan)
+                    with patch.object(run_val, "validate_plan", return_value="Plan valid") as validate, redirect_stdout(io.StringIO()):
+                        run_val.validate_plan_batch(
+                            "logistics", "Natural_Logistics-100", model, [1],
+                            prediction, True, out_dir_root=tmp,
+                        )
+                    validate.assert_called_once()
+                    self.assertEqual(Path(validate.call_args.args[2]).read_text(), plan.strip())
+                    csv_path = directory / f"{prediction}_logistics_Natural_Logistics-100_{label}_results.csv"
+                    with csv_path.open() as stream:
+                        row = next(csv.DictReader(stream))
+                    self.assertEqual(row["plan_found"], "yes")
+                    self.assertEqual(row["is_plan_correct"], "yes")
 
 
 class RunValExecutionValidityTests(unittest.TestCase):

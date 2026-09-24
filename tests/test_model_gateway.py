@@ -73,6 +73,90 @@ def free_port() -> int:
 
 
 class ModelGatewayTests(unittest.TestCase):
+    def test_output_policy_real_http_cloud_and_vllm_retry_and_length(self):
+        from agent_formalizer.configuration.model_capabilities import resolve_output_policy
+        for dynamic, input_error in ((False, False), (True, False), (True, True)):
+            with self.subTest(dynamic=dynamic, input_error=input_error):
+                calls = []
+                token_calls = []
+                class BudgetUpstream(BaseHTTPRequestHandler):
+                    def do_POST(self):
+                        payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                        status = 200
+                        if self.path == '/tokenize':
+                            token_calls.append(payload)
+                            status = 429 if len(token_calls) == 1 else 200
+                            result = {'count': 10000, 'max_model_len': 262144}
+                            if input_error:
+                                status, result = 400, {'error': {'type': 'invalid_request_error', 'message': 'invalid messages'}}
+                        else:
+                            calls.append(payload)
+                            status = 503 if len(calls) == 1 else 200
+                            result = {'choices': [{'finish_reason': 'length', 'message': {'content': 'partial'}}], 'forwarded': payload}
+                        body = json.dumps(result).encode()
+                        self.send_response(status)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Content-Length', str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                    def log_message(self, *args):
+                        pass
+                try:
+                    upstream = ThreadingHTTPServer(('127.0.0.1', 0), BudgetUpstream)
+                except PermissionError as exc:
+                    self.skipTest(f'sandbox forbids local sockets: {exc}')
+                thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+                thread.start()
+                process = None
+                try:
+                    with tempfile.TemporaryDirectory() as tmp:
+                        key = Path(tmp) / 'key'
+                        key.write_text('fake-key')
+                        policy = resolve_output_policy('self-hosted/Qwen/Qwen3.8-27B' if dynamic else 'google-vertex/gemini-3.1-flash-lite', 'model_max')
+                        policy['model'] = 'openai/gpt-test'  # Explicit mocked service, not a production alias.
+                        port = free_port()
+                        process = subprocess.Popen([os.sys.executable, str(MODEL_GATEWAY_SCRIPT)],
+                            env=self._gateway_env(upstream_port=upstream.server_port, gateway_port=port,
+                                key_file=key, request_overrides={'output_token_policy': policy}),
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                        base = f'http://127.0.0.1:{port}'
+                        self._wait_for_gateway(base, process)
+                        payload = {'model': 'gpt-test', 'messages': [{'role': 'user', 'content': 'unchanged'}], 'max_tokens': 8192}
+                        req = urllib.request.Request(base + '/v1/chat/completions', data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+                        if input_error:
+                            with self.assertRaises(urllib.error.HTTPError) as rejected:
+                                urllib.request.urlopen(req, timeout=10)
+                            self.assertEqual(rejected.exception.code, 400)
+                            rejected.exception.close()
+                            self.assertEqual(len(token_calls), 1)
+                            self.assertEqual(calls, [])
+                            with urllib.request.urlopen(base + '/__benchmark__/ledger', timeout=5) as response:
+                                row = json.loads(response.read())['ledger'][0]
+                            self.assertEqual(row['routing_class'], 'container')
+                            self.assertEqual(row['routing_reason'], 'tokenizer_input_rejected')
+                            continue
+                        with urllib.request.urlopen(req, timeout=10) as response:
+                            out = json.loads(response.read())
+                        self.assertEqual(out['forwarded']['max_tokens'], 252144 if dynamic else 65536)
+                        self.assertEqual(out['forwarded']['messages'], payload['messages'])
+                        self.assertEqual(out['choices'][0]['finish_reason'], 'length')
+                        self.assertEqual(len(calls), 2)  # 503 retried; length never resampled.
+                        self.assertEqual(calls[0], calls[1])
+                        self.assertEqual(len(token_calls), 2 if dynamic else 0)  # Count is reused after model 503.
+                        with urllib.request.urlopen(base + '/__benchmark__/ledger', timeout=5) as response:
+                            ledger = json.loads(response.read())['ledger']
+                        self.assertEqual(len(ledger), 1)
+                        self.assertEqual(ledger[0]['request_overrides_applied']['output_tokens']['effective_max_output_tokens'], 252144 if dynamic else 65536)
+                        self.assertNotEqual(ledger[0]['incoming_request_body_sha256'], ledger[0]['request_body_sha256'])
+                finally:
+                    if process is not None:
+                        process.terminate()
+                        process.wait(timeout=10)
+                        process.stderr.close()
+                    upstream.shutdown()
+                    upstream.server_close()
+                    thread.join(timeout=5)
+
     def _gateway_env(
         self,
         *,
@@ -786,6 +870,40 @@ class ModelGatewayTests(unittest.TestCase):
             )
         workspace._cleanup_gateway_secret()
         workspace._cleanup_gateway_control()
+
+    def test_workspace_finalizes_native_exit_and_persists_settlement(self):
+        workspace = AgentWorkspace(
+            "case", "native-exit-test", SimpleNamespace()
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace._gateway_started = True
+            workspace._gateway_native_exit_path = root / "native-harness-exited"
+            workspace._gateway_evidence_dir = root / "evidence"
+            workspace._gateway_evidence_dir.mkdir()
+            acknowledgement = json.dumps(
+                {"status": "native_harness_exited", "active_requests": 1}
+            )
+            completed = subprocess.CompletedProcess([], 0, acknowledgement, "")
+            with patch(
+                "agent_formalizer.workspace.subprocess.run",
+                return_value=completed,
+            ), patch.object(
+                workspace,
+                "_read_gateway_control",
+                side_effect=[{"in_flight_requests": 1}, {"in_flight_requests": 0}],
+            ), patch("agent_formalizer.workspace.time.sleep"):
+                report = workspace.finalize_model_gateway_after_native_exit(
+                    wait_seconds=0.1
+                )
+
+            self.assertEqual(report["status"], "settled")
+            self.assertTrue(workspace._gateway_native_exit_path.is_file())
+            saved = json.loads(
+                (workspace._gateway_evidence_dir / "native_exit_finalization.json")
+                .read_text()
+            )
+            self.assertEqual(saved["final_control"]["in_flight_requests"], 0)
 
     def test_transient_errors_are_transparent_and_use_one_logical_call(self):
         try:

@@ -4,6 +4,11 @@ output/
 __pycache__/
 *.pyc
 .cache/
+.local/campaign-inputs/
+.local/remote-node/
+.local/remote-controls/
+source/remote_execution/node.local.json
+source/remote_execution/vllm.local.json
 .vscode/
 .cursor/
 tmp/

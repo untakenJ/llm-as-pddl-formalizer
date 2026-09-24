@@ -12,6 +12,10 @@ from typing import Any
 
 from .skill_library import SkillBundle, bundle_for_profile, validate_selection, validate_source
 from . import CONFIGS_DIR
+from .model_capabilities import (
+    load_registry, resolve_output_policy, validate_registry,
+    validate_selection as validate_output_selection,
+)
 
 
 BENCHMARK_PROFILES_DIR = CONFIGS_DIR / "benchmark_profiles"
@@ -111,11 +115,13 @@ def _validate_profile(raw: dict[str, Any], path: Path) -> None:
             "providers",
             "harness_overrides",
         },
-        optional={"experiment_skill_library"},
+        optional={"experiment_skill_library", "model_capabilities"},
         path=str(path),
     )
     if "experiment_skill_library" in raw:
         validate_source(raw["experiment_skill_library"])
+    if "model_capabilities" in raw:
+        validate_registry(raw["model_capabilities"])
     if raw["schema_version"] != 3:
         raise ValueError(f"Unsupported benchmark profile schema: {raw['schema_version']}")
     _string(raw["profile_id"], "profile_id")
@@ -519,9 +525,11 @@ def _validate_condition_overrides(value: Any, path: str) -> None:
         generation = _object(overrides["generation"], f"{path}.generation")
         _keys(
             generation,
-            optional={"temperature"},
+            optional={"temperature", "max_output_tokens"},
             path=f"{path}.generation",
         )
+        if "max_output_tokens" in generation:
+            validate_output_selection(generation["max_output_tokens"])
         if "temperature" in generation:
             temperature = generation["temperature"]
             if (
@@ -722,7 +730,15 @@ class ResolvedBenchmarkConfig:
 
     @property
     def generation_overrides(self) -> dict[str, Any]:
-        return deepcopy(self.raw["resolved"].get("generation", {}))
+        value = deepcopy(self.raw["resolved"].get("generation", {}))
+        value.pop("max_output_tokens", None)
+        if self.output_token_policy:
+            value["output_token_policy"] = self.output_token_policy
+        return value
+
+    @property
+    def output_token_policy(self) -> dict[str, Any] | None:
+        return deepcopy(self.raw["resolved"].get("output_token_policy"))
 
     @property
     def minimum_agent(self) -> dict[str, Any] | None:
@@ -749,6 +765,14 @@ class ResolvedBenchmarkConfig:
 class BenchmarkProfile:
     path: Path
     raw: dict[str, Any]
+
+    def frozen_raw(self) -> dict[str, Any]:
+        """Bundle capability data only for the new opt-in budget semantics."""
+        raw = deepcopy(self.raw)
+        selection = raw["condition_profile"]["overrides"].get("generation", {}).get("max_output_tokens", "native")
+        if selection != "native" and "model_capabilities" not in raw:
+            raw["model_capabilities"] = load_registry()
+        return raw
 
     @property
     def schema_version(self) -> int:
@@ -999,6 +1023,13 @@ class BenchmarkProfile:
             "infra_retry": retry,
             "providers": providers,
         }
+        generation = overrides.get("generation", {})
+        selection = generation.get("max_output_tokens", "native")
+        if selection != "native":
+            resolved["resolved"]["output_token_policy"] = resolve_output_policy(
+                resolved["resolved"]["control_model"], selection,
+                self.raw.get("model_capabilities"),
+            )
         # New bundled profiles always enter this branch. The conditional is
         # retained solely so an old frozen profile without the field preserves
         # its historical public-backend hash and resume semantics.

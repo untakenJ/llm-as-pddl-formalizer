@@ -8,11 +8,13 @@ the fixed-route model gateway and, when configured, the fixed solver gateway.
 
 from __future__ import annotations
 
+import datetime
 from agent_formalizer.external_calls.control import ToolControlMonitor, read_json
 from agent_formalizer.runtime import process_lifecycle
 
 import json
 import logging
+import os
 import shutil
 import socket
 import subprocess
@@ -20,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -49,6 +52,16 @@ def _loopback_port() -> int:
 def _get_json(url: str, *, timeout: float = 5) -> dict:
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open(url, timeout=timeout) as response:
+        value = json.loads(response.read().decode("utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"expected JSON object from {url}")
+    return value
+
+
+def _post_empty_json(url: str, *, timeout: float = 5) -> dict:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    request = urllib.request.Request(url, data=b"", method="POST")
+    with opener.open(request, timeout=timeout) as response:
         value = json.loads(response.read().decode("utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"expected JSON object from {url}")
@@ -88,6 +101,7 @@ class MinimumHostWorkspace:
         self._control_dir: Path | None = None
         self._control_path: Path | None = None
         self._cancel_path: Path | None = None
+        self._gateway_native_exit_path: Path | None = None
         self._gateway_monitor_stop: threading.Event | None = None
         self._gateway_monitor_thread: threading.Thread | None = None
         self._gateway_terminal_error: dict | None = None
@@ -121,6 +135,7 @@ class MinimumHostWorkspace:
         self._control_dir = directory
         self._control_path = directory / "state.json"
         self._cancel_path = directory / "benchmark-cancelled"
+        self._gateway_native_exit_path = directory / "native-harness-exited"
         return self._control_path
 
     def _spawn(
@@ -174,6 +189,11 @@ class MinimumHostWorkspace:
         env = {
             **self._fixed_environment(),
             "PDDL_GATEWAY_UPSTREAM_ORIGIN": gateway["upstream_origin"],
+            # Minimum intentionally requests a complete, non-streamed answer.
+            # A healthy reasoning response may take more than 600s. Do not
+            # impose a shorter hidden generation limit than the active clock;
+            # allow the parent watchdog to own that boundary (small grace).
+            "PDDL_GATEWAY_UPSTREAM_TIMEOUT_SECONDS": str(max(600, self.adapter.timeout + 5)),
             "PDDL_GATEWAY_MAX_MODEL_CALLS": str(gateway["max_model_calls"]),
             "PDDL_GATEWAY_MAX_ACTION_STEPS": str(gateway["max_action_steps"]),
             "PDDL_GATEWAY_AUTH_MODE": gateway["auth_mode"],
@@ -203,6 +223,7 @@ class MinimumHostWorkspace:
             ),
             "PDDL_GATEWAY_CONTROL_FILE": str(control_path),
             "PDDL_GATEWAY_BENCHMARK_CANCEL_FILE": str(self._cancel_path),
+            "PDDL_GATEWAY_NATIVE_EXIT_FILE": str(self._gateway_native_exit_path),
             "PDDL_GATEWAY_RESPONSE_DELIVERY": gateway.get(
                 "response_delivery", "buffered_atomic"
             ),
@@ -480,6 +501,67 @@ class MinimumHostWorkspace:
         except Exception as exc:
             return {"error": f"{type(exc).__name__}: {exc}"}
 
+    def finalize_model_gateway_after_native_exit(
+        self, *, wait_seconds: float = 2.0
+    ) -> dict:
+        """Settle host-gateway requests after the Minimum runtime exits."""
+        report = {
+            "schema_version": 1,
+            "requested_at": datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat().replace("+00:00", "Z"),
+            "status": "not_started",
+            "wait_seconds": wait_seconds,
+        }
+        if self._gateway_process is None or self._gateway_process.poll() is not None:
+            return report
+        if self._gateway_native_exit_path is not None:
+            try:
+                self._gateway_native_exit_path.write_text(
+                    "native_harness_exit\n", encoding="utf-8"
+                )
+            except OSError as exc:
+                report["marker_error"] = type(exc).__name__
+        try:
+            report["gateway_acknowledgement"] = _post_empty_json(
+                self.model_gateway_origin + "/__benchmark__/native-exit",
+                timeout=max(1.0, min(5.0, wait_seconds + 1.0)),
+            )
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            report["gateway_error"] = type(exc).__name__
+
+        deadline = time.monotonic() + max(0.0, wait_seconds)
+        control = self._read_control()
+        while (
+            control is not None
+            and control.get("in_flight_requests", 0)
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.02)
+            control = self._read_control()
+        report["final_control"] = control
+        if control is None:
+            report["status"] = "status_collection_failed"
+        elif control.get("in_flight_requests", 0) == 0:
+            report["status"] = "settled"
+        else:
+            report["status"] = "active_requests_retained_in_ledger"
+        report["completed_at"] = datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat().replace("+00:00", "Z")
+        try:
+            evidence_path = self.artifact_dir / "gateway/native_exit_finalization.json"
+            evidence_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = evidence_path.with_name(f".{evidence_path.name}.tmp")
+            temporary.write_text(
+                json.dumps(report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            os.replace(temporary, evidence_path)
+        except OSError:
+            logger.exception("Could not persist minimum gateway native-exit evidence")
+        return report
+
     def model_gateway_ledger(self) -> list[dict]:
         if self._gateway_process is None or self._gateway_process.poll() is not None:
             return []
@@ -668,5 +750,6 @@ class MinimumHostWorkspace:
         self._control_dir = None
         self._control_path = None
         self._cancel_path = None
+        self._gateway_native_exit_path = None
         if errors:
             raise RuntimeError("minimum process cleanup failed: " + "; ".join(errors))

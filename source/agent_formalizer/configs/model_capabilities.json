@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "models": {
+    "google-vertex/gemini-3.1-flash-lite": {
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 65536,
+      "context_handling": "provider_enforced",
+      "output_accounting": "includes_reasoning",
+      "source_url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-1-flash-lite",
+      "verified_at": "2026-09-16"
+    },
+    "deepseek/deepseek-v4-flash": {
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 393216,
+      "context_handling": "provider_enforced",
+      "output_accounting": "includes_reasoning",
+      "source_url": "https://api-docs.deepseek.com/api/create-chat-completion/",
+      "verified_at": "2026-09-16"
+    },
+    "alibaba/qwen3.8-27b": {
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 131072,
+      "context_handling": "provider_enforced",
+      "output_accounting": "includes_reasoning",
+      "source_url": "https://help.aliyun.com/en/model-studio/qwen3-8-27b",
+      "verified_at": "2026-09-22"
+    },
+    "self-hosted/Qwen/Qwen3.8-27B": {
+      "context_window_tokens": 262144,
+      "max_output_tokens": "remaining_context",
+      "context_handling": "vllm_tokenize",
+      "output_accounting": "includes_reasoning",
+      "source_url": "https://huggingface.co/Qwen/Qwen3.8-27B",
+      "verified_at": "2026-09-16"
+    }
+  },
+  "aliases": {
+    "gemini/gemini-3.1-flash-lite": "google-vertex/gemini-3.1-flash-lite",
+    "google/gemini-3.1-flash-lite": "google-vertex/gemini-3.1-flash-lite",
+    "self-hosted/qwen3.8-27b": "self-hosted/Qwen/Qwen3.8-27B",
+    "self-hosted/qwen3.8-27b-bf16": "self-hosted/Qwen/Qwen3.8-27B"
+  }
+}

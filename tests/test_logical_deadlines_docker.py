@@ -60,6 +60,84 @@ class ModelBackend(BaseHTTPRequestHandler):
         pass
 
 
+@unittest.skipUnless(os.environ.get("RUN_NATIVE_STARTUP_SMOKE") == "1", "opt-in zero-model native startup")
+class NativeStartupSmokeTests(unittest.TestCase):
+    def test_real_deployment_timing_preparation(self):
+        from remote_execution.deploy import NATIVE, timing_probe
+        for name in NATIVE:
+            with self.subTest(harness=name):
+                row = timing_probe(name)
+                self.assertEqual(row["status"], "pass", row)
+                self.assertTrue(row["fresh_uncached_build"])
+                self.assertEqual(row["manifest"]["harness"], name)
+
+    def test_five_harnesses_fresh_prepare_start_and_exit(self):
+        """Actual AgentWorkspace.start + native CLI/import + GNU timeout exit.
+
+        No send_task or inference: a fake loopback backend counts any accidental
+        model requests. Derived timing/state paths are isolated; shared runtimes
+        and existing Docker resources are never cleaned or rebuilt.
+        """
+        from agent_formalizer.timing import deadline_integration
+        from remote_execution.deploy import NATIVE, probe_adapter
+        bridge = json.loads(subprocess.check_output(["docker", "network", "inspect", "bridge"], text=True))[0]["IPAM"]["Config"][0]["Gateway"]
+        backend = ThreadingHTTPServer((bridge, 0), ModelBackend)
+        backend.calls = 0; backend.retry = False; backend.final_delay = 0
+        thread = threading.Thread(target=backend.serve_forever, daemon=True); thread.start()
+        real_prepare = deadline_integration.prepare
+        try:
+            for name in NATIVE:
+                with self.subTest(harness=name), tempfile.TemporaryDirectory(prefix="rd-smoke-") as scratch:
+                    root = Path(scratch)
+                    with probe_adapter(name, root) as adapter, \
+                            patch("agent_formalizer.claws.generic.GENERIC_BENCHMARK_STATE_DIR", root / "generic-state"):
+                        identity = "deploy-smoke-" + uuid.uuid4().hex[:12]
+                        workspace = AgentWorkspace(identity, identity, adapter, artifact_dir=root / "evidence")
+                        original_gateway = adapter.model_gateway
+                        def gateway():
+                            return original_gateway() | {"upstream_origin": f"http://{bridge}:{backend.server_port}"}
+                        def prepare(ws):
+                            return real_prepare(ws, scratch_root=root / "timing")
+                        try:
+                            with patch.object(adapter, "model_gateway", side_effect=gateway), \
+                                    patch.object(deadline_integration, "prepare", side_effect=prepare):
+                                workspace.start()
+                            if name == "openclaw":
+                                command = "node /usr/lib/node_modules/openclaw/openclaw.mjs --version"
+                            elif name == "zeroclaw":
+                                command = "zeroclaw --version"
+                            else:
+                                module = {"hermes": "tools.environments.local", "nanobot": "nanobot.agent.tools.shell", "generic": "ga"}[name]
+                                prefix = f"import sys; sys.path.insert(0, {str(adapter.runtime_repo)!r}); " if name == "generic" else ""
+                                command = shlex.quote(str(adapter.runtime_python)) + " -c " + shlex.quote(prefix + f"import {module}; print('native import OK')")
+                            result = workspace.run_in_container(command, timeout=60)
+                            self.assertEqual(result.exit_code, 0, result.stdout + result.stderr)
+                            workspace.start_model_gateway_monitor(AttemptClock(30))
+                            result = workspace.run_in_container("timeout 0.2 sleep 5", timeout=10)
+                            self.assertEqual(result.exit_code, 124, result.stdout + result.stderr)
+                            manifest = json.loads((root / "evidence/logical_deadline_manifest.json").read_text())
+                            self.assertEqual(manifest["implementation_revision"], "native-concurrency-v5-native-exit")
+                            self.assertFalse(manifest["physical_clocks_modified"])
+                            self.assertTrue(workspace._deadline_bundle.is_relative_to(root / "timing"))
+                            self.assertIsNone(workspace.gateway_terminal_infra_error())
+                        finally:
+                            workspace.cleanup()
+                            if name == "generic":
+                                adapter.delete_agent(identity, instance_id=identity)
+                        for resource in (workspace.container_name, workspace.gateway_name, workspace.web_gateway_name, workspace.solver_gateway_name):
+                            remaining = subprocess.run(["docker", "container", "inspect", resource], capture_output=True, text=True, timeout=15)
+                            self.assertNotEqual(remaining.returncode, 0, resource)
+                            self.assertIn("No such", remaining.stderr)
+                        remaining = subprocess.run(["docker", "network", "inspect", workspace.network_name], capture_output=True, text=True, timeout=15)
+                        self.assertNotEqual(remaining.returncode, 0, workspace.network_name)
+                        self.assertIn("not found", remaining.stderr)
+                        print(json.dumps({"native_startup_smoke": name, "status": "pass", "model_requests": backend.calls,
+                                          "fresh_timing_build": True, "owned_docker_cleanup": "pass"}), flush=True)
+            self.assertEqual(backend.calls, 0)
+        finally:
+            backend.shutdown(); backend.server_close(); thread.join(5)
+
+
 @unittest.skipUnless(os.environ.get("RUN_EXTERNAL_CALLS_DOCKER_TESTS") == "1", "opt-in real Docker/native runtime test")
 class NativeDeadlineDockerTests(unittest.TestCase):
     def test_python_checkpoint_native_outer_timeouts(self):

@@ -1,0 +1,21 @@
+[Unit]
+Description=Pinned benchmark model service (configurable NVIDIA GPUs, BF16 or FP8)
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=benchmark
+WorkingDirectory=/opt/formalizer-node
+Environment=PYTHONPATH=/opt/formalizer-node/source
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/formalizer-node/.venv/bin/python -B -m remote_execution.vllm run --config /srv/formalizer-node/vllm.json --evidence-dir /srv/formalizer-node/model-launches
+# Stop only this named service; never prune or touch case/solver containers.
+ExecStop=-/usr/bin/docker stop --time 30 benchmark-vllm
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=45
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

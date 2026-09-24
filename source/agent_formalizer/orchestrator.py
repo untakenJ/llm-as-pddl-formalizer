@@ -32,7 +32,9 @@ from agent_formalizer.results.provenance import (
     sha256_text,
 )
 from agent_formalizer.result_types import AgentResult, FormalizerResult
-from agent_formalizer.runtime.runtime_lock import RuntimeLockMismatch, validate_runtime_lock
+from agent_formalizer.runtime.runtime_lock import (
+    RuntimeLockMismatch, execution_runtime_identity, validate_runtime_lock,
+)
 from agent_formalizer.util import Tracer, format_problem_name, now_iso, run_parallel
 from agent_formalizer.workspace import AgentWorkspace
 from agent_formalizer.docker.network_resources import NetworkResources, options_from
@@ -128,6 +130,9 @@ def _adapter_code_sha256() -> str:
         # provenance hash.  Adding/rotating a named profile must not alter the
         # experiment/runtime identity used for labels and resume.
         and path.name != "credential_profiles.json"
+        # Selected model semantics are frozen separately; unrelated registry
+        # rows must not invalidate an existing study's implementation identity.
+        and path.relative_to(package).as_posix() != "configs/model_capabilities.json"
         # Experimental skill payloads have selected-content semantic hashes.
         # Unselected library files must not change any run's runtime identity.
         and path.relative_to(package).parts[0] != "skills"
@@ -692,19 +697,26 @@ def _run_execution_try(
             harness_exception = f"{type(exc).__name__}: {exc}"
             agent_result = _agent_error_result(harness_exception, clock_started)
 
+        # The measured envelope ends when the native harness returns. Keep the
+        # gateway monitor alive for operational settlement, but do not let that
+        # bounded collection work consume agent time or trigger the watchdog.
+        watchdog_stop.set()
+        if watchdog_thread is not None:
+            watchdog_thread.join(timeout=10)
+        native_exit_clock_snapshot = attempt_clock.snapshot()
+        native_exit_finalization = (
+            workspace.finalize_model_gateway_after_native_exit()
+        )
         gateway_terminal = workspace.gateway_terminal_infra_error()
         gateway_monitor_error = workspace.gateway_monitor_error()
         action_step_limit_reached = (
             workspace.gateway_action_step_limit_reached()
         )
         workspace.stop_model_gateway_monitor()
-        watchdog_stop.set()
-        if watchdog_thread is not None:
-            watchdog_thread.join(timeout=10)
 
         if gateway_terminal is not None or gateway_monitor_error is not None:
             clock_finished = time.monotonic()
-            clock_snapshot = attempt_clock.snapshot()
+            clock_snapshot = native_exit_clock_snapshot
             adapter.end_attempt_clock()
             gateway_summary = workspace.model_gateway_stats()
             ledger = workspace.model_gateway_ledger()
@@ -747,6 +759,7 @@ def _run_execution_try(
                 "attempt_valid": False,
                 "infra_invalidator": reason,
                 "terminal_infra_error": gateway_terminal,
+                "native_exit_finalization": native_exit_finalization,
                 "execution_timing": clock_snapshot,
                 "model_gateway_summary": gateway_summary,
                 "actions": _action_metrics(gateway_summary, adapter, execution_dir),
@@ -771,7 +784,8 @@ def _run_execution_try(
             )
 
         if (
-            watchdog_fired.is_set() or adapter.deadline_exceeded()
+            watchdog_fired.is_set()
+            or native_exit_clock_snapshot["deadline_exceeded"]
         ) and agent_result and not agent_result.timeout:
             workspace.enforce_agent_deadline()
             agent_result.success = False
@@ -789,7 +803,7 @@ def _run_execution_try(
         # Stop the agent clock at native harness exit. Collection remains
         # operational work and cannot consume or extend the agent budget.
         clock_finished = time.monotonic()
-        clock_snapshot = attempt_clock.snapshot()
+        clock_snapshot = native_exit_clock_snapshot
         adapter.end_attempt_clock()
         harness_duration = clock_snapshot["active_duration_seconds"]
         if agent_result is not None:
@@ -906,6 +920,7 @@ def _run_execution_try(
             },
             "validations": validations,
             "model_gateway_summary": gateway_summary,
+            "native_exit_finalization": native_exit_finalization,
             "actions": actions,
             "frozen_workspace_artifacts": frozen_records,
             "model_call_ledger": {
@@ -1484,23 +1499,20 @@ def run_one_problem(
     attempt_index: int = 1,
     operational_config=None,
     operational_run_id: str | None = None,
+    runtime_lock_path: Path | str | None = None,
 ) -> FormalizerResult:
     """Run one fixed attempt (compatibility entry point used by tests/tools)."""
     adapter.validate_runtime()
     _, frozen_image = _freeze_execution_reference(adapter, image)
     try:
         runtime_lock = validate_runtime_lock(
-            adapter, container_image_id=frozen_image
+            adapter, container_image_id=frozen_image,
+            **({"lock_path": runtime_lock_path} if runtime_lock_path is not None else {}),
         )
     except RuntimeLockMismatch as exc:
         raise InfraInvalid("runtime_lock_mismatch", str(exc)) from exc
-    runtime_identity = {
-        "runtime_lock": runtime_lock,
-        "container_image_id": frozen_image,
-        "adapter_code_sha256": _adapter_code_sha256(),
-    }
-    if adapter.name == "minimum":
-        runtime_identity["execution_backend"] = "host"
+    runtime_identity = execution_runtime_identity(
+        runtime_lock, frozen_image, _adapter_code_sha256(), host_only=adapter.name == "minimum")
     runtime_identity_sha256 = canonical_sha256(runtime_identity)
     domain_description, problem_description = _read_descriptions(domain, data, problem)
     prompt = _build_canonical_prompt(
@@ -1569,23 +1581,20 @@ def run_batch(
     workers: int = 1,
     operational_config=None,
     operational_run_id: str | None = None,
+    runtime_lock_path: Path | str | None = None,
 ) -> list[FormalizerResult]:
     """Run every fixed case/attempt; outcomes never affect attempt count."""
     adapter.validate_runtime()
     _, frozen_image = _freeze_execution_reference(adapter, image)
     try:
         runtime_lock = validate_runtime_lock(
-            adapter, container_image_id=frozen_image
+            adapter, container_image_id=frozen_image,
+            **({"lock_path": runtime_lock_path} if runtime_lock_path is not None else {}),
         )
     except RuntimeLockMismatch as exc:
         raise InfraInvalid("runtime_lock_mismatch", str(exc)) from exc
-    runtime_identity = {
-        "runtime_lock": runtime_lock,
-        "container_image_id": frozen_image,
-        "adapter_code_sha256": _adapter_code_sha256(),
-    }
-    if adapter.name == "minimum":
-        runtime_identity["execution_backend"] = "host"
+    runtime_identity = execution_runtime_identity(
+        runtime_lock, frozen_image, _adapter_code_sha256(), host_only=adapter.name == "minimum")
     runtime_identity_sha256 = canonical_sha256(runtime_identity)
     root = Path(out_dir_root) if out_dir_root else OUTPUT_DIR
     base_label = _config_qualified_label(adapter, model_label)

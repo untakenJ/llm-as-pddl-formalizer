@@ -31,8 +31,18 @@ GEMINI_FLASH_LITE_PRICING = {
     "source": "https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing",
 }
 
+QWEN38_27B_SINGAPORE_PRICING = {
+    "model": "qwen3.8-27b", "currency": "USD", "region": "singapore",
+    "input_per_million": 0.50, "cached_input_per_million": 0.10,
+    "output_including_thinking_per_million": 3.00,
+    "verified_date": "2026-09-22",
+    "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+}
 
-def token_accounting(payload: Any, model: str = "") -> dict[str, Any] | None:
+
+def token_accounting(
+    payload: Any, model: str = "", provider: str = ""
+) -> dict[str, Any] | None:
     """Normalize an authoritative usage snapshot, without inventing missing data."""
     if not isinstance(payload, dict):
         return None
@@ -42,7 +52,7 @@ def token_accounting(payload: Any, model: str = "") -> dict[str, Any] | None:
         usage = payload.get("usage")
     if not isinstance(usage, dict) or not usage:
         nested = payload.get("response")
-        return token_accounting(nested, model) if isinstance(nested, dict) else None
+        return token_accounting(nested, model, provider) if isinstance(nested, dict) else None
 
     def count(*keys, default=None):
         for key in keys:
@@ -56,10 +66,28 @@ def token_accounting(payload: Any, model: str = "") -> dict[str, Any] | None:
         cached = count("cachedContentTokenCount", "cached_content_token_count", default=0)
         thinking = count("thoughtsTokenCount", "thoughts_token_count", default=0)
         visible = count("candidatesTokenCount", "candidates_token_count")
+        total = count("totalTokenCount", "total_token_count")
+        zero_output_derived = (
+            visible is None
+            and input_tokens is not None
+            and total == input_tokens
+            and thinking == 0
+            and count("toolUsePromptTokenCount", "tool_use_prompt_token_count", default=0) == 0
+        )
+        if zero_output_derived:
+            visible = 0
         output = None if visible is None else visible + thinking
     else:
         input_tokens = count("prompt_tokens", "input_tokens")
         output = count("completion_tokens", "output_tokens")
+        total = count("total_tokens")
+        zero_output_derived = (
+            output is None
+            and input_tokens is not None
+            and total == input_tokens
+        )
+        if zero_output_derived:
+            output = 0
         input_details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
         output_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
         cached = input_details.get("cached_tokens", 0)
@@ -69,6 +97,7 @@ def token_accounting(payload: Any, model: str = "") -> dict[str, Any] | None:
         "output_tokens_including_thinking": output, "thinking_tokens": thinking,
         "provider_usage": usage, "estimated_cost_usd": None,
         "cost_status": "usage_incomplete_or_model_unpriced",
+        "zero_output_derived_from_complete_totals": zero_output_derived,
     }
     resolved_model = model or str(payload.get("modelVersion") or payload.get("model_version") or payload.get("model") or "")
     if ("gemini-3.1-flash-lite" in resolved_model and input_tokens is not None
@@ -80,6 +109,18 @@ def token_accounting(payload: Any, model: str = "") -> dict[str, Any] | None:
                                    + cached * rates["cached_input_per_million"]
                                    + output * rates["output_including_thinking_per_million"]) / 1_000_000,
             "cost_status": "estimated_vertex_global_standard_on_demand",
+            "pricing": dict(rates),
+        })
+    elif (str(provider).strip().lower() == "alibaba"
+          and "qwen3.8-27b" in resolved_model and input_tokens is not None
+          and output is not None and isinstance(cached, int)
+          and not isinstance(cached, bool) and 0 <= cached <= input_tokens):
+        rates = QWEN38_27B_SINGAPORE_PRICING
+        result.update({
+            "estimated_cost_usd": ((input_tokens - cached) * rates["input_per_million"]
+                                   + cached * rates["cached_input_per_million"]
+                                   + output * rates["output_including_thinking_per_million"]) / 1_000_000,
+            "cost_status": "estimated_alibaba_singapore_standard_on_demand",
             "pricing": dict(rates),
         })
     return result
@@ -107,6 +148,8 @@ _PROVIDER_ALIASES = {
 }
 
 _EXTRACTOR_IDS = {
+    "alibaba": ["openai-compatible-reasoning-content-v1"],
+    "self-hosted": ["openai-compatible-reasoning-content-v1", "vllm-chat-reasoning-v1"],
     "deepseek": [
         "openai-compatible-reasoning-content-v1",
         "deepseek-responses-reasoning-text-v1",
@@ -308,7 +351,27 @@ def _gemini_reasoning(payload: Any) -> list[dict[str, str]]:
     return result
 
 
+def _self_hosted_reasoning(payload: Any) -> list[dict[str, str]]:
+    # vLLM documents reasoning in choices[].message/delta; older releases use
+    # reasoning_content. Never infer arbitrary nested fields to be reasoning.
+    # https://docs.vllm.ai/en/latest/features/reasoning_outputs/
+    result = _explicit_reasoning_fields(payload)
+    if not isinstance(payload, dict) or not isinstance(payload.get("choices"), list):
+        return result
+    for index, choice in enumerate(payload["choices"]):
+        if not isinstance(choice, dict):
+            continue
+        for key in ("message", "delta"):
+            message = choice.get(key)
+            if isinstance(message, dict) and isinstance(message.get("reasoning"), str) and message["reasoning"]:
+                result.append({"extractor_id": "vllm-chat-reasoning-v1",
+                               "source_path": f"$.choices[{index}].{key}.reasoning", "text": message["reasoning"]})
+    return result
+
+
 _PROVIDER_EXTRACTORS = {
+    "alibaba": _explicit_reasoning_fields,
+    "self-hosted": _self_hosted_reasoning,
     "deepseek": _deepseek_reasoning,
     "gemini": _gemini_reasoning,
 }
@@ -508,7 +571,11 @@ class ProviderReasoningRecorder:
                 "provider": self.capability["provider"],
                 "payload": readable_audit_payload(payload),
             })
-            accounting = token_accounting(payload, str(context.get("model") or ""))
+            accounting = token_accounting(
+                payload,
+                str(context.get("model") or ""),
+                self.capability["provider"],
+            )
             if accounting is not None:
                 # Streaming usage is normally cumulative: retain the last
                 # snapshot for this physical attempt, never sum its chunks.

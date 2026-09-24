@@ -230,34 +230,39 @@ def _validate_registry(raw: dict[str, Any], path: Path) -> None:
             raise ValueError(
                 f"profiles.{name}.models must use provider prefix {provider!r}"
             )
-        if provider == "google-vertex" and "provider_options" not in row:
+        if provider in {"google-vertex", "self-hosted"} and "provider_options" not in row:
             raise ValueError(
-                f"profiles.{name} must bind the Vertex project in provider_options"
+                f"profiles.{name} must bind its provider route in provider_options"
             )
         if "provider_options" in row:
             options = _object(
                 row["provider_options"], f"profiles.{name}.provider_options"
             )
-            if provider != "google-vertex":
+            if provider not in {"google-vertex", "self-hosted"}:
                 raise ValueError(
                     f"profiles.{name}.provider_options are not supported for "
                     f"provider {provider!r}"
                 )
-            _exact_keys(
-                options,
-                required={"google_vertex"},
-                path=f"profiles.{name}.provider_options",
-            )
-            vertex = _object(
-                options["google_vertex"],
-                f"profiles.{name}.provider_options.google_vertex",
-            )
-            _exact_keys(
-                vertex,
-                required={"project"},
-                optional={"location", "origin"},
-                path=f"profiles.{name}.provider_options.google_vertex",
-            )
+            if provider == "self-hosted":
+                _exact_keys(options, required={"self_hosted"}, path=f"profiles.{name}.provider_options")
+                route = _object(options["self_hosted"], f"profiles.{name}.provider_options.self_hosted")
+                _exact_keys(route, required={"base_url"}, path=f"profiles.{name}.provider_options.self_hosted")
+            else:
+                _exact_keys(
+                    options,
+                    required={"google_vertex"},
+                    path=f"profiles.{name}.provider_options",
+                )
+                vertex = _object(
+                    options["google_vertex"],
+                    f"profiles.{name}.provider_options.google_vertex",
+                )
+                _exact_keys(
+                    vertex,
+                    required={"project"},
+                    optional={"location", "origin"},
+                    path=f"profiles.{name}.provider_options.google_vertex",
+                )
             _validate_source_tree(options, f"profiles.{name}.provider_options")
 
     for model, name in models.items():

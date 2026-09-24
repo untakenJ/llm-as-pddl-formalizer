@@ -42,8 +42,10 @@ class ProviderSpec:
 
 
 _PROVIDER_ALIASES = {
+    "alibaba": "dashscope",
     "qwen": "dashscope",
     "google": "gemini",
+    "self-hosted": "openai",
 }
 
 
@@ -188,6 +190,9 @@ class EnvConfiguredAdapter(BaseClawAdapter):
 
     @property
     def direct_api_base(self) -> str:
+        if self.raw_provider == "self-hosted":
+            from agent_formalizer.compute_platforms.self_hosted import api_base
+            return api_base(self.provider_options)
         if self.is_google_vertex:
             return google_vertex_openai_base(self.provider_options)
         return provider_spec(self.model).api_base
@@ -267,6 +272,8 @@ class EnvConfiguredAdapter(BaseClawAdapter):
         # Resolve the provider first so unsupported or malformed model ids fail
         # before Docker is started.
         provider_spec(self.model)
+        if self.raw_provider == "self-hosted":
+            self.direct_api_base  # Fail closed before Docker if the route is absent.
         if self.is_google_vertex:
             google_vertex_settings(self.provider_options)
         if not self.resolved_api_key():

@@ -13,9 +13,22 @@ from sweep_agent_pipeline import _freeze_credential_registry
 
 
 VERTEX_MODEL = "google-vertex/gemini-3.1-flash-lite"
+ALIBABA_MODEL = "alibaba/qwen3.8-27b"
 
 
 class CredentialProfileTests(unittest.TestCase):
+    def test_alibaba_default_is_scoped_to_singapore_model_studio_key(self):
+        registry = load_credential_registry()
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / ".env"
+            env_file.write_text("ALIBABA_API_KEY=alibaba-secret\n")
+            credential = registry.resolve(ALIBABA_MODEL, env_file=env_file)
+        self.assertEqual(credential.profile_name, "alibaba-singapore")
+        self.assertEqual(credential.provider, "alibaba")
+        self.assertEqual(credential.api_key_env, "ALIBABA_API_KEY")
+        self.assertEqual(credential.api_key, "alibaba-secret")
+        self.assertNotIn("alibaba-secret", json.dumps(credential.metadata()))
+
     def test_logits_provider_default_accepts_dynamic_explicit_model_ids(self):
         registry = load_credential_registry()
         with tempfile.TemporaryDirectory() as tmp:

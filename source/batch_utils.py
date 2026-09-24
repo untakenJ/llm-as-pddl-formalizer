@@ -1,8 +1,13 @@
-"""Shared helpers for parallel per-problem batch execution."""
+"""Shared naming and execution helpers for per-problem batches."""
 
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+
+
+def sanitize_model_name(model: str) -> str:
+    """Filesystem label shared by API generation and solver/VAL evaluation."""
+    return model.replace("/", "__").replace(":", "_").replace(" ", "_")
 
 
 def format_problem_name(problem_number: int) -> str:

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "node_id": "REPLACE_WITH_STABLE_NODE_ID",
+  "managed_root": ".local/remote-node",
+  "secrets_env_file": "_private/.env",
+  "control": {
+    "listen_host": "127.0.0.1",
+    "port": 8876,
+    "max_jobs": 1,
+    "max_formalizer_workers": 4
+  },
+  "install": {
+    "harnesses": ["openclaw", "hermes", "nanobot", "generic", "zeroclaw"],
+    "openclaw_npm_spec": "openclaw@2026.6.10",
+    "node_binary": "/usr/bin/node",
+    "build_agent_image": true,
+    "agent_image": "pddl-agent-base:latest",
+    "val_repository": "https://github.com/KCL-Planning/VAL.git",
+    "val_revision": "REPLACE_WITH_REVIEWED_FULL_VAL_COMMIT"
+  },
+  "solver": {
+    "enabled": true,
+    "systemd_unit": "formalizer-remote-solver.service",
+    "image": "pddl-local-solver:planutils-v1",
+    "build_image": true,
+    "workers": 1,
+    "memory": "4096m",
+    "memory_swap": "4096m",
+    "cpus": 1.0,
+    "pids_limit": 256,
+    "timeout_seconds": 90,
+    "worker_security": "privileged",
+    "allowed_solvers": ["dual-bfws-ffparser"]
+  },
+  "model": {
+    "mode": "external",
+    "vllm_config": null,
+    "pull_image": false,
+    "download_weights": false,
+    "startup_timeout_seconds": 1800
+  }
+}

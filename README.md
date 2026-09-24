@@ -44,16 +44,51 @@ useful for CPU-side development and dependency checks. The agent pipeline also
 requires Docker. Its Hermes, NanoBot, ZeroClaw, and GenericAgent runtimes can be
 installed into the ignored repository cache with
 `bash source/agent_formalizer/runtime/install_harnesses.sh all`; OpenClaw keeps its
-existing host installation. VAL is an external binary;
-install it separately and configure its executable through `source/run_val.py`.
+existing host installation. VAL is an external binary from
+[KCL-Planning/VAL](https://github.com/KCL-Planning/VAL).
+Build a pinned revision separately and retain the expected
+`build/linux64/Release/bin/Validate` tree used by `source/run_val.py`.
+Execution-node deployments bind the VAL project root; record its revision and
+binary hash for comparisons across machines.
 
 OpenAI scripts read their API key from `_private/key.txt`. The API-based Gemini
 scripts load credentials from `_private/.env`; see their module documentation
 for the required variables. Logits uses `LOGITS_API_KEY` and explicit dynamic
 model ids such as `logits/Qwen/Qwen3.5-4B`; see the
 [Logits adapter documentation](source/agent_formalizer/compute_platforms/logits/README.md).
+Alibaba Model Studio uses `ALIBABA_API_KEY` and the explicit
+`alibaba/qwen3.8-27b` route. Its provider-specific default is the Singapore
+OpenAI-compatible endpoint; other providers retain their own routes.
+Direct formalizer/planner API calls stream by default; `--no-stream` selects
+buffered responses. Chat Completions, OpenAI Responses and Gemini use their
+native streaming APIs; Logits retains its native asynchronous REST polling.
+Partial streams are traced but never delivered as completed JSON; transport
+retries cover the entire stream and retain each attempt's usage when available.
+`stream_end.accounting` records physical stream usage (unknown stays unknown);
+the final `response`/`token_accounting` is a compatibility summary of the same
+successful attempt, not an additional charge. For Alibaba Qwen, output policies
+that include reasoning use `max_completion_tokens`, since `max_tokens` limits
+only the answer. Historical frozen campaigns keep their original implementation.
+
+The formalizer/planner `*-api.py` entrypoints also accept
+`--model self-hosted/SERVED_MODEL_ID` for a locally deployed OpenAI-compatible
+Chat Completions server such as vLLM. Set `SELF_HOSTED_BASE_URL` (ending in `/v1`)
+and `SELF_HOSTED_API_KEY` in the runner-only environment. This route uses JSON
+mode, no hosted tools, and the existing standalone transient retry policy;
+full provider responses, including returned reasoning and usage, are traced.
+"API-only" means no agent loop, not necessarily a commercial model provider.
+Remote API-only jobs and configurable minimum-agent reflection cells are
+documented in [execution nodes](source/remote_execution/README.md#api-only-and-minimum-agent-cells).
 
 ## Agent Harness Formalizer
+
+Optional local/remote execution nodes are documented in
+[source/remote_execution/README.md](source/remote_execution/README.md). The
+controller can dispatch frozen benchmark cells to a GPU node while the existing
+runner, gateways, solver and VAL execute there. This is opt-in; existing local
+commands and frozen-campaign resume paths are unchanged. Development alongside
+a running sweep must use `uv run --no-sync` and preserve its installed runtimes,
+shared services and frozen output.
 
 The agent pipeline supports `openclaw`, `hermes`, `nanobot`,
 `zeroclaw`, `generic` (GenericAgent), and the benchmark-owned `minimum`

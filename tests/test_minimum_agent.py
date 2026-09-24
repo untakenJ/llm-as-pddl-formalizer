@@ -7,7 +7,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import PropertyMock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 from profile_fixtures import HISTORICAL_PROFILES_DIR
 
@@ -43,6 +43,21 @@ def structured_response(version: int) -> str:
 
 
 class MinimumProfileTests(unittest.TestCase):
+    def test_alibaba_model_studio_uses_openai_compatible_minimum_transport(self):
+        profile = load_benchmark_profile(MINIMUM_PROFILE_PATH)
+        adapter = get_adapter(
+            "minimum",
+            model="alibaba/qwen3.8-27b",
+            api_key="secret",
+            benchmark_profile=profile,
+        )
+        self.assertEqual(adapter.openai_compatible_model, "qwen3.8-27b")
+        self.assertEqual(
+            adapter.upstream_api_base(),
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        )
+        self.assertEqual(adapter.model_gateway()["provider"], "alibaba")
+
     def test_profile_resolves_only_for_minimum_adapter(self):
         profile = load_benchmark_profile(MINIMUM_PROFILE_PATH)
         resolved = profile.resolve("minimum")
@@ -130,7 +145,7 @@ class MinimumProfileTests(unittest.TestCase):
     def test_native_adapter_still_uses_unchanged_docker_freeze_path(self):
         adapter = get_adapter(
             "hermes",
-            model="openai/test-model",
+            model="deepseek/deepseek-v4-flash",
             api_key="secret",
             benchmark_profile=DEFAULT_BENCHMARK_PROFILE,
         )
@@ -151,6 +166,48 @@ class MinimumProfileTests(unittest.TestCase):
 
 
 class MinimumRuntimeTests(unittest.TestCase):
+    def test_self_hosted_different_reflection_counts_and_solver_feedback(self):
+        for n in (0, 1, 10):
+            for enabled in (False, True):
+                with self.subTest(n=n, solver=enabled), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    raw = json.loads(MINIMUM_PROFILE_PATH.read_text())
+                    minimum = raw["condition_profile"]["overrides"]["minimum_agent"]
+                    minimum["reflection_count"] = n
+                    minimum["solver_feedback"]["enabled"] = enabled
+                    path = root / "profile.json"; path.write_text(json.dumps(raw))
+                    adapter = get_adapter("minimum", model="self-hosted/example/bf16", api_key="test-key",
+                        benchmark_profile=load_benchmark_profile(path),
+                        credential_provider_options={"self_hosted": {"base_url": "http://localhost:8000/v1"}})
+                    self.assertEqual(adapter.upstream_api_base(), "http://localhost:8000/v1")
+                    self.assertEqual(adapter.agent_tools(), [])
+                    self.assertEqual(adapter.resolved_config.minimum_agent["reflection_count"], n)
+                    config = {"api_base": "http://localhost:8000/v1", "model": "example/bf16",
+                              "initial_prompt": adapter.build_task_prompt("domain", "problem"),
+                              "reflection_count": n, "reflection_prompt": minimum["prompt_template"]["reflection"],
+                              "solver_feedback": minimum["solver_feedback"], "solver_gateway": "http://localhost:8768",
+                              "domain_output_path": str(root / "domain.pddl"),
+                              "problem_output_path": str(root / "problem.pddl"),
+                              "transcript_path": str(root / "transcript.json")}
+                    calls = []
+                    def chat(_config, messages):
+                        calls.append(copy.deepcopy(messages))
+                        usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+                        return structured_response(len(calls)), usage, {
+                            "choices": [{"message": {"reasoning_content": "provider thinking"}}], "usage": usage}
+                    with patch("agent_formalizer.claws.minimum.runtime._validate_output_path", side_effect=Path), \
+                         patch("agent_formalizer.claws.minimum.runtime._chat_completion", side_effect=chat), \
+                         patch("agent_formalizer.claws.minimum.runtime._solver_feedback",
+                               return_value=("<solver_feedback>test plan</solver_feedback>", {"event": "fixed_solver_call"})) as solver:
+                        transcript = execute(config)
+                    self.assertEqual(len(calls), n + 1)
+                    self.assertEqual(solver.call_count, n if enabled else 0)
+                    self.assertEqual(transcript["model_calls_completed"], n + 1)
+                    self.assertIn(f"version {n + 1}", (root / "domain.pddl").read_text())
+                    self.assertIn("provider thinking", (root / "transcript.json").read_text())
+                    if n and enabled:
+                        self.assertIn("test plan", calls[-1][-1]["content"])
+
     def test_parser_enforces_exact_contract(self):
         parsed = parse_response("prefix\n" + structured_response(1) + "\nsuffix")
         self.assertIn("version 1", parsed["reasoning"])
@@ -320,9 +377,20 @@ class _FakeCompletionHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length", "0") or 0)
         payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        self.server.requests.append(payload)
+        if getattr(self.server, "stall", False):
+            self.server.release_stall.wait(10)
+            return
+        if getattr(self.server, "failures_remaining", 0):
+            self.server.failures_remaining -= 1
+            body = b'{"error":{"type":"rate_limit_error"}}'
+            self.send_response(429)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         type(self).calls += 1
         version = type(self).calls
-        self.server.requests.append(payload)
         body = json.dumps(
             {
                 "id": f"fake-{version}",
@@ -356,7 +424,57 @@ class _FakeCompletionHandler(BaseHTTPRequestHandler):
 
 
 class MinimumHostWorkspaceTests(unittest.TestCase):
+    def test_host_workspace_finalizes_gateway_after_runtime_exit(self):
+        process = Mock()
+        process.poll.return_value = None
+        workspace = MinimumHostWorkspace.__new__(MinimumHostWorkspace)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace._gateway_process = process
+            workspace._gateway_native_exit_path = root / "control/native-harness-exited"
+            workspace._gateway_native_exit_path.parent.mkdir()
+            workspace.model_gateway_origin = "http://127.0.0.1:12345"
+            workspace.artifact_dir = root / "execution"
+            acknowledgement = {
+                "status": "native_harness_exited",
+                "active_requests": 1,
+            }
+            with patch(
+                "agent_formalizer.claws.minimum.workspace._post_empty_json",
+                return_value=acknowledgement,
+            ), patch.object(
+                workspace,
+                "_read_control",
+                side_effect=[
+                    {"in_flight_requests": 1},
+                    {"in_flight_requests": 0},
+                ],
+            ), patch("agent_formalizer.claws.minimum.workspace.time.sleep"):
+                report = workspace.finalize_model_gateway_after_native_exit(
+                    wait_seconds=0.1
+                )
+
+            self.assertEqual(report["status"], "settled")
+            self.assertTrue(workspace._gateway_native_exit_path.is_file())
+            saved = json.loads(
+                (workspace.artifact_dir / "gateway/native_exit_finalization.json")
+                .read_text()
+            )
+            self.assertEqual(saved["final_control"]["in_flight_requests"], 0)
+
     def test_host_runtime_preserves_usage_transcript_and_reasoning_trace(self):
+        self._assert_host_runtime("openai/test-model")
+
+    def test_self_hosted_runtime_through_real_loopback_gateway(self):
+        self._assert_host_runtime("self-hosted/test-model")
+
+    def test_owned_loopback_client_survives_gateway_transparent_retry(self):
+        self._assert_host_runtime("self-hosted/test-model", retry=True)
+
+    def test_blocked_owned_request_is_still_bounded_by_active_watchdog(self):
+        self._assert_host_runtime("self-hosted/test-model", stall=True)
+
+    def _assert_host_runtime(self, model, retry=False, stall=False):
         _FakeCompletionHandler.calls = 0
         try:
             upstream = ThreadingHTTPServer(
@@ -365,14 +483,20 @@ class MinimumHostWorkspaceTests(unittest.TestCase):
         except PermissionError:
             self.skipTest("sandbox does not allow loopback sockets")
         upstream.requests = []
+        upstream.failures_remaining = int(retry)
+        upstream.stall = stall
+        upstream.release_stall = threading.Event()
         upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
         upstream_thread.start()
         profile = load_benchmark_profile(MINIMUM_PROFILE_PATH)
         adapter = get_adapter(
             "minimum",
-            model="openai/test-model",
+            model=model,
             api_key="secret",
             benchmark_profile=profile,
+            **({"timeout": 2} if stall else {}),
+            credential_provider_options={"self_hosted": {"base_url": f"http://127.0.0.1:{upstream.server_port}/v1"}}
+            if model.startswith("self-hosted/") else None,
         )
         direct_base = f"http://127.0.0.1:{upstream.server_port}/v1"
         try:
@@ -409,7 +533,17 @@ class MinimumHostWorkspaceTests(unittest.TestCase):
                     )
                     workspace.stop_model_gateway_monitor()
                     adapter.end_attempt_clock()
+                    if stall:
+                        self.assertFalse(result.success)
+                        self.assertTrue(result.timeout)
+                        self.assertEqual(result.finish_reason, "timeout")
+                        self.assertEqual(len(upstream.requests), 1)
+                        self.assertLess(result.duration_seconds, 8)
+                        return
                     self.assertTrue(result.success)
+                    runtime_config = json.loads((artifact_dir / "minimum_agent_runtime_config.json").read_text())
+                    self.assertIsNone(runtime_config["request_timeout_seconds"])
+                    self.assertIsNone(runtime_config["solver_timeout_seconds"])
                     outputs = workspace.freeze_pddl_outputs()
                     self.assertTrue(outputs["domain"].endswith(b"version 2"))
                     self.assertTrue(outputs["problem"].endswith(b"version 2"))
@@ -436,11 +570,15 @@ class MinimumHostWorkspaceTests(unittest.TestCase):
                     )
                     self.assertEqual(workspace.model_gateway_stats()["model_calls"], 2)
                     self.assertEqual(len(workspace.model_gateway_ledger()), 2)
-                    self.assertEqual(len(upstream.requests), 2)
+                    self.assertEqual(len(upstream.requests), 3 if retry else 2)
+                    if retry:
+                        self.assertEqual(upstream.requests[0], upstream.requests[1])
+                        self.assertEqual(workspace.model_gateway_ledger()[0]["transient_retry_count"], 1)
                     self.assertNotIn("tools", upstream.requests[0])
                 finally:
                     workspace.cleanup()
         finally:
+            upstream.release_stall.set()
             upstream.shutdown()
             upstream.server_close()
             upstream_thread.join(timeout=5)

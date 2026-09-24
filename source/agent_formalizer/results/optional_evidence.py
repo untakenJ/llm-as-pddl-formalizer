@@ -560,7 +560,11 @@ def collect_full_trace_evidence(artifact_dir: Path, harness: str, container_name
                     key = (row.get("logical_call_index"), row.get("physical_attempt"))
                     if row.get("record_type") == "provider_payload":
                         payload_counts[key] = payload_counts.get(key, 0) + 1
-                        usage = token_accounting(row.get("payload"), row.get("model") or "")
+                        usage = token_accounting(
+                            row.get("payload"),
+                            row.get("model") or "",
+                            row.get("provider") or "",
+                        )
                         if usage is not None:
                             snapshots[key] = usage
                     elif row.get("record_type") == "response_boundary":

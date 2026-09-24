@@ -390,6 +390,7 @@ def run_agent_pipeline(
     credential_profiles_file: str = str(DEFAULT_CREDENTIAL_PROFILES_PATH),
     operational_config: str | None = None,
     operational_run_id: str | None = None,
+    runtime_lock_path: str | None = None,
 ) -> AgentBatchResult:
     harness_overrides = None
     if claw == "openclaw" and any((tools_profile, tools_allow, tools_deny)):
@@ -482,6 +483,8 @@ def run_agent_pipeline(
             )
         if benchmark_config:
             cmd.extend(["--benchmark-config", benchmark_config])
+        if runtime_lock_path is not None:
+            cmd.extend(["--runtime-lock", runtime_lock_path])
         # Propagate the already-resolved value explicitly so the agent tool and
         # evaluator cannot diverge if a child process loads a different default.
         cmd.extend(["--solver-backend", effective_solver_backend])
@@ -738,7 +741,7 @@ def _freeze_study_profile(profile, out_dir: Path):
     from copy import deepcopy
     from agent_formalizer.configuration.skill_library import bundle_for_profile
 
-    raw = deepcopy(profile.raw)
+    raw = profile.frozen_raw()
     bundle = bundle_for_profile(raw, profile.path)
     if bundle.skills:
         relative = Path("study_skills") / bundle.sha256

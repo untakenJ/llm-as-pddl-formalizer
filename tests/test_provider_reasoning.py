@@ -12,10 +12,35 @@ from agent_formalizer.results.provider_reasoning import (
     ProviderReasoningRecorder,
     extract_reasoning_fragments,
     reasoning_capture_capability,
+    token_accounting,
 )
 
 
 class ProviderReasoningExtractorTests(unittest.TestCase):
+    def test_alibaba_openai_compatible_reasoning_and_singapore_cost(self):
+        payload = {
+            "model": "qwen3.8-27b",
+            "choices": [{"message": {"reasoning_content": "checked plan", "content": "answer"}}],
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 200,
+                "prompt_tokens_details": {"cached_tokens": 100},
+            },
+        }
+        self.assertEqual(
+            [row["text"] for row in extract_reasoning_fragments("alibaba", payload)],
+            ["checked plan"],
+        )
+        accounting = token_accounting(payload, provider="alibaba")
+        self.assertAlmostEqual(accounting["estimated_cost_usd"], 0.00106)
+        self.assertEqual(
+            accounting["cost_status"],
+            "estimated_alibaba_singapore_standard_on_demand",
+        )
+        self.assertIsNone(
+            token_accounting(payload, provider="self-hosted")["estimated_cost_usd"]
+        )
+
     def test_deepseek_chat_and_responses_formats_preserve_exact_text(self):
         payloads = [
             {

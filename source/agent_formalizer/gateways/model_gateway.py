@@ -62,6 +62,9 @@ except ModuleNotFoundError:  # standalone sidecar mount
 
 
 UPSTREAM_ORIGIN = os.environ["PDDL_GATEWAY_UPSTREAM_ORIGIN"].rstrip("/")
+UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("PDDL_GATEWAY_UPSTREAM_TIMEOUT_SECONDS", "600"))
+if not 0 < UPSTREAM_TIMEOUT_SECONDS < float("inf"):
+    raise SystemExit("gateway upstream timeout must be finite and positive")
 MAX_MODEL_CALLS = int(os.environ.get("PDDL_GATEWAY_MAX_MODEL_CALLS", "50"))
 MAX_ACTION_STEPS = int(os.environ.get("PDDL_GATEWAY_MAX_ACTION_STEPS", "200"))
 AUTH_MODE = os.environ.get("PDDL_GATEWAY_AUTH_MODE", "bearer")
@@ -106,6 +109,7 @@ RETRYABLE_HTTP_STATUSES = frozenset(
 )
 CONTROL_FILE = os.environ.get("PDDL_GATEWAY_CONTROL_FILE")
 BENCHMARK_CANCEL_FILE = os.environ.get("PDDL_GATEWAY_BENCHMARK_CANCEL_FILE")
+NATIVE_EXIT_FILE = os.environ.get("PDDL_GATEWAY_NATIVE_EXIT_FILE")
 LOGICAL_CONTROL_FILE = os.environ.get("PDDL_GATEWAY_LOGICAL_CONTROL_FILE")
 EXTERNAL_CALL_TIMING = os.environ.get("PDDL_GATEWAY_EXTERNAL_CALL_TIMING", "logical-deadline-v1")
 LOGICAL_CONTROL_LOCK = threading.Lock()
@@ -165,8 +169,15 @@ if MAX_RETRY_AFTER_SECONDS < 0:
     raise SystemExit("PDDL_GATEWAY_MAX_RETRY_AFTER_SECONDS must be non-negative")
 if not isinstance(REQUEST_OVERRIDES, dict):
     raise SystemExit("PDDL_GATEWAY_REQUEST_OVERRIDES must be a JSON object")
-if set(REQUEST_OVERRIDES) - {"temperature"}:
+if set(REQUEST_OVERRIDES) - {"temperature", "output_token_policy"}:
     raise SystemExit("unsupported model gateway request override")
+OUTPUT_TOKEN_POLICY = REQUEST_OVERRIDES.get("output_token_policy")
+if OUTPUT_TOKEN_POLICY is not None:
+    try:
+        from agent_formalizer.configuration.model_capabilities import apply_output_policy, validate_policy, vllm_count_tokens, OutputBudgetInputError
+    except ModuleNotFoundError:  # standalone sidecar mount
+        from model_capabilities import apply_output_policy, validate_policy, vllm_count_tokens, OutputBudgetInputError
+    validate_policy(OUTPUT_TOKEN_POLICY)
 if "temperature" in REQUEST_OVERRIDES and (
     isinstance(REQUEST_OVERRIDES["temperature"], bool)
     or not isinstance(REQUEST_OVERRIDES["temperature"], (int, float))
@@ -217,6 +228,8 @@ def _apply_request_overrides(
         raise ValueError("generation overrides require a JSON object")
 
     applied: dict = {}
+    if OUTPUT_TOKEN_POLICY and OUTPUT_TOKEN_POLICY["context_handling"] != "vllm_tokenize":
+        payload, applied["output_tokens"] = apply_output_policy(payload, OUTPUT_TOKEN_POLICY, parsed_path)
     if "temperature" in REQUEST_OVERRIDES:
         temperature = float(REQUEST_OVERRIDES["temperature"])
         if re.search(r":(?:stream)?generateContent$", parsed_path, re.IGNORECASE):
@@ -261,6 +274,8 @@ class State:
     infra_pause_seconds = 0.0
     terminal_infra_error: dict | None = None
     ledger: list[dict] = []
+    active_requests: dict[str, dict] = {}
+    native_harness_exited = False
 
 
 def _pause_seconds_locked() -> float:
@@ -280,6 +295,8 @@ def _control_value_locked() -> dict:
         "infra_pause_seconds": round(_pause_seconds_locked(), 6),
         "terminal_infra_error": State.terminal_infra_error,
         "active_committed_streams": State.active_committed_streams,
+        "in_flight_requests": State.in_flight_requests,
+        "native_harness_exited": State.native_harness_exited,
     }
 
 
@@ -625,6 +642,11 @@ class StreamToolObserver:
         self._buffer = bytearray()
         self.tool_call_keys: set[tuple] = set()
         self.events = 0
+        self.malformed_sse_events = 0
+        self.provider_terminal_observed = not self.is_sse
+        self.provider_terminal_type: str | None = (
+            "complete_json_document" if not self.is_sse else None
+        )
         self.transient_error_reason: str | None = None
         self.provider_usage: dict[str, int | float] = {}
         self._payload_observer = payload_observer
@@ -640,6 +662,38 @@ class StreamToolObserver:
         self.tool_call_keys.update(_tool_call_keys_from_payload(payload))
         if not isinstance(payload, dict):
             return
+        event_type = str(payload.get("type") or "").lower()
+        if event_type in {
+            "message_stop",
+            "response.completed",
+            "response.done",
+            "response.stop",
+        }:
+            self.provider_terminal_observed = True
+            self.provider_terminal_type = event_type
+        choices = payload.get("choices")
+        if isinstance(choices, list) and any(
+            isinstance(choice, dict)
+            and choice.get("finish_reason") is not None
+            for choice in choices
+        ):
+            self.provider_terminal_observed = True
+            self.provider_terminal_type = "choices.finish_reason"
+        candidates = payload.get("candidates")
+        if isinstance(candidates, list) and any(
+            isinstance(candidate, dict)
+            and (
+                candidate.get("finishReason") is not None
+                or candidate.get("finish_reason") is not None
+            )
+            for candidate in candidates
+        ):
+            self.provider_terminal_observed = True
+            self.provider_terminal_type = "candidates.finish_reason"
+        delta = payload.get("delta")
+        if isinstance(delta, dict) and delta.get("stop_reason") is not None:
+            self.provider_terminal_observed = True
+            self.provider_terminal_type = "delta.stop_reason"
         for usage_key in ("usage", "usageMetadata"):
             usage = payload.get(usage_key)
             if not isinstance(usage, dict):
@@ -647,7 +701,9 @@ class StreamToolObserver:
             for name, value in usage.items():
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     self.provider_usage[f"{usage_key}.{name}"] = value
-        event_type = str(payload.get("type") or "").lower()
+            if usage_key == "usage" and choices == [] and self.provider_usage:
+                self.provider_terminal_observed = True
+                self.provider_terminal_type = "usage_final"
         error_value = payload.get("error")
         directly_error_shaped = isinstance(error_value, (dict, str)) or (
             event_type in {"error", "response.error"}
@@ -668,15 +724,19 @@ class StreamToolObserver:
         if not data_lines:
             return
         data = b"\n".join(data_lines).strip()
-        if not data or data == b"[DONE]":
+        if not data:
             self.events += 1
+            return
+        if data == b"[DONE]":
+            self.events += 1
+            self.provider_terminal_observed = True
+            self.provider_terminal_type = "sse_done"
             return
         try:
             payload = json.loads(data)
         except (UnicodeDecodeError, json.JSONDecodeError):
-            # Unknown provider event data is still a semantic event. It is
-            # forwarded byte-for-byte and cannot contribute a structured call.
             self.events += 1
+            self.malformed_sse_events += 1
             return
         self._observe_payload(payload)
 
@@ -709,6 +769,14 @@ class StreamToolObserver:
             if self._buffer.strip():
                 self._observe_sse_event(bytes(self._buffer))
             self._buffer.clear()
+            if self.malformed_sse_events:
+                raise StreamObservationError(
+                    "successful SSE response contained malformed data events"
+                )
+            if not self.provider_terminal_observed:
+                raise StreamObservationError(
+                    "HTTP stream ended without a provider terminal event"
+                )
             return
         try:
             payload = json.loads(self._buffer)
@@ -722,6 +790,16 @@ class StreamToolObserver:
 
 def _benchmark_cancelled() -> bool:
     return bool(BENCHMARK_CANCEL_FILE and Path(BENCHMARK_CANCEL_FILE).is_file())
+
+
+def _native_harness_exited() -> bool:
+    if State.native_harness_exited:
+        return True
+    return bool(NATIVE_EXIT_FILE and Path(NATIVE_EXIT_FILE).is_file())
+
+
+def _external_call_cancelled() -> bool:
+    return _benchmark_cancelled() or _native_harness_exited()
 
 
 def _classify_upstream_response(status: int, body: bytes) -> tuple[str, str]:
@@ -759,6 +837,18 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self._forward(count_attempt=False)
 
     def do_POST(self):
+        if self.path == "/__benchmark__/native-exit":
+            with State.lock:
+                State.native_harness_exited = True
+                _publish_control_locked()
+                active = len(State.active_requests)
+            self._json(
+                {
+                    "status": "native_harness_exited",
+                    "active_requests": active,
+                }
+            )
+            return
         self._forward(count_attempt=True)
 
     def do_PUT(self):
@@ -775,7 +865,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _status(*, include_ledger: bool) -> dict:
-        admitted_counted = False
         with State.lock:
             action_steps = State.model_calls + State.tool_calls
             value = {
@@ -814,6 +903,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 ),
                 "in_flight_requests": State.in_flight_requests,
                 "active_committed_streams": State.active_committed_streams,
+                "native_harness_exited": State.native_harness_exited,
                 "reasoning_capture": REASONING_RECORDER.status(),
                 "infra_diagnostics": INFRA_DIAGNOSTICS.status(),
                 "transient_policy": {
@@ -824,11 +914,19 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 },
             }
             if include_ledger:
-                value["ledger"] = list(State.ledger)
+                completed = [dict(row) for row in State.ledger]
+                active = []
+                for row in State.active_requests.values():
+                    snapshot = dict(row)
+                    snapshot["lifecycle_status"] = "in_flight_at_collection"
+                    snapshot["collected_at"] = _now()
+                    active.append(snapshot)
+                value["ledger"] = completed + active
         return value
 
     def _forward(self, *, count_attempt: bool) -> None:
         started = time.monotonic()
+        admitted_counted = False
         parsed_path = urlsplit(self.path).path
         length = int(self.headers.get("content-length", "0") or 0)
         body = self.rfile.read(length) if length else None
@@ -864,6 +962,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return
 
         ledger = {
+            "request_id": f"{threading.get_ident()}-{time.monotonic_ns()}",
             "index": None,
             "timestamp": _now(),
             "method": self.command,
@@ -896,6 +995,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "upstream_events": 0,
             "downstream_events": 0,
             "stream_completed": False,
+            "transport_stream_completed": False,
+            "provider_terminal_observed": False,
+            "provider_terminal_type": None,
+            "malformed_stream_events": 0,
             "downstream_committed": False,
             "termination_initiator": None,
             "partial_response": False,
@@ -903,6 +1006,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "benchmark_cancelled": False,
             "ambiguous_stream_termination": False,
             "provider_usage_observed": {},
+            "provider_usage_numeric_observed": False,
             "reasoning_capture_supported": (
                 REASONING_RECORDER.capability["support"] == "implemented"
             ),
@@ -939,6 +1043,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 rejection = "model_missing"
             elif model is not None and model not in ALLOWED_MODELS:
                 rejection = "model_not_allowed"
+            elif count_attempt and _native_harness_exited():
+                rejection = "native_harness_exited"
+                rejection_status = 409
             elif count_attempt and RESPONSE_DELIVERY == "native_streaming":
                 # v5 uses a soft complete-batch threshold. Model-call guard is
                 # checked first, then committed action steps. Already admitted
@@ -980,8 +1087,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 ledger["action_steps_after"] = (
                     State.model_calls + State.tool_calls
                 )
+            if admitted_counted:
+                ledger["lifecycle_status"] = "in_flight"
+                State.active_requests[ledger["request_id"]] = ledger
+                _publish_control_locked()
             if rejection:
                 State.rejected_calls += 1
+                ledger["lifecycle_status"] = "terminal"
                 ledger["rejection"] = rejection
                 ledger["error_source"] = "benchmark_gateway"
                 ledger["status"] = rejection_status
@@ -1019,7 +1131,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
             ledger["status"] = 503
             ledger["duration_ms"] = round((time.monotonic() - started) * 1000, 3)
             with State.lock:
+                if admitted_counted:
+                    State.in_flight_requests = max(0, State.in_flight_requests - 1)
+                    State.active_requests.pop(ledger["request_id"], None)
+                ledger["lifecycle_status"] = "terminal"
                 State.ledger.append(ledger)
+                _publish_control_locked()
             self._terminal_json(terminal)
             return
 
@@ -1057,6 +1174,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         logical_lock_owned = False
         physical_started = time.monotonic()
         checkpoint = None
+        tokenized_output_body = None
         if LOGICAL_CONTROL_FILE and EXTERNAL_CALL_TIMING == "call-checkpoint-v1":
             ledger["checkpoint_events"] = []
             checkpoint = RequestCheckpoint(body, event=ledger["checkpoint_events"].append)
@@ -1116,13 +1234,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         _set_terminal_infra_error({"reason": "external_call_stream_overlap", "source": EXTERNAL_CALL_TIMING})
                         return
                     logical_lock_owned = True
-                logical_control = ToolControl(LOGICAL_CONTROL_FILE, cancelled=_benchmark_cancelled,
+                logical_control = ToolControl(LOGICAL_CONTROL_FILE, cancelled=_external_call_cancelled,
                                               independent=checkpoint is not None)
                 begin_owned_pause()
             recovery = RetryController(_RETRY_POLICY)
             for upstream_index in range(1, _RETRY_POLICY.max_retries + 2):
                 physical_started = time.monotonic()
-                connection = connection_cls(_origin.hostname, port, timeout=600)
+                connection = connection_cls(_origin.hostname, port, timeout=UPSTREAM_TIMEOUT_SECONDS)
                 upstream = None
                 physical = {
                     "attempt": upstream_index,
@@ -1135,8 +1253,45 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 with State.lock:
                     State.upstream_attempts += 1
                 try:
+                    if OUTPUT_TOKEN_POLICY and OUTPUT_TOKEN_POLICY["context_handling"] == "vllm_tokenize" and count_attempt:
+                        if tokenized_output_body is None:
+                            request_payload = json.loads(body)
+                            try:
+                                input_count, deployed_context = vllm_count_tokens(
+                                    UPSTREAM_ORIGIN, request_payload, headers=headers,
+                                    timeout=min(60, UPSTREAM_TIMEOUT_SECONDS),
+                                )
+                            except OutputBudgetInputError as exc:
+                                if pause_owned:
+                                    end_owned_pause()
+                                ledger.update(status=exc.status, routing_class="container", routing_reason="tokenizer_input_rejected", error_source="upstream_tokenizer")
+                                physical.update(status=exc.status, reason="tokenizer_input_rejected")
+                                response_started = True
+                                self._json(exc.payload, status=exc.status)
+                                return
+                            except ValueError as exc:
+                                raise ExternalCallInvalid("model_output_configuration_failed", evidence={"detail": str(exc)}) from exc
+                            if deployed_context < OUTPUT_TOKEN_POLICY["context_window_tokens"]:
+                                raise ExternalCallInvalid("model_output_configuration_failed", evidence={"detail": "deployed context smaller than frozen policy"})
+                            if input_count >= OUTPUT_TOKEN_POLICY["context_window_tokens"]:
+                                if pause_owned:
+                                    end_owned_pause()
+                                ledger.update(status=400, routing_class="container", routing_reason="context_length_exceeded", error_source="benchmark_gateway")
+                                response_started = True
+                                self._json({"error": {"type": "context_length_exceeded", "message": "Input exhausts the frozen context window"}}, status=400)
+                                return
+                            bounded, token_audit = apply_output_policy(request_payload, OUTPUT_TOKEN_POLICY, parsed_path,
+                                input_tokens=input_count, deployment_context=deployed_context)
+                            tokenized_output_body = json.dumps(bounded, separators=(",", ":"), ensure_ascii=False).encode()
+                            ledger["request_overrides_applied"]["output_tokens"] = token_audit
+                            ledger["request_body_sha256"] = hashlib.sha256(tokenized_output_body).hexdigest()
+                        # The request checkpoint is immutable. Reuse the exact
+                        # bounded wire body on every physical retry.
+                        outbound_body = tokenized_output_body
+                    else:
+                        outbound_body = checkpoint.body if checkpoint else body
                     connection.request(
-                        self.command, self.path, body=checkpoint.body if checkpoint else body, headers=headers
+                        self.command, self.path, body=outbound_body, headers=headers
                     )
                     upstream = connection.getresponse()
                     physical["status"] = upstream.status
@@ -1400,18 +1555,27 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     ledger["error_source"] = "upstream_transport"
                     if isinstance(exc, DownstreamCancelled):
                         benchmark_cancelled = _benchmark_cancelled()
-                        ledger["client_cancelled"] = not benchmark_cancelled
-                        ledger["benchmark_cancelled"] = benchmark_cancelled
-                        ledger["termination_initiator"] = (
-                            "benchmark_deadline"
-                            if benchmark_cancelled
-                            else "downstream_client"
+                        native_harness_exited = _native_harness_exited()
+                        ledger["client_cancelled"] = not (
+                            benchmark_cancelled or native_harness_exited
                         )
+                        ledger["benchmark_cancelled"] = benchmark_cancelled
+                        ledger["native_harness_exited"] = native_harness_exited
+                        if benchmark_cancelled:
+                            ledger["termination_initiator"] = "benchmark_deadline"
+                        elif native_harness_exited:
+                            ledger["termination_initiator"] = "native_harness_exit"
+                        else:
+                            ledger["termination_initiator"] = "downstream_client"
                         ledger["partial_response"] = bool(
                             ledger["downstream_committed"]
                         )
                         physical["classification"] = "container"
-                        physical["reason"] = "downstream_cancelled"
+                        physical["reason"] = (
+                            "native_harness_exited"
+                            if native_harness_exited
+                            else "downstream_cancelled"
+                        )
                         physical["duration_ms"] = round(
                             (time.monotonic() - physical_started) * 1000, 3
                         )
@@ -1548,10 +1712,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
             ledger["routing_reason"] = "native_deadline"
             ledger["termination_initiator"] = "native_deadline"
         except ExternalCallInvalid as exc:
-            if exc.reason != "external_call_cancelled":
+            if exc.reason == "external_call_cancelled" and _native_harness_exited():
+                ledger["native_harness_exited"] = True
+                ledger["routing_class"] = "container"
+                ledger["routing_reason"] = "native_harness_exited"
+                ledger["termination_initiator"] = "native_harness_exit"
+                ledger["partial_response"] = bool(ledger["downstream_committed"])
+            elif exc.reason != "external_call_cancelled":
                 _set_terminal_infra_error({"reason": exc.reason, "source": EXTERNAL_CALL_TIMING,
                                            "evidence": exc.evidence})
-            ledger["routing_reason"] = exc.reason
+                ledger["routing_reason"] = exc.reason
         except Exception as exc:
             ledger["status"] = 502
             ledger["routing_class"] = "container"
@@ -1589,7 +1759,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if logical_control is not None and pause_owned:
                 # Never turn incomplete recovery into a deliverable call in a
                 # finally block. The monitor owns fail-closed termination.
-                if ledger.get("client_cancelled") or ledger.get("benchmark_cancelled") or ledger.get("native_deadline"):
+                if (ledger.get("client_cancelled") or ledger.get("benchmark_cancelled")
+                        or ledger.get("native_deadline") or ledger.get("native_harness_exited")):
                     logical_control.publish(phase="cancelled", pause_requested=False)
                     _end_infra_pause()
                     pause_owned = False
@@ -1610,7 +1781,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
             with State.lock:
                 if admitted_counted:
                     State.in_flight_requests = max(0, State.in_flight_requests - 1)
+                    State.active_requests.pop(ledger["request_id"], None)
+                ledger["lifecycle_status"] = "terminal"
                 State.ledger.append(ledger)
+                _publish_control_locked()
             if logical_control is not None and ledger.get("native_deadline"):
                 logical_control.publish(phase="native_done")
             if logical_lock_owned:
@@ -1750,6 +1924,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     observer.provisional_tool_calls
                 )
                 ledger["provider_usage_observed"] = dict(observer.provider_usage)
+                ledger["provider_usage_numeric_observed"] = bool(
+                    observer.provider_usage
+                )
                 if observer.transient_error_reason:
                     raise ConnectionError(observer.transient_error_reason)
 
@@ -1768,6 +1945,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 else:
                     write_downstream(chunk, events)
 
+            ledger["transport_stream_completed"] = True
+            ledger["provider_terminal_observed"] = (
+                observer.provider_terminal_observed
+            )
+            ledger["provider_terminal_type"] = observer.provider_terminal_type
+            ledger["malformed_stream_events"] = observer.malformed_sse_events
             observer.finish()
             ledger["upstream_events"] = observer.events
             ledger["downstream_events"] = observer.events if committed else 0
@@ -1776,6 +1959,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 observer.provisional_tool_calls
             )
             ledger["provider_usage_observed"] = dict(observer.provider_usage)
+            ledger["provider_usage_numeric_observed"] = bool(
+                observer.provider_usage
+            )
+            ledger["provider_terminal_observed"] = (
+                observer.provider_terminal_observed
+            )
+            ledger["provider_terminal_type"] = observer.provider_terminal_type
+            ledger["malformed_stream_events"] = observer.malformed_sse_events
             if observer.transient_error_reason:
                 raise ConnectionError(observer.transient_error_reason)
             if not committed:
@@ -1794,6 +1985,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
         except DownstreamCancelled:
             raise
         except Exception:
+            ledger["provider_terminal_observed"] = (
+                observer.provider_terminal_observed
+            )
+            ledger["provider_terminal_type"] = observer.provider_terminal_type
+            ledger["malformed_stream_events"] = observer.malformed_sse_events
             ledger["partial_response"] = committed
             raise
         finally:

@@ -88,6 +88,10 @@ closure, image identity, and validation evidence.
 The default `native-safety-v5-streaming` envelope and native condition use:
 
 - model: `google-vertex/gemini-3.1-flash-lite`;
+- per-call output allowance: `generation.max_output_tokens: "model_max"`
+  (user-approved 2026-09-16), shared across harnesses, Minimum and API-only.
+  This is an explicit exception to native output defaults; old frozen profiles
+  retain their previous behavior. See [configuration and audit details](configs/README.md#model-output-limits);
 - harness active-time deadline: 1800 seconds, excluding benchmark-owned
   provider-transient recovery pauses;
 - control-model request guard: 50 logical calls; gateway physical retries do
@@ -119,7 +123,9 @@ from historical buffered v4 profiles.
 It forwards the first complete semantic event immediately, uses bounded
 incremental tool observers, commits tool calls only after normal completion,
 allows a complete final tool batch to overshoot the action admission threshold,
-and rejects the next request. Direct post-commit stream failures discard the
+and rejects the next request. A clean HTTP EOF is transport evidence only: an
+SSE response also needs a provider terminal event such as a finish reason,
+`[DONE]`, or an authoritative final usage event. Direct post-commit stream failures discard the
 whole clean execution try and recover up to five times; true silence, client
 cancellation, and benchmark deadlines remain valid native outcomes. It must not
 be mixed with buffered v4 results.
@@ -152,7 +158,8 @@ of the relevant harness closures:
 - Hermes 0.18.2 and its 60-distribution closure;
 - NanoBot 0.2.2 and its 115-distribution closure;
 - GenericAgent commit `e6bbc916…` and its Python closure;
-- ZeroClaw 0.8.2, commit `42fa1971…`, and `Cargo.lock`;
+- ZeroClaw 0.8.2, pinned unreleased PR #8935 commit `85e0cfaf…`
+  (Gemini thought-signature preservation), and `Cargo.lock`;
 - OpenClaw `2026.6.10 (aa69b12)`, its installed Node distribution manifest,
   runtime payload, and 83 bundled skill assets.
 - Minimum Formalizer Agent's benchmark-owned, standard-library Python host
@@ -166,6 +173,14 @@ OpenClaw remains host-installed at the repository-defined paths, but its
 personal state/config is never used. A mismatch is an infra invalidator, not an
 agent failure. The image ID is resolved once per command so every case in that
 command uses the same image even if a tag later changes.
+
+The preceding byte-strict policy remains the **local default**. New execution-node
+releases explicitly select `runtime/runtime_lock_text_v1.json` for the
+user-approved remote per-problem-container comparability contract: fixed harness
+versions/source, dependencies and runtime text plus container capability checks,
+with machine-specific binary/image hashes retained as audit evidence. See
+[remote text validation](../remote_execution/README.md#remote-agent-runtime-comparability-remote-text-v1).
+This does not change the canonical benchmark profile or migrate any frozen run.
 
 ## Credentials and host environment
 
@@ -363,6 +378,9 @@ In `model_only`, the fixed-route model gateway is the only model transport. It:
 - records every failed physical attempt and its selected backoff in a
   secret-free logical/physical request ledger, including failures that later
   recover;
+- marks native harness exit out of band, rejects later background requests,
+  and gives already-admitted requests a bounded settlement window. Requests
+  still active at collection remain in the ledger as lifecycle snapshots;
 - for the five native harnesses (not `minimum`), independently captures any
   readable reasoning that a supported provider actually returns, without
   changing the bytes delivered to the harness or inferring whether the harness
@@ -541,6 +559,21 @@ Every harness then receives:
   (`tools/solver/gateway.py` + `remote_client.py`);
 - a prompt that documents the CLI (`tools/solver/prompt.txt`).
 
+For ZeroClaw, selecting this tool also adds the exact `pddl-solver` command
+to the pinned native command allowlist. Clean conditions keep the native
+configuration unchanged. This grant does not disable path restrictions, shell
+syntax checks, high-risk-command checks, or approvals for unrelated tools.
+The native-loop regression invokes the CLI directly (not through a Python
+wrapper) and checks that the solver result reaches the next model request.
+It also covers explicit PDDL arguments and the absolute CLI path, reproduces
+the historical missing-grant denial, and checks that file redirection and
+unapproved command chaining remain blocked before contacting the solver.
+Run these without real model/solver API calls using
+`RUN_EXTERNAL_CALLS_DOCKER_TESTS=1 PYTHONPATH=source:tests uv run --no-sync --offline python -B -m unittest test_multiharness_checkpoints_docker -k zeroclaw -v`.
+The grant is part of the frozen adapter implementation: updating the working
+tree does not retrofit existing frozen campaigns or authorize resampling their
+valid results.
+
 The CLI posts workspace PDDL to the sidecar, which calls the same selected
 planning.domains-compatible package API used by `source/run_solver.py`
 (default package `dual-bfws-ffparser`). The agent container itself stays on the
@@ -627,7 +660,16 @@ complete response, parsed PDDL, provider usage, and `reasoning` field.
 The native baseline intentionally rejects `--claw minimum` without that block.
 The native call-checkpoint integration does not apply to this host loop; review
 and explicitly select its compatible timing settings when deriving the minimum
-condition. After creating and validating such a profile, run the complete
+condition. Its benchmark-owned loopback HTTP clients have no independent
+physical request deadline: the supervised active-clock watchdog bounds the
+execution, and gateways own external-call recovery. This prevents a 600-second
+client timer from expiring just as a gateway begins a transparent retry.
+Minimum's buffered model gateway allows at least the execution budget plus a
+small grace for a healthy long reasoning response; other harnesses retain their
+existing upstream deadline. This does not extend the active execution budget,
+change n, add model calls, or alter prompts. Historical standalone runtime
+configs that omit the timeout fields retain their 600-second client default.
+After creating and validating such a profile, run the complete
 formalize/solver/VAL pipeline with:
 
 ```bash
@@ -761,6 +803,7 @@ output/llm-as-formalizer-agent/<domain>/<dataset>/<model_label>/<problem>/
       provider_reasoning.jsonl
       provider_full_trace.jsonl
       reasoning_capture_status.json
+      native_exit_finalization.json
     full_trace_audit.json
     native_audit/
       native_tools.jsonl
@@ -813,7 +856,10 @@ native context/output budgets.
   completion tokens already include their reasoning-token subset. Missing
   usage or an unpriced model yields `null`, not a zero-cost claim. The known
   subtotal includes discarded attempts; benchmark-clock credits are not
-  billing credits.
+  billing credits. If a provider omits an explicit output count while its
+  authoritative total exactly equals its input count, accounting records the
+  auditable derivation and uses zero output tokens; other incomplete usage
+  remains `null`.
 
 Gemini 3.1 Flash Lite estimates use standard on-demand Vertex **Global** rates
 verified on 2026-09-10: $0.25/M input, $0.025/M cached input, and $1.50/M output

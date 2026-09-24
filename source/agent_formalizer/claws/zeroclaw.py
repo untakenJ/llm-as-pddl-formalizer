@@ -56,6 +56,16 @@ ZEROCLAW_NONINTERACTIVE_APPROVALS = [
 # not an adapter-level tool allowlist.
 ZEROCLAW_ALLOWED_TOOLS = ZEROCLAW_NONINTERACTIVE_APPROVALS
 
+# Linux native defaults at the pinned 85e0cfaf source revision. V3 replaces,
+# rather than extends, allowed_commands; preserve every native entry when
+# granting the explicitly selected benchmark tool. Do not use a wildcard or
+# relax path, shell-expression, approval, or high-risk-command checks.
+ZEROCLAW_NATIVE_ALLOWED_COMMANDS = (
+    "git", "npm", "cargo", "ls", "cat", "grep", "find", "echo", "pwd",
+    "wc", "head", "tail", "date", "df", "du", "uname", "uptime",
+    "hostname", "python", "python3", "pip", "node", "free",
+)
+
 
 class ZeroClawAdapter(EnvConfiguredAdapter):
     """Run the ZeroClaw binary with no dependency on ``~/.zeroclaw``."""
@@ -133,13 +143,20 @@ class ZeroClawAdapter(EnvConfiguredAdapter):
         native_tools_line = (
             "native_tools = true\n" if family == "custom" else ""
         )
+        solver_commands_line = ""
+        output_line = ("max_tokens = " + str(self.native_max_output_tokens()) + "\n") if self.output_token_policy() else ""
+        command_grants = self._benchmark_command_grants()
+        if command_grants:
+            solver_commands_line = "allowed_commands = " + json.dumps(
+                [*ZEROCLAW_NATIVE_ALLOWED_COMMANDS, *command_grants]
+            ) + "\n"
         return f"""schema_version = 3
 
 [providers.models.{family}.benchmark]
 model = {q(self.openai_compatible_model)}
 uri = {q(self.zeroclaw_api_base)}
 timeout_secs = {int(self.timeout)}
-wire_api = "chat_completions"
+{output_line}wire_api = "chat_completions"
 {native_tools_line}
 [agents.{ZEROCLAW_AGENT_ALIAS}]
 model_provider = "{family}.benchmark"
@@ -158,7 +175,7 @@ auto_approve = [{approvals}]
 always_ask = []
 allowed_tools = []
 excluded_tools = []
-
+{solver_commands_line}
 [runtime_profiles.benchmark]
 agentic = true
 max_actions_per_hour = 20
@@ -171,6 +188,14 @@ strict_tool_parsing = false
 
 """
 
+    def _benchmark_command_grants(self) -> list[str]:
+        """Keep the native command gate and its recorded grants in agreement."""
+        if not self.pddl_solver_tool_enabled():
+            return []
+        from agent_formalizer.tools.solver import CLI_NAME
+
+        return [CLI_NAME]
+
     def tool_policy(self) -> dict:
         return {
             "registry": "pinned-native-unfiltered",
@@ -182,6 +207,7 @@ strict_tool_parsing = false
             "schema_version": 3,
             "state": "throwaway-container",
             "skills": self.skills_mode,
+            "benchmark_command_grants": self._benchmark_command_grants(),
         }
 
     def effective_config(self) -> dict:
